@@ -28,7 +28,16 @@ def _telecharger_yahoo(tickers: list[str]) -> pd.DataFrame:
         data["symbol"] = tickers[0]
     data.columns = [c.lower() for c in data.columns]
     data = data.rename(columns={"date": "date"})
-    return data[["symbol", "date", "open", "high", "low", "close", "volume"]]
+    data = data[["symbol", "date", "open", "high", "low", "close", "volume"]]
+
+    # Supabase: la colonne 'volume' est de type bigint -> aucune virgule tolérée.
+    # yfinance renvoie parfois du float64 (ex: 59151200.0), ce qui fait planter
+    # l'upsert PostgREST (erreur 22P02). On force un cast explicite en int.
+    data["volume"] = pd.to_numeric(data["volume"], errors="coerce").fillna(0).astype("int64")
+    for col in ["open", "high", "low", "close"]:
+        data[col] = pd.to_numeric(data[col], errors="coerce")
+
+    return data
 
 
 @st.cache_data(ttl=3600, show_spinner="Synchronisation des données de marché...")
