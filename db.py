@@ -41,7 +41,12 @@ def upsert_market_data(df: pd.DataFrame, table: str = "market_data"):
     client = get_client()
     records = df.copy()
     records["date"] = records["date"].astype(str)
-    payload = records.to_dict(orient="records")
+
+    # records.where(...).to_dict() ne convertit pas toujours NaN -> None de façon
+    # fiable (le float nan peut persister). On passe par une vraie sérialisation
+    # JSON (to_json force NaN -> null), puis on recharge en objets Python natifs.
+    import json
+    payload = json.loads(records.to_json(orient="records"))
 
     # Supabase REST limite la taille des batchs -> on chunke par 500 lignes
     chunk_size = 500
