@@ -26,3 +26,6 @@ FEATURES_DEFAUT = [
     'mom_20j', 'vol_relative', 'rsi_14', 'volatility',
     'vix_regime', 'rsi_rank_sec'
 ]
+
+# Taux sans risque annuel utilise dans l'optimisation Markowitz (pages/2_Portefeuille.py)
+TAUX_SANS_RISQUE = 0.0435

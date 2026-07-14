@@ -27,7 +27,8 @@ col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("Titres suivis", len(data["market_data_raw"]["symbol"].unique()) if not data["market_data_raw"].empty else 0)
 with col2:
-    st.metric("Précision modèle IA", f"{data['model_result']['accuracy']:.1f}%")
+    accuracy = data["model_result"]["accuracy"]
+    st.metric("Précision modèle IA", f"{accuracy:.1f}%" if accuracy is not None else "N/A")
 with col3:
     st.metric("Fondamentaux à jour", len(data["fonda_data_clean"]))
 
@@ -39,6 +40,6 @@ st.markdown(
     - **📊 Screener** — vue d'ensemble des titres et filtres sectoriels
     - **💼 Portefeuille** — optimisation Markowitz et simulation Monte-Carlo
     - **🧠 Audit IA** — explicabilité SHAP du modèle XGBoost
-    - **🛡️ Crédit & Bilan** — ratings S&P, Z-Score, spreads de crédit
+    - **🛡️ Crédit & Bilan** — ratings S&P, score de solidité financière, spreads de crédit
     """
 )

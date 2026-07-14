@@ -13,7 +13,7 @@ CSS_GLOBAL = """
     border-right: 1px solid #334155;
 }
 
-h1, h2, h3, h4, h5 { color: #f59e0b !important; }
+h1, h2, h3, h4, h5 { color: #fbbf24 !important; }
 
 div[data-testid="stMetric"] {
     background-color: #1e293b;
