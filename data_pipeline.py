@@ -1,8 +1,7 @@
 # data_pipeline.py
 # ==============================================================================
-# PIPELINE ETL — Yahoo Finance + Alpha Vantage -> Supabase, cache Streamlit (option C)
+# PIPELINE ETL — Yahoo Finance + Alpha Vantage -> Supabase, cache Streamlit
 # ==============================================================================
-import os
 import time
 import requests
 import numpy as np
@@ -14,7 +13,6 @@ import db
 import utils
 
 CLE_ALPHA_VANTAGE = db._get_secret("ALPHA_VANTAGE_KEY")
-CLE_FRED = db._get_secret("FRED_API_KEY")
 
 
 # ------------------------------------------------------------------------------
@@ -32,8 +30,6 @@ def _telecharger_yahoo(tickers: list[str]) -> pd.DataFrame:
     data = data[["symbol", "date", "open", "high", "low", "close", "volume"]]
 
     # Supabase: la colonne 'volume' est de type bigint -> aucune virgule tolérée.
-    # yfinance renvoie parfois du float64 (ex: 59151200.0), ce qui fait planter
-    # l'upsert PostgREST (erreur 22P02). On force un cast explicite en int.
     data["volume"] = pd.to_numeric(data["volume"], errors="coerce").fillna(0).astype("int64")
     for col in ["open", "high", "low", "close"]:
         data[col] = pd.to_numeric(data[col], errors="coerce")
@@ -41,56 +37,59 @@ def _telecharger_yahoo(tickers: list[str]) -> pd.DataFrame:
     return data
 
 
-@st.cache_data(ttl=3600, show_spinner="Synchronisation des données de marché...")
+@st.cache_data(ttl=3600, show_spinner=False)
 def sync_market_data(tickers: tuple[str, ...]) -> pd.DataFrame:
     """
-    Option C : on tente d'abord Supabase. Si les donnees du jour sont absentes
-    pour au moins un ticker, on retelecharge tout le lot Yahoo et on upsert.
-    Cache Streamlit pour eviter de re-frapper Supabase a chaque rerun.
+    On tente d'abord Supabase. Si les donnees du jour sont absentes pour au
+    moins un ticker, on retelecharge tout le lot Yahoo et on upsert.
+    Fonctionne aussi bien pour la liste 'core' que pour un univers élargi
+    (S&P 500 + Nasdaq 100 + ETFs) — c'est juste une liste de tickers en entrée.
     """
     tickers = list(tickers)
     df_db = db.fetch_market_data(tickers)
 
     aujourdhui = pd.Timestamp.today().normalize()
+    tickers_en_db = set(df_db["symbol"].unique()) if not df_db.empty else set()
+    tickers_manquants = set(tickers) - tickers_en_db
+
     a_jour = (
         not df_db.empty
+        and not tickers_manquants
         and df_db.groupby("symbol")["date"].max().min() >= aujourdhui - pd.Timedelta(days=3)
-        # tolerance week-end/jours feries
     )
 
     if a_jour:
         return df_db
 
-    try:
-        df_fresh = _telecharger_yahoo(tickers)
-    except Exception as e:
-        # Yahoo ET potentiellement Supabase indisponibles en meme temps :
-        # on ne laisse jamais planter la page. Si Supabase avait au moins
-        # des donnees perimees (df_db non vide), on les utilise en dernier
-        # recours plutot que de ne rien afficher du tout.
-        print(f"[Yahoo Finance] Erreur de telechargement : {e}")
-        if not df_db.empty:
-            st.warning(
-                "⚠️ Impossible de récupérer les cours à jour (Yahoo Finance "
-                "indisponible) : affichage de données de marché potentiellement "
-                "obsolètes.",
-                icon="⚠️",
-            )
-            return df_db
-        st.error(
-            "❌ Aucune donnée de marché disponible : Yahoo Finance et la base "
-            "de données sont tous deux indisponibles pour le moment. "
-            "Réessaie dans quelques minutes.",
-            icon="❌",
-        )
-        return pd.DataFrame(columns=["symbol", "date", "open", "high", "low", "close", "volume"])
+    # Téléchargement par lots pour rester raisonnable sur les univers larges (~600 tickers)
+    batch_size = 100
+    frames = []
+    total_batches = (len(tickers) + batch_size - 1) // batch_size
+    progress = st.progress(0, text="Téléchargement des prix (Yahoo Finance)...") if total_batches > 1 else None
 
+    for i in range(0, len(tickers), batch_size):
+        batch = tickers[i:i + batch_size]
+        try:
+            frames.append(_telecharger_yahoo(batch))
+        except Exception as e:
+            st.warning(f"Erreur Yahoo Finance sur le lot {batch[:3]}... : {e}")
+        if progress:
+            progress.progress(min(1.0, (i + batch_size) / len(tickers)),
+                               text=f"Téléchargement des prix : {min(i + batch_size, len(tickers))}/{len(tickers)} tickers")
+
+    if progress:
+        progress.empty()
+
+    if not frames:
+        return df_db  # rien de neuf, on retombe sur ce qu'on a
+
+    df_fresh = pd.concat(frames, ignore_index=True)
     db.upsert_market_data(df_fresh)
     df_fresh["date"] = pd.to_datetime(df_fresh["date"])
     return df_fresh
 
 
-@st.cache_data(ttl=3600, show_spinner="Synchronisation des données macro...")
+@st.cache_data(ttl=3600, show_spinner=False)
 def sync_macro_data(tickers: tuple[str, ...]) -> pd.DataFrame:
     tickers = list(tickers)
     df_db = db.fetch_market_data(tickers, table="macro_data")
@@ -103,31 +102,23 @@ def sync_macro_data(tickers: tuple[str, ...]) -> pd.DataFrame:
     if a_jour:
         return df_db
 
-    try:
-        df_fresh = _telecharger_yahoo(tickers)
-    except Exception as e:
-        # Meme logique de fallback que sync_market_data : donnees macro moins
-        # critiques (utilisees pour vix_regime, qui a deja son propre defaut
-        # neutre), donc un simple retour degrade suffit ici sans st.error.
-        print(f"[Yahoo Finance] Erreur de telechargement (macro) : {e}")
-        if not df_db.empty:
-            return df_db
-        return pd.DataFrame(columns=["symbol", "date", "open", "high", "low", "close", "volume"])
-
+    df_fresh = _telecharger_yahoo(tickers)
     db.upsert_market_data(df_fresh, table="macro_data")
     df_fresh["date"] = pd.to_datetime(df_fresh["date"])
     return df_fresh
 
 
 # ------------------------------------------------------------------------------
-# 2. FONDAMENTAUX (Alpha Vantage -> Supabase, TTL 7 jours porte depuis Shiny)
+# 2. FONDAMENTAUX (Alpha Vantage OVERVIEW -> Supabase, TTL 7 jours)
+#    Reste limité à la liste "core" suivie activement (pas l'univers élargi)
+#    pour respecter le rate-limit Alpha Vantage (5 req/min plan gratuit).
 # ------------------------------------------------------------------------------
 def _safe_cast(data: dict, key: str) -> float:
     v = data.get(key, "0")
     return float(v) if v not in ["None", "-", "", None] else 0.0
 
 
-@st.cache_data(ttl=3600, show_spinner="Vérification des fondamentaux...")
+@st.cache_data(ttl=3600, show_spinner=False)
 def sync_fonda_data(tickers: tuple[str, ...]) -> pd.DataFrame:
     tickers = list(tickers)
     fonda_df = db.fetch_fonda_data(tickers)
@@ -143,8 +134,15 @@ def sync_fonda_data(tickers: tuple[str, ...]) -> pd.DataFrame:
         )
         return fonda_df
 
+    total = len(a_rafraichir)
+    progress_bar = st.progress(0, text=f"Fondamentaux : 0/{total} tickers traités")
+
     nouveaux_records = []
-    for t in a_rafraichir:
+    for i, t in enumerate(a_rafraichir):
+        progress_bar.progress(
+            i / total,
+            text=f"Fondamentaux : {i}/{total} tickers traités — récupération de {t}...",
+        )
         time.sleep(13)  # Rate limit Alpha Vantage (plan gratuit : 5 req/min)
         try:
             url = f"https://www.alphavantage.co/query?function=OVERVIEW&symbol={t}&apikey={CLE_ALPHA_VANTAGE}"
@@ -159,54 +157,135 @@ def sync_fonda_data(tickers: tuple[str, ...]) -> pd.DataFrame:
                     "last_updated": str(pd.Timestamp.today().date()),
                 })
         except Exception as e:
-            # On n'affiche jamais l'exception brute a l'utilisateur : certaines
-            # erreurs reseau (ex: ConnectionError) incluent l'URL complete de la
-            # requete, qui contient la cle API en clair (apikey=...).
-            print(f"[Alpha Vantage] Erreur sur {t} : {e}")
-            st.warning(f"Erreur Alpha Vantage sur {t} : échec de la requête (voir logs serveur).")
+            st.warning(f"Erreur Alpha Vantage sur {t} : {e}")
 
+    progress_bar.progress(1.0, text=f"Fondamentaux : {total}/{total} tickers traités")
+    progress_bar.empty()
     if nouveaux_records:
+        st.toast(f"{len(nouveaux_records)} ticker(s) mis à jour (fondamentaux)", icon="✓")
         db.upsert_fonda_data(nouveaux_records)
 
     return db.fetch_fonda_data(tickers)
 
 
 # ------------------------------------------------------------------------------
-# 3. FEATURE ENGINEERING (porte depuis global_data.py)
+# 2bis. ALTMAN Z-SCORE RÉEL (Alpha Vantage BALANCE_SHEET + INCOME_STATEMENT)
+#    Formule complète (entreprises publiques, non-manufacturières exclues) :
+#    Z = 1.2*A + 1.4*B + 3.3*C + 0.6*D + 1.0*E
+#    A = Fonds de roulement / Total actifs
+#    B = Bénéfices non répartis / Total actifs
+#    C = EBIT / Total actifs
+#    D = Capitalisation boursière / Total passifs
+#    E = Chiffre d'affaires / Total actifs
 # ------------------------------------------------------------------------------
-def _calc_vix_regime(macro_df: pd.DataFrame) -> pd.DataFrame:
+def _safe_get(d: dict, key: str, default: float = 0.0) -> float:
+    v = d.get(key)
+    if v in (None, "None", "-", ""):
+        return default
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def sync_altman_zscore(tickers: tuple[str, ...], prix_actuels: dict) -> pd.DataFrame:
     """
-    Regime de marche base sur le niveau du VIX (^VIX), en 3 paliers :
-      0 = calme      (VIX < 20)
-      1 = stress modere (20 <= VIX < 30)
-      2 = stress eleve  (VIX >= 30)
-    Seuils usuels de lecture du VIX (20 = moyenne long terme, 30 = zone de crise).
-    Retourne un DataFrame [date, vix_regime] pret a etre merge sur la date.
+    prix_actuels : dict {symbol: dernier_prix} pour calculer la capitalisation
+                   boursière (approximation : prix x nombre d'actions du bilan).
+    Résultat stocké dans Supabase (table zscore_data), TTL 7 jours comme fonda_data.
     """
-    if macro_df.empty or "^VIX" not in set(macro_df["symbol"]):
-        return pd.DataFrame(columns=["date", "vix_regime"])
+    tickers = list(tickers)
+    zscore_df = db.fetch_zscore_data(tickers)
+    a_rafraichir = db.tickers_a_rafraichir_zscore(tickers, zscore_df, ttl_jours=7)
 
-    vix = macro_df[macro_df["symbol"] == "^VIX"][["date", "close"]].copy()
-    # np.select : le premier "default" gere aussi le cas NaN (aucune condition
-    # n'est vraie quand close est NaN) -> sans le np.nan explicite ci-dessous,
-    # un VIX manquant serait classe a tort en "stress eleve" (2). On force
-    # NaN -> NaN, gere ensuite par l'appelant (build_features) avec le meme
-    # fallback "calme" (0) que pour une date sans VIX du tout.
-    vix["vix_regime"] = np.select(
-        [vix["close"] < 20, vix["close"] < 30],
-        [0, 1],
-        default=np.where(vix["close"].isna(), np.nan, 2),
-    )
-    return vix[["date", "vix_regime"]]
+    if not a_rafraichir:
+        return zscore_df
+
+    if not CLE_ALPHA_VANTAGE:
+        st.warning(f"Clé Alpha Vantage absente : Z-Score non calculé pour {len(a_rafraichir)} ticker(s).")
+        return zscore_df
+
+    total = len(a_rafraichir)
+    progress_bar = st.progress(0, text=f"Z-Score Altman : 0/{total} tickers traités")
+    nouveaux_records = []
+
+    for i, t in enumerate(a_rafraichir):
+        progress_bar.progress(i / total, text=f"Z-Score Altman : {i}/{total} — {t}...")
+        try:
+            url_bs = f"https://www.alphavantage.co/query?function=BALANCE_SHEET&symbol={t}&apikey={CLE_ALPHA_VANTAGE}"
+            bs = requests.get(url_bs, timeout=10).json()
+            time.sleep(13)
+
+            url_is = f"https://www.alphavantage.co/query?function=INCOME_STATEMENT&symbol={t}&apikey={CLE_ALPHA_VANTAGE}"
+            inc = requests.get(url_is, timeout=10).json()
+            time.sleep(13)
+
+            bs_annual = bs.get("annualReports", [{}])
+            inc_annual = inc.get("annualReports", [{}])
+            if not bs_annual or not inc_annual:
+                continue
+
+            bs0, inc0 = bs_annual[0], inc_annual[0]
+
+            total_assets = _safe_get(bs0, "totalAssets")
+            total_liabilities = _safe_get(bs0, "totalLiabilities")
+            current_assets = _safe_get(bs0, "totalCurrentAssets")
+            current_liabilities = _safe_get(bs0, "totalCurrentLiabilities")
+            retained_earnings = _safe_get(bs0, "retainedEarnings")
+            shares_out = _safe_get(bs0, "commonStockSharesOutstanding")
+
+            ebit = _safe_get(inc0, "ebit")
+            revenue = _safe_get(inc0, "totalRevenue")
+
+            if total_assets <= 0:
+                continue
+
+            prix = prix_actuels.get(t, 0.0)
+            market_cap = prix * shares_out
+
+            A = (current_assets - current_liabilities) / total_assets
+            B = retained_earnings / total_assets
+            C = ebit / total_assets
+            D = market_cap / total_liabilities if total_liabilities > 0 else 0.0
+            E = revenue / total_assets
+
+            z = 1.2 * A + 1.4 * B + 3.3 * C + 0.6 * D + 1.0 * E
+
+            nouveaux_records.append({
+                "symbol": t,
+                "z_score": round(z, 3),
+                "last_updated": str(pd.Timestamp.today().date()),
+            })
+        except Exception as e:
+            st.warning(f"Erreur Z-Score sur {t} : {e}")
+
+    progress_bar.progress(1.0, text=f"Z-Score Altman : {total}/{total} tickers traités")
+    progress_bar.empty()
+    if nouveaux_records:
+        st.toast(f"{len(nouveaux_records)} Z-Score(s) recalculés", icon="✓")
+        db.upsert_zscore_data(nouveaux_records)
+
+    return db.fetch_zscore_data(tickers)
 
 
-def build_features(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None) -> pd.DataFrame:
+# ------------------------------------------------------------------------------
+# 3. FEATURE ENGINEERING — vix_regime et rsi_rank_sec désormais réels
+# ------------------------------------------------------------------------------
+def _calc_vix_regime(vix_close: float) -> int:
+    """0 = calme (<15), 1 = normal (15-25), 2 = stress (>25)."""
+    if pd.isna(vix_close):
+        return 1
+    if vix_close < 15:
+        return 0
+    if vix_close <= 25:
+        return 1
+    return 2
+
+
+def build_features(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None, dict_secteurs: dict = None) -> pd.DataFrame:
     if mkt_df.empty:
         return pd.DataFrame()
-
-    if macro_df is None:
-        macro_df = pd.DataFrame()
-    vix_regime_df = _calc_vix_regime(macro_df)
 
     parts = []
     for s, grp in mkt_df.groupby("symbol"):
@@ -217,10 +296,7 @@ def build_features(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None) -> pd.Da
 
         up = grp["close"].diff().clip(lower=0).ewm(com=13, adjust=False).mean()
         down = grp["close"].diff().clip(upper=0).abs().ewm(com=13, adjust=False).mean()
-        # Cas up == down == 0 (prix plat) : pas de mouvement -> RSI neutre (50),
-        # pas 100 (ce que donnerait 0/inf sans ce garde-fou).
-        rs = up / down.replace(0, np.inf)
-        grp["rsi_14"] = np.where((up == 0) & (down == 0), 50.0, 100 - (100 / (1 + rs)))
+        grp["rsi_14"] = 100 - (100 / (1 + (up / down.replace(0, np.inf))))
 
         grp["mom_5j"] = grp["close"].pct_change(5)
         grp["mom_20j"] = grp["close"].pct_change(20)
@@ -228,51 +304,47 @@ def build_features(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None) -> pd.Da
         grp["vol_relative"] = grp["volume"] / grp["volume"].rolling(20).mean()
         grp["macd_diff"] = grp["close"].ewm(span=12).mean() - grp["close"].ewm(span=26).mean()
         grp["target_next_return"] = grp["daily_return"].shift(-1)
-        parts.append(grp.dropna(subset=["target_next_return"]))
+        parts.append(grp)
 
-    result = pd.concat(parts) if parts else pd.DataFrame()
-    if result.empty:
-        return result
+    df = pd.concat(parts) if parts else pd.DataFrame()
+    if df.empty:
+        return df
 
-    # vix_regime : jointure sur la date (regime de marche global, identique
-    # pour tous les titres a une date donnee). Si le VIX est indisponible pour
-    # une date (jour ferie different, donnee manquante), on retombe sur le
-    # regime "calme" (0) par defaut plutot que de propager un NaN.
-    if not vix_regime_df.empty:
-        result = result.merge(vix_regime_df, on="date", how="left")
-        result["vix_regime"] = result["vix_regime"].fillna(0).astype(int)
+    # --- vix_regime réel : jointure sur la date avec le niveau de clôture du VIX ---
+    if macro_df is not None and not macro_df.empty and "^VIX" in macro_df["symbol"].unique():
+        vix = macro_df[macro_df["symbol"] == "^VIX"][["date", "close"]].rename(columns={"close": "vix_close"})
+        df = df.merge(vix, on="date", how="left")
+        df["vix_regime"] = df["vix_close"].apply(_calc_vix_regime)
+        df = df.drop(columns=["vix_close"])
     else:
-        result["vix_regime"] = 0
+        df["vix_regime"] = 1  # régime "normal" par défaut si le VIX est indisponible
 
-    # rsi_rank_sec : rang percentile du RSI du titre par rapport aux autres
-    # titres de son secteur, a la meme date (0 = RSI le plus bas du secteur ce
-    # jour-la, 1 = le plus haut). Necessite de connaitre le secteur de chaque
-    # symbole -> mapping importe depuis utils.dict_secteurs.
-    symbol_to_secteur = {
-        sym: secteur for secteur, symbols in utils.dict_secteurs.items() for sym in symbols
-    }
-    result["secteur"] = result["symbol"].map(symbol_to_secteur)
-    result["rsi_rank_sec"] = (
-        result.groupby(["date", "secteur"])["rsi_14"].rank(pct=True)
-        if result["secteur"].notna().any()
-        else 0.5
-    )
-    # Secteur inconnu (titre absent de dict_secteurs) ou groupe a un seul titre
-    # (rank(pct=True) renvoie 1.0 par defaut) -> valeur neutre 0.5.
-    result["rsi_rank_sec"] = result["rsi_rank_sec"].fillna(0.5)
-    result = result.drop(columns=["secteur"])
+    # --- rsi_rank_sec réel : rang percentile du RSI au sein du secteur, par date ---
+    if dict_secteurs:
+        symbol_to_secteur = {}
+        for secteur, tickers_sec in dict_secteurs.items():
+            for t in tickers_sec:
+                symbol_to_secteur[t] = secteur
+        df["secteur_tmp"] = df["symbol"].map(symbol_to_secteur).fillna("Autre")
+        df["rsi_rank_sec"] = df.groupby(["date", "secteur_tmp"])["rsi_14"].rank(pct=True)
+        df = df.drop(columns=["secteur_tmp"])
+        df["rsi_rank_sec"] = df["rsi_rank_sec"].fillna(0.5)
+    else:
+        df["rsi_rank_sec"] = 0.5
 
-    return result
+    return df.dropna(subset=["target_next_return"])
 
 
 # ------------------------------------------------------------------------------
-# 4. MODELE XGBOOST (porte depuis global_data.py)
+# 4. MODELE XGBOOST — accuracy dynamique via split train/test temporel
 # ------------------------------------------------------------------------------
 @st.cache_resource(show_spinner="Entraînement du modèle IA...")
 def train_ia(_df_hash: str, df: pd.DataFrame) -> dict:
     """
-    _df_hash : cle de cache stable (ex: nombre de lignes + derniere date)
+    _df_hash : cle de cache stable (nombre de lignes + derniere date),
                car st.cache_resource ne hash pas bien les gros DataFrame.
+    Split train/test temporel (80/20, pas de shuffle) pour une accuracy
+    représentative — on n'évalue jamais sur du passé utilisé à l'entraînement.
     """
     from xgboost import XGBClassifier
     from sklearn.preprocessing import StandardScaler
@@ -280,129 +352,78 @@ def train_ia(_df_hash: str, df: pd.DataFrame) -> dict:
     from sklearn.metrics import accuracy_score
 
     if df.empty:
-        return {
-            "model": None, "imputer": None, "scaler": None,
-            "features": utils.FEATURES_DEFAUT, "accuracy": None,
-        }
+        return {"model": None, "features": utils.FEATURES_DEFAUT, "accuracy": 0.0}
 
     feat = utils.FEATURES_DEFAUT
-
-    # Split temporel (pas aleatoire) : le train doit precener le test
-    # chronologiquement, sinon on risque une fuite d'information (le modele
-    # "voit" indirectement le futur via l'ordre des donnees).
     df_sorted = df.sort_values("date")
-    X_sorted = df_sorted[feat].values
-    y_sorted = (df_sorted["target_next_return"] > 0).astype(int).values
 
-    if len(df_sorted) < 20:
-        # Trop peu de donnees pour un split fiable : on entraine sur tout,
-        # mais l'accuracy n'est alors PAS mesurable de façon honnete.
-        # accuracy=None (et non 0.0) pour eviter d'afficher un faux "0% de
-        # precision" qui laisserait croire que le modele est mauvais alors
-        # qu'il n'a simplement pas ete evalue.
-        imp, scl = SimpleImputer(strategy="median"), StandardScaler()
-        X_s = scl.fit_transform(imp.fit_transform(X_sorted))
-        model = XGBClassifier(n_estimators=100, max_depth=3, learning_rate=0.05, random_state=42)
-        model.fit(X_s, y_sorted)
-        return {"model": model, "imputer": imp, "scaler": scl, "features": feat, "accuracy": None}
+    X = df_sorted[feat].values
+    y = (df_sorted["target_next_return"] > 0).astype(int).values
 
-    split_idx = int(len(X_sorted) * 0.8)
-    X_train, X_test = X_sorted[:split_idx], X_sorted[split_idx:]
-    y_train, y_test = y_sorted[:split_idx], y_sorted[split_idx:]
+    split_idx = int(len(X) * 0.8)
+    X_train, X_test = X[:split_idx], X[split_idx:]
+    y_train, y_test = y[:split_idx], y[split_idx:]
 
     imp, scl = SimpleImputer(strategy="median"), StandardScaler()
     X_train_s = scl.fit_transform(imp.fit_transform(X_train))
-    X_test_s = scl.transform(imp.transform(X_test))
 
     model = XGBClassifier(n_estimators=100, max_depth=3, learning_rate=0.05, random_state=42)
     model.fit(X_train_s, y_train)
-    accuracy = accuracy_score(y_test, model.predict(X_test_s)) * 100
 
-    # Reentraine sur l'integralite des donnees (train+test) pour le modele final
-    # utilise en production (SHAP, predictions), mais l'accuracy affichee reste
-    # celle mesuree sur le test set jamais vu par ce modele-la.
-    imp_full, scl_full = SimpleImputer(strategy="median"), StandardScaler()
-    X_full_s = scl_full.fit_transform(imp_full.fit_transform(X_sorted))
-    model_full = XGBClassifier(n_estimators=100, max_depth=3, learning_rate=0.05, random_state=42)
-    model_full.fit(X_full_s, y_sorted)
+    accuracy = 50.0  # valeur neutre par défaut si pas assez de données de test
+    if len(X_test) > 0:
+        X_test_s = scl.transform(imp.transform(X_test))
+        y_pred = model.predict(X_test_s)
+        accuracy = round(accuracy_score(y_test, y_pred) * 100, 1)
 
-    return {
-        "model": model_full,
-        "imputer": imp_full,
-        "scaler": scl_full,
-        "features": feat,
-        "accuracy": accuracy,
-    }
+    # Ré-entraîne sur l'ensemble des données pour l'usage en production (audit, etc.)
+    # tout en gardant l'accuracy mesurée honnêtement sur le split test ci-dessus.
+    X_full_s = scl.fit_transform(imp.fit_transform(X))
+    model.fit(X_full_s, y)
 
-
-# ------------------------------------------------------------------------------
-# 4bis. SPREADS DE CREDIT (FRED — remplace la simulation dans 4_Credit_Bilan.py)
-# ------------------------------------------------------------------------------
-# Series FRED (ICE BofA) :
-#   BAMLH0A0HYM2 : ICE BofA US High Yield Index Option-Adjusted Spread
-#   BAMLC0A0CM   : ICE BofA US Corporate (Investment Grade) Index OAS
-FRED_SERIES = {"HY": "BAMLH0A0HYM2", "IG": "BAMLC0A0CM"}
-
-
-@st.cache_data(ttl=3600 * 12, show_spinner="Récupération des spreads de crédit (FRED)...")
-def sync_fred_spreads(lookback_days: int = 730) -> pd.DataFrame:
-    """
-    Retourne un DataFrame avec colonnes : date, HY, IG (spreads en points de base).
-    DataFrame vide si la cle FRED est absente ou en cas d'erreur -> l'appelant
-    doit gerer ce cas (fallback / avertissement), jamais de donnees inventees ici.
-    """
-    if not CLE_FRED:
-        return pd.DataFrame(columns=["date", "HY", "IG"])
-
-    start = (pd.Timestamp.today() - pd.Timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-    series_frames = {}
-
-    for label, series_id in FRED_SERIES.items():
-        try:
-            url = (
-                "https://api.stlouisfed.org/fred/series/observations"
-                f"?series_id={series_id}&api_key={CLE_FRED}&file_type=json"
-                f"&observation_start={start}"
-            )
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            obs = resp.json().get("observations", [])
-            df = pd.DataFrame(obs)[["date", "value"]]
-            df["date"] = pd.to_datetime(df["date"])
-            # FRED encode les valeurs manquantes par "." (jours feries etc.)
-            df["value"] = pd.to_numeric(df["value"], errors="coerce")
-            # Spread en points de base : FRED donne le OAS en % -> x100
-            df["value"] = df["value"] * 100
-            series_frames[label] = df.set_index("date")["value"]
-        except Exception as e:
-            # Meme logique que pour Alpha Vantage : jamais d'exception brute
-            # affichee cote utilisateur (l'URL contient la cle FRED en clair).
-            print(f"[FRED] Erreur sur la serie {series_id} ({label}) : {e}")
-            return pd.DataFrame(columns=["date", "HY", "IG"])
-
-    merged = pd.concat(series_frames, axis=1).dropna(how="all").reset_index()
-    merged = merged.rename(columns={"index": "date"})
-    return merged.sort_values("date")
+    return {"model": model, "imputer": imp, "scaler": scl, "features": feat, "accuracy": accuracy}
 
 
 # ------------------------------------------------------------------------------
 # 5. POINT D'ENTREE UNIQUE — a appeler depuis chaque page Streamlit
 # ------------------------------------------------------------------------------
-def get_all_data():
+def get_all_data(univers_etendu: list[str] = None):
     """
     Retourne un dict avec toutes les donnees necessaires aux pages.
-    Tout est mis en cache (session) -> appel peu couteux apres le premier chargement.
+    univers_etendu : si fourni, les PRIX (Yahoo) sont synchronisés pour cette
+                      liste élargie. Les FONDAMENTAUX restent limités à
+                      utils.actifs_sp500 (rate-limit Alpha Vantage).
     """
-    tickers = tuple(utils.actifs_sp500)
+    tickers_core = tuple(utils.actifs_sp500)
     macro = tuple(utils.actifs_macro)
+    tickers_prix = tuple(univers_etendu) if univers_etendu else tickers_core
 
-    market_data_raw = sync_market_data(tickers)
+    etape = st.empty()
+
+    etape.info("Étape 1/5 — Synchronisation des données de marché (Yahoo Finance)...")
+    market_data_raw = sync_market_data(tickers_prix)
+
+    etape.info("Étape 2/5 — Synchronisation des données macro (VIX, SPY)...")
     macro_data_raw = sync_macro_data(macro)
-    fonda_data_clean = sync_fonda_data(tickers)
-    market_data_clean = build_features(market_data_raw, macro_data_raw)
+
+    etape.info("Étape 3/5 — Vérification des fondamentaux (Alpha Vantage)...")
+    fonda_data_clean = sync_fonda_data(tickers_core)
+
+    etape.info("Étape 4/5 — Calcul du Z-Score Altman...")
+    market_core = market_data_raw[market_data_raw["symbol"].isin(tickers_core)] if not market_data_raw.empty else market_data_raw
+    prix_actuels = {}
+    if not market_core.empty:
+        derniers = market_core.sort_values("date").groupby("symbol").last()
+        prix_actuels = derniers["close"].to_dict()
+    zscore_df = sync_altman_zscore(tickers_core, prix_actuels)
+
+    etape.info("Étape 5/5 — Calcul des indicateurs et entraînement du modèle IA...")
+    market_data_clean = build_features(market_data_raw, macro_data_raw, utils.dict_secteurs)
 
     cache_key = f"{len(market_data_clean)}_{market_data_clean['date'].max() if not market_data_clean.empty else 'empty'}"
     model_result = train_ia(cache_key, market_data_clean)
+
+    etape.empty()
 
     importance_df = pd.DataFrame()
     if model_result["model"] is not None:
@@ -412,16 +433,15 @@ def get_all_data():
         }).sort_values("Importance", ascending=False)
 
     ratings_df = db.fetch_ratings()
-    fred_spreads = sync_fred_spreads()
 
     return {
         "market_data_raw": market_data_raw,
         "macro_data_raw": macro_data_raw,
         "fonda_data_clean": fonda_data_clean,
         "market_data_clean": market_data_clean,
+        "zscore_df": zscore_df,
         "model_result": model_result,
         "model_ia": model_result["model"],
         "importance_df": importance_df,
         "ratings_df": ratings_df,
-        "fred_spreads": fred_spreads,
     }
