@@ -6,7 +6,7 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from theme import apply_theme
+from theme import apply_theme, palette_selector_sidebar
 import data_pipeline as dp
 import utils
 
@@ -21,6 +21,8 @@ data = st.session_state["thesee_data"]
 market_data_raw = data["market_data_raw"]
 
 with st.sidebar:
+    palette_selector_sidebar()
+    st.divider()
     st.subheader("Configuration")
     actifs = st.multiselect("Sélection des actifs :", utils.actifs_sp500, default=["AAPL", "MSFT", "NVDA"])
     capital = st.number_input("Capital initial (EUR) :", min_value=100, value=10000, step=100)
