@@ -1,0 +1,38 @@
+name: Sync Thésée — Supabase
+
+# Déclenchement automatique + possibilité de lancer manuellement depuis l'onglet Actions
+on:
+  schedule:
+    # Les heures GitHub Actions sont en UTC. Le marché US (NYSE/Nasdaq) ouvre
+    # 9h30 ET et ferme 16h00 ET. En heure d'été US (mars-nov), ET = UTC-4.
+    # En heure d'hiver US (nov-mars), ET = UTC-5 -> décale d'1h les horaires ci-dessous.
+    - cron: "0 14 * * 1-5"   # 14:00 UTC = 10:00 ET (peu après l'ouverture)
+    - cron: "0 17 * * 1-5"   # 17:00 UTC = 13:00 ET (mi-journée)
+    - cron: "30 20 * * 1-5"  # 20:30 UTC = 16:30 ET (peu après la clôture)
+  workflow_dispatch: {}       # bouton "Run workflow" manuel dans l'onglet Actions
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Installation Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Installation des dépendances
+        run: pip install -r requirements.txt
+
+      - name: Exécution de la synchronisation
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ALPHA_VANTAGE_KEY: ${{ secrets.ALPHA_VANTAGE_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: streamlit run cron_sync.py --server.headless true
