@@ -3,6 +3,9 @@
 # CONFIGURATION STATIQUE
 # ==============================================================================
 
+# --- Liste "core" — tickers suivis activement (fondamentaux Alpha Vantage inclus) ---
+# L'univers élargi (S&P 500 + Nasdaq 100 + ETFs) est chargé dynamiquement
+# via universe.py — cette liste reste le socle par défaut pour l'ETL fondamentaux.
 actifs_sp500 = ["AAPL", "MSFT", "NVDA", "JPM", "LLY", "TSLA", "AMZN", "META", "GOOGL", "V", "MA", "UNH"]
 actifs_macro = ["^VIX", "SPY"]
 
@@ -26,6 +29,3 @@ FEATURES_DEFAUT = [
     'mom_20j', 'vol_relative', 'rsi_14', 'volatility',
     'vix_regime', 'rsi_rank_sec'
 ]
-
-# Taux sans risque annuel utilise dans l'optimisation Markowitz (pages/2_Portefeuille.py)
-TAUX_SANS_RISQUE = 0.0435
