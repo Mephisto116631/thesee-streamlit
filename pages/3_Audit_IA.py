@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import shap
-from theme import apply_theme
+from theme import apply_theme, palette_selector_sidebar
 import data_pipeline as dp
 
 st.set_page_config(page_title="Audit IA — Thésée", page_icon="🧠", layout="wide")
@@ -32,6 +32,8 @@ model_result = data["model_result"]
 model_ia = data["model_ia"]
 
 with st.sidebar:
+    palette_selector_sidebar()
+    st.divider()
     st.subheader("Audit Intelligence Artificielle")
     tickers_dispo = sorted(market_clean["symbol"].unique().tolist()) if not market_clean.empty else []
     ticker = st.selectbox("Sélectionner un actif pour audit :", tickers_dispo) if tickers_dispo else None
