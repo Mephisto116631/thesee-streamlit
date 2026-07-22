@@ -6,6 +6,19 @@
 # ==============================================================================
 import streamlit as st
 import pandas as pd
+import requests
+from io import StringIO
+
+_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+
+def _read_html_with_ua(url: str):
+    """pd.read_html sans en-tête User-Agent se fait bloquer (403) par Wikipedia.
+    On récupère le HTML nous-mêmes avec un User-Agent réaliste, puis on parse."""
+    resp = requests.get(url, headers=_HEADERS, timeout=15)
+    resp.raise_for_status()
+    return pd.read_html(StringIO(resp.text))
+
 
 # --- ETFs sectoriels/indiciels (statiques — univers stable, peu de changements) ---
 ETFS_SECTORIELS = {
@@ -39,29 +52,46 @@ FALLBACK_NASDAQ100 = [
 
 @st.cache_data(ttl=86400, show_spinner="Récupération de la liste S&P 500...")
 def get_sp500_tickers() -> pd.DataFrame:
-    """Retourne un DataFrame [symbol, nom, secteur] depuis Wikipedia. TTL 24h."""
+    """
+    Retourne un DataFrame [symbol, nom, secteur] depuis un CSV maintenu sur GitHub
+    (datasets/s-and-p-500-companies), avec repli Wikipedia puis liste statique.
+    Le CSV GitHub est privilégié : contrairement à Wikipedia, il n'est pas
+    protégé par un anti-bot qui bloque les requêtes serveur (403 Forbidden).
+    """
     try:
-        tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
-        df = tables[0][["Symbol", "Security", "GICS Sector"]].copy()
+        url_csv = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
+        df = pd.read_csv(url_csv)
+        df = df[["Symbol", "Security", "GICS Sector"]].copy()
         df.columns = ["symbol", "nom", "secteur"]
-        df["symbol"] = df["symbol"].str.replace(".", "-", regex=False)  # BRK.B -> BRK-B (format yfinance)
+        df["symbol"] = df["symbol"].str.replace(".", "-", regex=False)
         df["indice"] = "S&P 500"
         return df
-    except Exception as e:
-        st.warning(f"Impossible de charger la liste S&P 500 depuis Wikipedia ({e}) — repli sur liste statique réduite.")
-        return pd.DataFrame({
-            "symbol": FALLBACK_SP500,
-            "nom": FALLBACK_SP500,
-            "secteur": "Inconnu",
-            "indice": "S&P 500",
-        })
+    except Exception as e_csv:
+        try:
+            tables = _read_html_with_ua("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+            df = tables[0][["Symbol", "Security", "GICS Sector"]].copy()
+            df.columns = ["symbol", "nom", "secteur"]
+            df["symbol"] = df["symbol"].str.replace(".", "-", regex=False)
+            df["indice"] = "S&P 500"
+            return df
+        except Exception as e_wiki:
+            st.warning(
+                f"Impossible de charger la liste S&P 500 (CSV: {e_csv} / Wikipedia: {e_wiki}) "
+                "— repli sur liste statique réduite."
+            )
+            return pd.DataFrame({
+                "symbol": FALLBACK_SP500,
+                "nom": FALLBACK_SP500,
+                "secteur": "Inconnu",
+                "indice": "S&P 500",
+            })
 
 
 @st.cache_data(ttl=86400, show_spinner="Récupération de la liste Nasdaq-100...")
 def get_nasdaq100_tickers() -> pd.DataFrame:
     """Retourne un DataFrame [symbol, nom, secteur] depuis Wikipedia. TTL 24h."""
     try:
-        tables = pd.read_html("https://en.wikipedia.org/wiki/Nasdaq-100")
+        tables = _read_html_with_ua("https://en.wikipedia.org/wiki/Nasdaq-100")
         # La table des composants n'est pas toujours au même index selon les éditions Wikipedia
         df = None
         for t in tables:
