@@ -283,7 +283,19 @@ def _calc_vix_regime(vix_close: float) -> int:
     return 2
 
 
-def build_features(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None, dict_secteurs: dict = None) -> pd.DataFrame:
+def build_features(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None, dict_secteurs: dict = None,
+                    fonda_df: pd.DataFrame = None) -> pd.DataFrame:
+    """
+    fonda_df : fondamentaux Alpha Vantage (roe, margin, ev_ebitda, debt_eq) par
+               symbol. ATTENTION — ce sont des instantanés de la valeur ACTUELLE
+               (rafraîchis tous les 7 jours), pas un historique quotidien. Les
+               injecter comme features constantes sur toute la période
+               historique d'un titre est une approximation : ces ratios changent
+               lentement (trimestriel), donc l'erreur introduite reste limitée,
+               mais ce n'est PAS la vraie valeur qu'aurait eue le ratio à une
+               date passée. À garder en tête si l'edge du modèle semble venir
+               principalement de ces colonnes (risque de surestimation légère).
+    """
     if mkt_df.empty:
         return pd.DataFrame()
 
@@ -332,56 +344,314 @@ def build_features(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None, dict_sec
     else:
         df["rsi_rank_sec"] = 0.5
 
+    # --- Fondamentaux comme features constantes par titre (voir docstring) ---
+    if fonda_df is not None and not fonda_df.empty:
+        f = fonda_df[["symbol", "roe", "margin", "ev_ebitda", "debt_eq"]].copy()
+        df = df.merge(f, on="symbol", how="left")
+        # Médiane globale en repli pour les titres sans fondamentaux disponibles
+        for col in ["roe", "margin", "ev_ebitda", "debt_eq"]:
+            df[col] = df[col].fillna(df[col].median())
+    else:
+        df["roe"] = 0.0
+        df["margin"] = 0.0
+        df["ev_ebitda"] = 0.0
+        df["debt_eq"] = 0.0
+
     return df.dropna(subset=["target_next_return"])
 
 
 # ------------------------------------------------------------------------------
-# 4. MODELE XGBOOST — accuracy dynamique via split train/test temporel
+# 4. MODELE XGBOOST — split temporel correct + métriques de diagnostic complètes
 # ------------------------------------------------------------------------------
+def _split_temporel_par_date(df: pd.DataFrame, train_ratio: float = 0.8):
+    """
+    Split train/test par DATE DE COUPURE UNIQUE (pas par tri+index).
+    Avec plusieurs tickers partageant les mêmes dates, un simple
+    sort_values("date").iloc[:split_idx] mélange les tickers de façon
+    incohérente selon leur ordre secondaire — la coupure doit se faire sur
+    une date calendaire commune à tout l'univers, pour que train = strictement
+    "avant" et test = strictement "après", quel que soit le ticker.
+    """
+    dates_uniques = np.sort(df["date"].unique())
+    split_idx = int(len(dates_uniques) * train_ratio)
+    date_coupure = dates_uniques[split_idx]
+
+    train = df[df["date"] < date_coupure]
+    test = df[df["date"] >= date_coupure]
+    return train, test
+
+
 @st.cache_resource(show_spinner="Entraînement du modèle IA...")
-def train_ia(_df_hash: str, df: pd.DataFrame) -> dict:
+def train_ia(_df_hash: str, df: pd.DataFrame, seuil_neutre: float = 0.003) -> dict:
     """
     _df_hash : cle de cache stable (nombre de lignes + derniere date),
                car st.cache_resource ne hash pas bien les gros DataFrame.
-    Split train/test temporel (80/20, pas de shuffle) pour une accuracy
-    représentative — on n'évalue jamais sur du passé utilisé à l'entraînement.
+
+    seuil_neutre : les mouvements de |rendement| < seuil_neutre (0.3% par défaut)
+                   sont EXCLUS de l'entraînement et du test. Prédire "hausse" vs
+                   "baisse" sur un mouvement de +0.01% est presque du bruit pur ;
+                   en ignorant la zone neutre, la tâche devient "le titre a-t-il
+                   fait un mouvement significatif à la hausse ou à la baisse ?",
+                   nettement plus apprenable. C'est un choix de modélisation
+                   explicite, pas un artifice pour gonfler l'accuracy : moins
+                   d'exemples, mais des labels moins bruités.
+
+    Split train/test par date de coupure unique (voir _split_temporel_par_date) :
+    le modèle n'est jamais évalué sur une période qu'il a pu voir, même
+    indirectement via un autre ticker de la même date.
+
+    class_weight équilibré : le marché monte plus souvent qu'il ne baisse sur
+    longue période (biais haussier structurel), donc sans pondération le
+    modèle peut apprendre à prédire "hausse" par défaut et sembler bon sans
+    rien avoir appris. On mesure aussi ce déséquilibre explicitement.
+    """
+    from xgboost import XGBClassifier
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.impute import SimpleImputer
+    from sklearn.metrics import (
+        accuracy_score, precision_score, recall_score, f1_score,
+        confusion_matrix, roc_auc_score, log_loss, brier_score_loss,
+    )
+
+    if df.empty:
+        return {"model": None, "features": utils.FEATURES_DEFAUT, "accuracy": 0.0, "diagnostics": None}
+
+    feat = utils.FEATURES_DEFAUT
+
+    # Filtrage de la zone neutre — appliqué ICI (pas dans build_features) pour
+    # que target_next_return brut reste disponible ailleurs si besoin.
+    df_signif = df[df["target_next_return"].abs() >= seuil_neutre].copy()
+    n_exclus = len(df) - len(df_signif)
+
+    if df_signif.empty:
+        return {"model": None, "features": feat, "accuracy": 0.0, "diagnostics": None}
+
+    train_df, test_df = _split_temporel_par_date(df_signif, train_ratio=0.8)
+
+    if train_df.empty or test_df.empty:
+        return {"model": None, "features": feat, "accuracy": 0.0, "diagnostics": None}
+
+    X_train = train_df[feat].values
+    y_train = (train_df["target_next_return"] > 0).astype(int).values
+    X_test = test_df[feat].values
+    y_test = (test_df["target_next_return"] > 0).astype(int).values
+
+    # Répartition des classes — révèle un éventuel biais structurel du marché
+    taux_hausse_train = y_train.mean()
+    taux_hausse_test = y_test.mean()
+
+    # Poids de classe équilibré (scale_pos_weight XGBoost = ratio négatifs/positifs)
+    n_pos = y_train.sum()
+    n_neg = len(y_train) - n_pos
+    scale_pos_weight = (n_neg / n_pos) if n_pos > 0 else 1.0
+
+    imp, scl = SimpleImputer(strategy="median"), StandardScaler()
+    X_train_s = scl.fit_transform(imp.fit_transform(X_train))
+    X_test_s = scl.transform(imp.transform(X_test))
+
+    model = XGBClassifier(
+        n_estimators=200,
+        max_depth=4,
+        learning_rate=0.03,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        min_child_weight=5,
+        scale_pos_weight=scale_pos_weight,
+        random_state=42,
+        eval_metric="logloss",
+    )
+    model.fit(X_train_s, y_train)
+
+    y_pred = model.predict(X_test_s)
+    y_proba = model.predict_proba(X_test_s)[:, 1]
+
+    accuracy = round(accuracy_score(y_test, y_pred) * 100, 1)
+
+    # Baseline naïve : toujours prédire la classe majoritaire du train.
+    # Si notre modèle ne bat pas cette baseline, il n'apprend rien d'utile.
+    classe_majoritaire = int(round(taux_hausse_train))
+    baseline_pred = np.full_like(y_test, classe_majoritaire)
+    baseline_accuracy = round(accuracy_score(y_test, baseline_pred) * 100, 1)
+
+    # --- Log loss & Brier score : pénalisent les prédictions confiantes et fausses.
+    # Une baseline qui prédit toujours p=taux_hausse_train sert de référence :
+    # si notre modèle a un log loss PIRE que cette baseline constante, ses
+    # probabilités sont moins fiables qu'un simple taux de base, même si son
+    # accuracy semble correcte (l'accuracy ignore la confiance de la prédiction).
+    logloss_modele = round(log_loss(y_test, y_proba), 4)
+    proba_constante = np.full_like(y_test, taux_hausse_train, dtype=float)
+    logloss_baseline = round(log_loss(y_test, proba_constante), 4)
+    brier = round(brier_score_loss(y_test, y_proba), 4)
+
+    # --- Calibration : regroupe les prédictions par tranche de probabilité,
+    # compare la proba moyenne prédite au taux de hausse réellement observé
+    # dans chaque tranche. Un modèle bien calibré a proba_predite ≈ taux_reel.
+    calibration_bins = []
+    bin_edges = np.linspace(0, 1, 6)  # 5 tranches : [0-20%], [20-40%], ...
+    for i in range(len(bin_edges) - 1):
+        lo, hi = bin_edges[i], bin_edges[i + 1]
+        mask = (y_proba >= lo) & (y_proba < hi) if i < len(bin_edges) - 2 else (y_proba >= lo) & (y_proba <= hi)
+        if mask.sum() > 0:
+            calibration_bins.append({
+                "tranche": f"{int(lo*100)}-{int(hi*100)}%",
+                "proba_moyenne_predite": round(float(y_proba[mask].mean()) * 100, 1),
+                "taux_reel_observe": round(float(y_test[mask].mean()) * 100, 1),
+                "n_observations": int(mask.sum()),
+            })
+
+    # --- Performance par régime de marché (vix_regime) : un modèle peut très
+    # bien marcher en période calme et échouer en période de stress (ou
+    # l'inverse) — ça se noie complètement dans une accuracy globale unique.
+    perf_par_regime = []
+    if "vix_regime" in test_df.columns:
+        noms_regime = {0: "Calme (VIX<15)", 1: "Normal (15-25)", 2: "Stress (VIX>25)"}
+        for regime_val in sorted(test_df["vix_regime"].dropna().unique()):
+            mask = (test_df["vix_regime"] == regime_val).values
+            if mask.sum() >= 10:  # assez d'observations pour une métrique significative
+                perf_par_regime.append({
+                    "regime": noms_regime.get(int(regime_val), f"Régime {regime_val}"),
+                    "accuracy": round(accuracy_score(y_test[mask], y_pred[mask]) * 100, 1),
+                    "n_observations": int(mask.sum()),
+                })
+
+    # --- Performance par ticker : révèle si le modèle marche mieux sur
+    # certains titres que d'autres — utile pour savoir si un modèle par-ticker
+    # serait plus pertinent qu'un modèle global mélangeant tous les titres.
+    perf_par_ticker = []
+    if "symbol" in test_df.columns:
+        for sym in sorted(test_df["symbol"].unique()):
+            mask = (test_df["symbol"] == sym).values
+            if mask.sum() >= 10:
+                perf_par_ticker.append({
+                    "ticker": sym,
+                    "accuracy": round(accuracy_score(y_test[mask], y_pred[mask]) * 100, 1),
+                    "n_observations": int(mask.sum()),
+                })
+        perf_par_ticker.sort(key=lambda x: x["accuracy"], reverse=True)
+
+    # --- Walk-forward validation : plusieurs fenêtres temporelles indépendantes
+    # pour juger si l'accuracy est stable dans le temps ou si le chiffre unique
+    # du split principal ci-dessus est un coup de chance sur cette période précise.
+    wf = walk_forward_validation(df, feat, seuil_neutre=seuil_neutre, n_fenetres=5)
+
+    diagnostics = {
+        "accuracy": accuracy,
+        "baseline_accuracy": baseline_accuracy,
+        "amelioration_vs_baseline": round(accuracy - baseline_accuracy, 1),
+        "precision": round(precision_score(y_test, y_pred, zero_division=0) * 100, 1),
+        "recall": round(recall_score(y_test, y_pred, zero_division=0) * 100, 1),
+        "f1": round(f1_score(y_test, y_pred, zero_division=0) * 100, 1),
+        "roc_auc": round(roc_auc_score(y_test, y_proba) * 100, 1) if len(np.unique(y_test)) > 1 else None,
+        "confusion_matrix": confusion_matrix(y_test, y_pred).tolist(),
+        "taux_hausse_train": round(taux_hausse_train * 100, 1),
+        "taux_hausse_test": round(taux_hausse_test * 100, 1),
+        "n_train": len(y_train),
+        "n_test": len(y_test),
+        "n_exclus_zone_neutre": n_exclus,
+        "seuil_neutre": seuil_neutre,
+        "logloss_modele": logloss_modele,
+        "logloss_baseline": logloss_baseline,
+        "brier_score": brier,
+        "calibration_bins": calibration_bins,
+        "perf_par_regime": perf_par_regime,
+        "perf_par_ticker": perf_par_ticker,
+        "walk_forward": wf,
+    }
+
+    # Ré-entraîne sur l'ensemble des données SIGNIFICATIVES (train + test, hors
+    # zone neutre) pour l'usage en production (audit SHAP, etc.), tout en
+    # gardant les métriques mesurées honnêtement sur le split test ci-dessus.
+    X_full = df_signif[feat].values
+    y_full = (df_signif["target_next_return"] > 0).astype(int).values
+    X_full_s = scl.fit_transform(imp.fit_transform(X_full))
+    model.fit(X_full_s, y_full)
+
+    return {
+        "model": model, "imputer": imp, "scaler": scl, "features": feat,
+        "accuracy": accuracy, "diagnostics": diagnostics,
+    }
+
+
+def walk_forward_validation(df: pd.DataFrame, feat: list[str], seuil_neutre: float = 0.003,
+                             n_fenetres: int = 5, train_ratio: float = 0.8) -> dict:
+    """
+    Un seul split 80/20 donne UN chiffre d'accuracy, qui peut être un coup de
+    chance (ou de malchance) selon la période testée. La walk-forward
+    validation répète le même protocole sur plusieurs fenêtres temporelles
+    glissantes non chevauchantes, pour obtenir une distribution (moyenne +
+    écart-type) plutôt qu'un point unique — bien plus honnête pour juger si
+    le modèle a un vrai edge stable dans le temps ou si le 51-55% observé
+    fluctue au hasard d'une période à l'autre.
+
+    Découpage : le dataset est divisé en n_fenetres tranches temporelles
+    égales. Dans chaque tranche, on ré-applique le même split 80/20
+    train/test qu'ailleurs, on entraîne un modèle indépendant, et on mesure
+    son accuracy sur le test de cette tranche uniquement.
     """
     from xgboost import XGBClassifier
     from sklearn.preprocessing import StandardScaler
     from sklearn.impute import SimpleImputer
     from sklearn.metrics import accuracy_score
 
-    if df.empty:
-        return {"model": None, "features": utils.FEATURES_DEFAUT, "accuracy": 0.0}
+    df_signif = df[df["target_next_return"].abs() >= seuil_neutre].copy()
+    if df_signif.empty:
+        return {"fenetres": [], "accuracy_moyenne": None, "accuracy_ecart_type": None}
 
-    feat = utils.FEATURES_DEFAUT
-    df_sorted = df.sort_values("date")
+    dates_uniques = np.sort(df_signif["date"].unique())
+    if len(dates_uniques) < n_fenetres * 20:  # pas assez de données pour découper proprement
+        return {"fenetres": [], "accuracy_moyenne": None, "accuracy_ecart_type": None}
 
-    X = df_sorted[feat].values
-    y = (df_sorted["target_next_return"] > 0).astype(int).values
+    limites = np.array_split(dates_uniques, n_fenetres)
+    resultats = []
 
-    split_idx = int(len(X) * 0.8)
-    X_train, X_test = X[:split_idx], X[split_idx:]
-    y_train, y_test = y[:split_idx], y[split_idx:]
+    for i, dates_fenetre in enumerate(limites):
+        df_fenetre = df_signif[df_signif["date"].isin(dates_fenetre)]
+        train_f, test_f = _split_temporel_par_date(df_fenetre, train_ratio=train_ratio)
 
-    imp, scl = SimpleImputer(strategy="median"), StandardScaler()
-    X_train_s = scl.fit_transform(imp.fit_transform(X_train))
+        if train_f.empty or test_f.empty or len(train_f) < 30 or len(test_f) < 10:
+            continue
 
-    model = XGBClassifier(n_estimators=100, max_depth=3, learning_rate=0.05, random_state=42)
-    model.fit(X_train_s, y_train)
+        X_train = train_f[feat].values
+        y_train = (train_f["target_next_return"] > 0).astype(int).values
+        X_test = test_f[feat].values
+        y_test = (test_f["target_next_return"] > 0).astype(int).values
 
-    accuracy = 50.0  # valeur neutre par défaut si pas assez de données de test
-    if len(X_test) > 0:
-        X_test_s = scl.transform(imp.transform(X_test))
-        y_pred = model.predict(X_test_s)
-        accuracy = round(accuracy_score(y_test, y_pred) * 100, 1)
+        if len(np.unique(y_train)) < 2:  # une seule classe présente, impossible d'entraîner
+            continue
 
-    # Ré-entraîne sur l'ensemble des données pour l'usage en production (audit, etc.)
-    # tout en gardant l'accuracy mesurée honnêtement sur le split test ci-dessus.
-    X_full_s = scl.fit_transform(imp.fit_transform(X))
-    model.fit(X_full_s, y)
+        n_pos = y_train.sum()
+        n_neg = len(y_train) - n_pos
+        spw = (n_neg / n_pos) if n_pos > 0 else 1.0
 
-    return {"model": model, "imputer": imp, "scaler": scl, "features": feat, "accuracy": accuracy}
+        imp_f, scl_f = SimpleImputer(strategy="median"), StandardScaler()
+        X_train_s = scl_f.fit_transform(imp_f.fit_transform(X_train))
+        X_test_s = scl_f.transform(imp_f.transform(X_test))
+
+        model_f = XGBClassifier(
+            n_estimators=200, max_depth=4, learning_rate=0.03,
+            subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+            scale_pos_weight=spw, random_state=42, eval_metric="logloss",
+        )
+        model_f.fit(X_train_s, y_train)
+        acc = round(accuracy_score(y_test, model_f.predict(X_test_s)) * 100, 1)
+
+        resultats.append({
+            "fenetre": i + 1,
+            "date_debut": str(pd.Timestamp(dates_fenetre.min()).date()),
+            "date_fin": str(pd.Timestamp(dates_fenetre.max()).date()),
+            "accuracy": acc,
+            "n_test": len(y_test),
+        })
+
+    if not resultats:
+        return {"fenetres": [], "accuracy_moyenne": None, "accuracy_ecart_type": None}
+
+    accs = [r["accuracy"] for r in resultats]
+    return {
+        "fenetres": resultats,
+        "accuracy_moyenne": round(float(np.mean(accs)), 1),
+        "accuracy_ecart_type": round(float(np.std(accs)), 1),
+    }
 
 
 # ------------------------------------------------------------------------------
@@ -418,7 +688,7 @@ def get_all_data(univers_etendu: list[str] = None):
     zscore_df = sync_altman_zscore(tickers_core, prix_actuels)
 
     etape.info("Étape 5/5 — Calcul des indicateurs et entraînement du modèle IA...")
-    market_data_clean = build_features(market_data_raw, macro_data_raw, utils.dict_secteurs)
+    market_data_clean = build_features(market_data_raw, macro_data_raw, utils.dict_secteurs, fonda_data_clean)
 
     cache_key = f"{len(market_data_clean)}_{market_data_clean['date'].max() if not market_data_clean.empty else 'empty'}"
     model_result = train_ia(cache_key, market_data_clean)
