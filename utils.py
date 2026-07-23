@@ -27,5 +27,6 @@ dict_noms = {
 FEATURES_DEFAUT = [
     'daily_return', 'pct_vs_ma50', 'macd_diff', 'mom_5j',
     'mom_20j', 'vol_relative', 'rsi_14', 'volatility',
-    'vix_regime', 'rsi_rank_sec'
+    'vix_regime', 'rsi_rank_sec',
+    'roe', 'margin', 'ev_ebitda', 'debt_eq',  # fondamentaux Alpha Vantage
 ]
