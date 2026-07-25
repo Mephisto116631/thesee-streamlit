@@ -730,6 +730,34 @@ def walk_forward_validation(df: pd.DataFrame, feat: list[str], seuil_neutre: flo
     }
 
 
+def comparer_seuils_neutres(df: pd.DataFrame, feat: list[str], seuils: list[float] = None) -> pd.DataFrame:
+    """Compare plusieurs seuils de zone neutre sur les mêmes données."""
+    if seuils is None:
+        seuils = [0.001, 0.003, 0.005, 0.01, 0.015, 0.02]
+
+    resultats = []
+    for s in seuils:
+        cache_key = f"comparaison_seuil_{s}_{len(df)}"
+        r = train_ia(cache_key, df, seuil_neutre=s, features=feat)
+        d = r.get("diagnostics")
+        if d:
+            resultats.append({
+                "seuil_pct": round(s * 100, 2),
+                "accuracy": d["accuracy"],
+                "baseline_accuracy": d["baseline_accuracy"],
+                "delta_vs_baseline": d["amelioration_vs_baseline"],
+                "roc_auc": d["roc_auc"],
+                "n_train": d["n_train"],
+                "n_test": d["n_test"],
+                "n_exclus": d["n_exclus_zone_neutre"],
+            })
+
+    if not resultats:
+        return pd.DataFrame()
+
+    return pd.DataFrame(resultats).sort_values("delta_vs_baseline", ascending=False).reset_index(drop=True)
+
+
 # ------------------------------------------------------------------------------
 # 5. POINT D'ENTREE UNIQUE — a appeler depuis chaque page Streamlit
 # ------------------------------------------------------------------------------
