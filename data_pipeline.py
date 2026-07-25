@@ -11,6 +11,7 @@ import streamlit as st
 
 import db
 import utils
+import universe
 
 CLE_ALPHA_VANTAGE = db._get_secret("ALPHA_VANTAGE_KEY")
 
@@ -360,6 +361,75 @@ def build_features(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None, dict_sec
     return df.dropna(subset=["target_next_return"])
 
 
+def build_features_etf(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None) -> pd.DataFrame:
+    """
+    Features spécifiques aux ETFs — modèle séparé de celui des actions.
+    Pas de fondamentaux (roe/margin/ev_ebitda/debt_eq n'ont pas de sens pour
+    un ETF, qui n'a pas de bilan d'entreprise propre). En échange :
+
+    - dollar_volume : proxy d'activité/intérêt (prix × volume échangé). Ce
+      n'est PAS un vrai flux de création/rachat de parts (ces données ne sont
+      disponibles que via des fournisseurs payants comme ETF.com ou Massive/
+      ETF Global) — c'est une approximation basée sur ce que yfinance fournit
+      déjà gratuitement.
+    - tracking_vs_ref : performance du rendement quotidien de l'ETF moins
+      celle de son indice de référence (voir universe.ETF_INDICE_REFERENCE),
+      ex. XLK vs SPY. Mesure si le secteur surperforme ou sous-performe le
+      marché large ce jour-là — un signal de rotation sectorielle.
+    """
+    if mkt_df.empty:
+        return pd.DataFrame()
+
+    parts = []
+    for s, grp in mkt_df.groupby("symbol"):
+        grp = grp.sort_values("date").copy()
+        grp["daily_return"] = grp["close"].pct_change()
+        grp["ma_50"] = grp["close"].rolling(50).mean()
+        grp["pct_vs_ma50"] = (grp["close"] - grp["ma_50"]) / grp["ma_50"]
+
+        up = grp["close"].diff().clip(lower=0).ewm(com=13, adjust=False).mean()
+        down = grp["close"].diff().clip(upper=0).abs().ewm(com=13, adjust=False).mean()
+        grp["rsi_14"] = 100 - (100 / (1 + (up / down.replace(0, np.inf))))
+
+        grp["mom_5j"] = grp["close"].pct_change(5)
+        grp["mom_20j"] = grp["close"].pct_change(20)
+        grp["volatility"] = grp["daily_return"].rolling(20).std() * np.sqrt(252)
+        grp["vol_relative"] = grp["volume"] / grp["volume"].rolling(20).mean()
+        grp["macd_diff"] = grp["close"].ewm(span=12).mean() - grp["close"].ewm(span=26).mean()
+        grp["dollar_volume"] = grp["close"] * grp["volume"]
+        grp["dollar_volume_relatif"] = grp["dollar_volume"] / grp["dollar_volume"].rolling(20).mean()
+        grp["target_next_return"] = grp["daily_return"].shift(-1)
+        parts.append(grp)
+
+    df = pd.concat(parts) if parts else pd.DataFrame()
+    if df.empty:
+        return df
+
+    # --- vix_regime réel : même logique que pour les actions ---
+    if macro_df is not None and not macro_df.empty and "^VIX" in macro_df["symbol"].unique():
+        vix = macro_df[macro_df["symbol"] == "^VIX"][["date", "close"]].rename(columns={"close": "vix_close"})
+        df = df.merge(vix, on="date", how="left")
+        df["vix_regime"] = df["vix_close"].apply(_calc_vix_regime)
+        df = df.drop(columns=["vix_close"])
+    else:
+        df["vix_regime"] = 1
+
+    # --- tracking_vs_ref : rendement quotidien de l'ETF moins celui de son indice ---
+    rendements_par_symbol = df.set_index(["date", "symbol"])["daily_return"].to_dict()
+    tracking_values = []
+    for _, row in df.iterrows():
+        ref_symbol = universe.ETF_INDICE_REFERENCE.get(row["symbol"])
+        if ref_symbol:
+            rendement_ref = rendements_par_symbol.get((row["date"], ref_symbol))
+            tracking_values.append(row["daily_return"] - rendement_ref if rendement_ref is not None else np.nan)
+        else:
+            tracking_values.append(np.nan)
+    df["tracking_vs_ref"] = tracking_values
+    df["tracking_vs_ref"] = df["tracking_vs_ref"].fillna(0.0)
+
+    return df.dropna(subset=["target_next_return"])
+
+
 # ------------------------------------------------------------------------------
 # 4. MODELE XGBOOST — split temporel correct + métriques de diagnostic complètes
 # ------------------------------------------------------------------------------
@@ -382,10 +452,16 @@ def _split_temporel_par_date(df: pd.DataFrame, train_ratio: float = 0.8):
 
 
 @st.cache_resource(show_spinner="Entraînement du modèle IA...")
-def train_ia(_df_hash: str, df: pd.DataFrame, seuil_neutre: float = 0.003) -> dict:
+def train_ia(_df_hash: str, df: pd.DataFrame, seuil_neutre: float = 0.003,
+             features: list[str] = None) -> dict:
     """
     _df_hash : cle de cache stable (nombre de lignes + derniere date),
                car st.cache_resource ne hash pas bien les gros DataFrame.
+
+    features : liste des colonnes à utiliser comme features. Par défaut
+               utils.FEATURES_DEFAUT (modèle actions). Pour le modèle ETF,
+               passer utils.FEATURES_ETF — cette fonction est partagée entre
+               les deux, seule la liste de colonnes change.
 
     seuil_neutre : les mouvements de |rendement| < seuil_neutre (0.3% par défaut)
                    sont EXCLUS de l'entraînement et du test. Prédire "hausse" vs
@@ -413,10 +489,10 @@ def train_ia(_df_hash: str, df: pd.DataFrame, seuil_neutre: float = 0.003) -> di
         confusion_matrix, roc_auc_score, log_loss, brier_score_loss,
     )
 
-    if df.empty:
-        return {"model": None, "features": utils.FEATURES_DEFAUT, "accuracy": 0.0, "diagnostics": None}
+    feat = features if features is not None else utils.FEATURES_DEFAUT
 
-    feat = utils.FEATURES_DEFAUT
+    if df.empty:
+        return {"model": None, "features": feat, "accuracy": 0.0, "diagnostics": None}
 
     # Filtrage de la zone neutre — appliqué ICI (pas dans build_features) pour
     # que target_next_return brut reste disponible ailleurs si besoin.
@@ -687,11 +763,22 @@ def get_all_data(univers_etendu: list[str] = None):
         prix_actuels = derniers["close"].to_dict()
     zscore_df = sync_altman_zscore(tickers_core, prix_actuels)
 
-    etape.info("Étape 5/5 — Calcul des indicateurs et entraînement du modèle IA...")
-    market_data_clean = build_features(market_data_raw, macro_data_raw, utils.dict_secteurs, fonda_data_clean)
+    etape.info("Étape 5/5 — Calcul des indicateurs et entraînement des modèles IA...")
 
+    # Séparation actions / ETFs — les fondamentaux (roe, margin...) n'ont pas de
+    # sens pour un ETF, et ses dynamiques de prix diffèrent d'une action isolée
+    # (déjà diversifié). Deux modèles distincts plutôt que de tout mélanger.
+    symboles_etf = set(universe.ETFS_SECTORIELS.keys())
+    market_actions = market_data_raw[~market_data_raw["symbol"].isin(symboles_etf)] if not market_data_raw.empty else market_data_raw
+    market_etf = market_data_raw[market_data_raw["symbol"].isin(symboles_etf)] if not market_data_raw.empty else market_data_raw
+
+    market_data_clean = build_features(market_actions, macro_data_raw, utils.dict_secteurs, fonda_data_clean)
     cache_key = f"{len(market_data_clean)}_{market_data_clean['date'].max() if not market_data_clean.empty else 'empty'}"
-    model_result = train_ia(cache_key, market_data_clean)
+    model_result = train_ia(cache_key, market_data_clean, features=utils.FEATURES_DEFAUT)
+
+    market_etf_clean = build_features_etf(market_etf, macro_data_raw)
+    cache_key_etf = f"{len(market_etf_clean)}_{market_etf_clean['date'].max() if not market_etf_clean.empty else 'empty'}"
+    model_result_etf = train_ia(cache_key_etf, market_etf_clean, features=utils.FEATURES_ETF)
 
     etape.empty()
 
@@ -702,6 +789,13 @@ def get_all_data(univers_etendu: list[str] = None):
             "Importance": model_result["model"].feature_importances_,
         }).sort_values("Importance", ascending=False)
 
+    importance_df_etf = pd.DataFrame()
+    if model_result_etf["model"] is not None:
+        importance_df_etf = pd.DataFrame({
+            "Feature": model_result_etf["features"],
+            "Importance": model_result_etf["model"].feature_importances_,
+        }).sort_values("Importance", ascending=False)
+
     ratings_df = db.fetch_ratings()
 
     return {
@@ -709,9 +803,13 @@ def get_all_data(univers_etendu: list[str] = None):
         "macro_data_raw": macro_data_raw,
         "fonda_data_clean": fonda_data_clean,
         "market_data_clean": market_data_clean,
+        "market_etf_clean": market_etf_clean,
         "zscore_df": zscore_df,
         "model_result": model_result,
         "model_ia": model_result["model"],
         "importance_df": importance_df,
+        "model_result_etf": model_result_etf,
+        "model_ia_etf": model_result_etf["model"],
+        "importance_df_etf": importance_df_etf,
         "ratings_df": ratings_df,
     }
