@@ -39,6 +39,28 @@ ETFS_SECTORIELS = {
     "XLC": "Communication Services Select SPDR",
 }
 
+# --- Indice de référence pour chaque ETF (calcul du tracking / performance relative) ---
+# SPY et QQQ eux-mêmes sont comparés l'un à l'autre (large marché vs tech) faute de
+# référence plus large déjà présente dans l'univers ; DIA/IWM comparés à SPY (large marché).
+# Les XL* sectoriels sont comparés à SPY (S&P 500 complet), leur univers parent naturel.
+ETF_INDICE_REFERENCE = {
+    "SPY": "QQQ",
+    "QQQ": "SPY",
+    "DIA": "SPY",
+    "IWM": "SPY",
+    "XLK": "SPY",
+    "XLF": "SPY",
+    "XLV": "SPY",
+    "XLE": "SPY",
+    "XLY": "SPY",
+    "XLP": "SPY",
+    "XLI": "SPY",
+    "XLB": "SPY",
+    "XLU": "SPY",
+    "XLRE": "SPY",
+    "XLC": "SPY",
+}
+
 # --- Repli statique (utilisé seulement si le scraping Wikipedia échoue) ---
 FALLBACK_SP500 = [
     "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "GOOG", "META", "TSLA", "BRK.B", "JPM",
