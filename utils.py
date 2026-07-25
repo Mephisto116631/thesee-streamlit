@@ -30,3 +30,11 @@ FEATURES_DEFAUT = [
     'vix_regime', 'rsi_rank_sec',
     'roe', 'margin', 'ev_ebitda', 'debt_eq',  # fondamentaux Alpha Vantage
 ]
+
+# Features du modèle ETF (séparé du modèle actions) — pas de fondamentaux,
+# ajout du tracking vs indice de référence et du proxy dollar-volume.
+FEATURES_ETF = [
+    'daily_return', 'pct_vs_ma50', 'macd_diff', 'mom_5j',
+    'mom_20j', 'vol_relative', 'rsi_14', 'volatility',
+    'vix_regime', 'tracking_vs_ref', 'dollar_volume_relatif',
+]
