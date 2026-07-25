@@ -157,6 +157,42 @@ else:
                 "période testée, ce qui suggère un signal instable plutôt qu'un edge stable."
             )
 
+    with st.expander("🔬 Comparer différents seuils de zone neutre"):
+        st.caption(
+            "Teste plusieurs seuils d'exclusion des mouvements faibles pour voir "
+            "lequel maximise le delta vs baseline sur tes données réelles actuelles. "
+            "Entraîne plusieurs modèles — prend quelques secondes à ~1 minute."
+        )
+        if st.button("Lancer la comparaison", key="btn_comparer_seuils"):
+            with st.spinner("Entraînement de plusieurs modèles avec différents seuils..."):
+                comparaison = dp.comparer_seuils_neutres(
+                    market_clean, model_result["features"],
+                    seuils=[0.001, 0.003, 0.005, 0.01, 0.015, 0.02],
+                )
+            if not comparaison.empty:
+                comp_display = comparaison.rename(columns={
+                    "seuil_pct": "Seuil (%)", "accuracy": "Accuracy (%)",
+                    "baseline_accuracy": "Baseline (%)", "delta_vs_baseline": "Delta (pts)",
+                    "roc_auc": "ROC AUC (%)", "n_train": "N train", "n_test": "N test",
+                    "n_exclus": "N exclus",
+                })
+                st.dataframe(comp_display, use_container_width=True, hide_index=True)
+                meilleur = comparaison.iloc[0]
+                st.caption(
+                    f"Meilleur seuil testé : {meilleur['seuil_pct']}% "
+                    f"(delta {meilleur['delta_vs_baseline']:+.1f} pts vs baseline). "
+                    "Si tous les deltas restent proches de 0 ou négatifs, le seuil n'est "
+                    "pas le facteur limitant — le signal manque plutôt côté features/données."
+                )
+                if meilleur["n_test"] < 200:
+                    st.caption(
+                        f"⚠️ Attention : ce résultat repose sur seulement {meilleur['n_test']} "
+                        "observations de test. Un échantillon aussi petit peut donner un delta "
+                        "élevé par pur hasard statistique — méfiance avant de le considérer fiable."
+                    )
+            else:
+                st.warning("Comparaison impossible — données insuffisantes.")
+
 st.divider()
 
 
