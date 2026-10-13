@@ -192,8 +192,12 @@ def build_css(p: dict) -> str:
     }}
 
     /* --- Messages --- */
-    div[data-testid="stAlert"] {{ border-radius: 8px; }}
-    .stProgress > div > div {{ background-color: var(--t-accent); }}
+    div[data-testid="stAlert"] {{ border-radius: 8px; border: 1px solid var(--t-border); }}
+    div[data-testid="stAlert"] p, div[data-testid="stAlert"] li {{ color: var(--t-text) !important; }}
+    /* Barre de progression : piste discrète, remplissage en accent, libellé lisible */
+    [data-testid="stProgressBarTrack"] {{ background-color: var(--t-card2); border-radius: 4px; height: 6px; }}
+    [data-testid="stProgressBarTrack"] > div {{ background-color: var(--t-accent); border-radius: 4px; }}
+    .stProgress p {{ color: var(--t-muted); font-size: .85rem; }}
 
     /* --- Barres de défilement discrètes --- */
     ::-webkit-scrollbar {{ width: 10px; height: 10px; }}

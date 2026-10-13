@@ -163,7 +163,7 @@ def sync_fonda_data(tickers: tuple[str, ...]) -> pd.DataFrame:
     progress_bar.progress(1.0, text=f"Fondamentaux : {total}/{total} tickers traités")
     progress_bar.empty()
     if nouveaux_records:
-        st.toast(f"{len(nouveaux_records)} ticker(s) mis à jour (fondamentaux)", icon="✓")
+        st.toast(f"{len(nouveaux_records)} ticker(s) mis à jour (fondamentaux)", icon="✅")
         db.upsert_fonda_data(nouveaux_records)
 
     return db.fetch_fonda_data(tickers)
@@ -264,7 +264,7 @@ def sync_altman_zscore(tickers: tuple[str, ...], prix_actuels: dict) -> pd.DataF
     progress_bar.progress(1.0, text=f"Z-Score Altman : {total}/{total} tickers traités")
     progress_bar.empty()
     if nouveaux_records:
-        st.toast(f"{len(nouveaux_records)} Z-Score(s) recalculés", icon="✓")
+        st.toast(f"{len(nouveaux_records)} Z-Score(s) recalculés", icon="✅")
         db.upsert_zscore_data(nouveaux_records)
 
     return db.fetch_zscore_data(tickers)
