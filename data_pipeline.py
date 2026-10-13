@@ -50,33 +50,18 @@ def _telecharger_yahoo(tickers: list[str]) -> pd.DataFrame:
     return data
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
 def sync_market_data(tickers: tuple[str, ...]) -> pd.DataFrame:
     """
-    On tente d'abord Supabase. Si les donnees du jour sont absentes pour au
-    moins un ticker, on retelecharge tout le lot Yahoo et on upsert.
-    Fonctionne aussi bien pour la liste 'core' que pour un univers élargi
-    (S&P 500 + Nasdaq 100 + ETFs) — c'est juste une liste de tickers en entrée.
+    RÉSERVÉ AU CRON. Télécharge tout l'historique Yahoo (2020 -> aujourd'hui) en mémoire,
+    pour entraîner les modèles, mais n'écrit dans Supabase que les lignes récentes
+    (dernière date en base - 7 jours) ou l'historique complet des titres absents :
+    quelques milliers de lignes par run au lieu de ~900 000.
+    L'app Streamlit ne télécharge plus rien : elle lit Supabase (voir get_app_data).
     """
     tickers = list(tickers)
-    df_db = db.fetch_market_data(tickers)
 
-    aujourdhui = pd.Timestamp.today().normalize()
-    tickers_en_db = set(df_db["symbol"].unique()) if not df_db.empty else set()
-    tickers_manquants = set(tickers) - tickers_en_db
-
-    a_jour = (
-        not df_db.empty
-        and not tickers_manquants
-        and df_db.groupby("symbol")["date"].max().min() >= aujourdhui - pd.Timedelta(days=3)
-    )
-
-    if a_jour:
-        return df_db
-
-    # Téléchargement par lots pour rester raisonnable sur les univers larges (~600 tickers)
     batch_size = 100
-    frames = []
+    frames, echecs = [], []
     total_batches = (len(tickers) + batch_size - 1) // batch_size
     progress = st.progress(0, text="Téléchargement des prix (Yahoo Finance)...") if total_batches > 1 else None
 
@@ -85,6 +70,7 @@ def sync_market_data(tickers: tuple[str, ...]) -> pd.DataFrame:
         try:
             frames.append(_telecharger_yahoo(batch))
         except Exception as e:
+            echecs.extend(batch)
             st.warning(f"Erreur Yahoo Finance sur le lot {batch[:3]}... : {e}")
         if progress:
             progress.progress(min(1.0, (i + batch_size) / len(tickers)),
@@ -94,11 +80,21 @@ def sync_market_data(tickers: tuple[str, ...]) -> pd.DataFrame:
         progress.empty()
 
     if not frames:
-        return df_db  # rien de neuf, on retombe sur ce qu'on a
+        return pd.DataFrame()
 
     df_fresh = pd.concat(frames, ignore_index=True)
-    db.upsert_market_data(df_fresh)
     df_fresh["date"] = pd.to_datetime(df_fresh["date"])
+    df_fresh = df_fresh.dropna(subset=["close"])
+
+    # Écriture incrémentale : seulement ce qui est nouveau ou récent
+    status = db.fetch_market_status()
+    derniere = dict(zip(status["symbol"], status["max_date"])) if not status.empty else {}
+    plancher = pd.Timestamp("1900-01-01")
+    seuil = df_fresh["symbol"].map(lambda s: derniere.get(s, plancher + pd.Timedelta(days=7)) - pd.Timedelta(days=7))
+    df_a_ecrire = df_fresh[df_fresh["date"] >= seuil]
+    db.upsert_market_data(df_a_ecrire)
+    print(f"[sync_market_data] {len(df_fresh)} lignes téléchargées, {len(df_a_ecrire)} écrites en base"
+          + (f", lots en échec : {len(echecs)} tickers" if echecs else ""))
     return df_fresh
 
 
@@ -297,7 +293,7 @@ def _calc_vix_regime(vix_close: float) -> int:
 
 
 def build_features(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None, dict_secteurs: dict = None,
-                    fonda_df: pd.DataFrame = None) -> pd.DataFrame:
+                    fonda_df: pd.DataFrame = None, garder_sans_cible: bool = False) -> pd.DataFrame:
     """
     fonda_df : fondamentaux Alpha Vantage (roe, margin, ev_ebitda, debt_eq) par
                symbol. ATTENTION — ce sont des instantanés de la valeur ACTUELLE
@@ -381,10 +377,13 @@ def build_features(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None, dict_sec
         df["ev_ebitda"] = 0.0
         df["debt_eq"] = 0.0
 
-    return df.dropna(subset=["target_next_return"])
+    # garder_sans_cible=True conserve le dernier jour (cible inconnue) : nécessaire pour
+    # le snapshot du Screener et les valeurs SHAP du jour. L'entraînement retire ces lignes.
+    return df if garder_sans_cible else df.dropna(subset=["target_next_return"])
 
 
-def build_features_etf(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None) -> pd.DataFrame:
+def build_features_etf(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None,
+                        garder_sans_cible: bool = False) -> pd.DataFrame:
     """
     Features spécifiques aux ETFs — modèle séparé de celui des actions.
     Pas de fondamentaux (roe/margin/ev_ebitda/debt_eq n'ont pas de sens pour
@@ -450,7 +449,9 @@ def build_features_etf(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None) -> p
     df["tracking_vs_ref"] = tracking_values
     df["tracking_vs_ref"] = df["tracking_vs_ref"].fillna(0.0)
 
-    return df.dropna(subset=["target_next_return"])
+    # garder_sans_cible=True conserve le dernier jour (cible inconnue) : nécessaire pour
+    # le snapshot du Screener et les valeurs SHAP du jour. L'entraînement retire ces lignes.
+    return df if garder_sans_cible else df.dropna(subset=["target_next_return"])
 
 
 # ------------------------------------------------------------------------------
@@ -504,7 +505,7 @@ def _ic_par_date(test_df: pd.DataFrame, y_proba: np.ndarray, col_cible: str):
 
 @st.cache_resource(show_spinner="Entraînement du modèle IA...")
 def train_ia(_df_hash: str, df: pd.DataFrame, seuil_neutre: float = 0.003,
-             features: list[str] = None, cible: str = "jour") -> dict:
+             features: list[str] = None, cible: str = "jour", avec_wf: bool = True) -> dict:
     """
     _df_hash : cle de cache stable (nombre de lignes + derniere date),
                car st.cache_resource ne hash pas bien les gros DataFrame.
@@ -661,7 +662,10 @@ def train_ia(_df_hash: str, df: pd.DataFrame, seuil_neutre: float = 0.003,
     # --- Walk-forward validation : plusieurs fenêtres temporelles indépendantes
     # pour juger si l'accuracy est stable dans le temps ou si le chiffre unique
     # du split principal ci-dessus est un coup de chance sur cette période précise.
-    wf = walk_forward_validation(df, feat, seuil_neutre=seuil_neutre, n_fenetres=5, cible=cible)
+    if avec_wf:
+        wf = walk_forward_validation(df, feat, seuil_neutre=seuil_neutre, n_fenetres=5, cible=cible)
+    else:
+        wf = {"fenetres": [], "accuracy_moyenne": None, "accuracy_ecart_type": None}
 
     # --- IC (Information Coefficient) : corrélation de rang, PAR DATE, entre la
     # probabilité prédite et le rendement réalisé, puis moyenne sur les dates.
@@ -803,7 +807,7 @@ def comparer_seuils_neutres(df: pd.DataFrame, feat: list[str], seuils: list[floa
     resultats = []
     for s in seuils:
         cache_key = f"comparaison_seuil_{s}_{len(df)}"
-        r = train_ia(cache_key, df, seuil_neutre=s, features=feat)
+        r = train_ia(cache_key, df, seuil_neutre=s, features=feat, avec_wf=False)
         d = r.get("diagnostics")
         if d:
             resultats.append({
@@ -824,39 +828,108 @@ def comparer_seuils_neutres(df: pd.DataFrame, feat: list[str], seuils: list[floa
 
 
 # ------------------------------------------------------------------------------
-# 4 bis. MODELES A LA DEMANDE — entraînés seulement quand une page en a besoin
-# (évite d'entraîner 3 modèles à chaque chargement ; train_ia est mis en cache)
+# 4 bis. PUBLICATION DES RESULTATS (CRON) — payloads JSON, SHAP du jour, snapshot
 # ------------------------------------------------------------------------------
-def entrainer_modele_relatif(data: dict) -> dict:
-    """Modèle relatif : bat la médiane de l'univers sur 5 jours (features en rang cross-sectionnel)."""
-    df = data["market_data_clean"]
-    cle = f"{len(df)}_{df['date'].max() if not df.empty else 'empty'}_rel"
-    return train_ia(cle, df, seuil_neutre=0.0, features=utils.FEATURES_RELATIF, cible="relatif_5j")
+def _payload_modele(res: dict, extra: dict = None) -> dict:
+    """Résultat d'entraînement sérialisable (sans le modèle ni les objets sklearn)."""
+    importance = []
+    if res.get("model") is not None:
+        imp = res["model"].feature_importances_
+        importance = sorted(
+            [{"Feature": f, "Importance": float(v)} for f, v in zip(res["features"], imp)],
+            key=lambda r: r["Importance"], reverse=True,
+        )
+    return {
+        "accuracy": res["accuracy"],
+        "features": res["features"],
+        "diagnostics": res["diagnostics"],
+        "importance": importance,
+        **(extra or {}),
+    }
 
 
-def entrainer_modele_etf(data: dict) -> tuple[dict, pd.DataFrame]:
-    """Modèle ETF + tableau d'importance des features."""
-    df = data["market_etf_clean"]
-    cle = f"{len(df)}_{df['date'].max() if not df.empty else 'empty'}_etf"
-    res = train_ia(cle, df, features=utils.FEATURES_ETF)
-    importance = pd.DataFrame()
-    if res["model"] is not None:
-        importance = pd.DataFrame({
-            "Feature": res["features"],
-            "Importance": res["model"].feature_importances_,
-        }).sort_values("Importance", ascending=False)
-    return res, importance
+def calculer_shap_derniere_ligne(res: dict, df: pd.DataFrame) -> list[dict]:
+    """Valeurs SHAP + probabilité du modèle sur la dernière ligne disponible de chaque titre."""
+    if res.get("model") is None or df.empty:
+        return []
+    import shap
+    feat = res["features"]
+    last = df.sort_values("date").groupby("symbol").tail(1).reset_index(drop=True)
+    X_raw = last[feat].values.astype(float)
+    X = res["scaler"].transform(res["imputer"].transform(X_raw))
+    explainer = shap.TreeExplainer(res["model"])
+    sv = explainer.shap_values(X)
+    base = float(np.ravel(explainer.expected_value)[0])
+    proba = res["model"].predict_proba(X)[:, 1]
+
+    records = []
+    for i, row in last.iterrows():
+        records.append({
+            "symbol": row["symbol"],
+            "date": str(pd.Timestamp(row["date"]).date()),
+            "payload": {
+                "features": {f: X_raw[i, j] for j, f in enumerate(feat)},
+                "shap": {f: sv[i, j] for j, f in enumerate(feat)},
+                "base_value": base,
+                "proba": float(proba[i]),
+            },
+        })
+    return records
+
+
+COLONNES_SNAPSHOT = ["close", "daily_return", "rsi_14", "mom_5j", "mom_20j", "mom_60j", "mom_12_1",
+                     "volatility", "vol_relative", "macd_diff", "pct_vs_ma50", "vix_regime"]
+
+
+def construire_snapshot(df_actions: pd.DataFrame, df_etf: pd.DataFrame) -> list[dict]:
+    """Dernière ligne d'indicateurs par titre (actions + ETFs) pour le Screener."""
+    records = []
+    for df in (df_actions, df_etf):
+        if df is None or df.empty:
+            continue
+        last = df.sort_values("date").groupby("symbol").tail(1)
+        cols = [c for c in COLONNES_SNAPSHOT if c in last.columns]
+        for _, row in last.iterrows():
+            records.append({
+                "symbol": row["symbol"],
+                "date": str(pd.Timestamp(row["date"]).date()),
+                "payload": {c: row[c] for c in cols},
+            })
+    return records
+
+
+def publier_resultats(df_actions: pd.DataFrame, df_etf: pd.DataFrame, res_jour: dict,
+                      res_relatif: dict, res_etf: dict, comparaison: pd.DataFrame, n_symboles: int):
+    """Écrit tout ce que l'app lit : modèles, SHAP du jour, snapshot, méta."""
+    extra_jour = {"comparaison_seuils": comparaison.to_dict(orient="records") if comparaison is not None else []}
+    db.upsert_model_result("jour", _payload_modele(res_jour, extra_jour))
+    db.upsert_model_result("relatif", _payload_modele(res_relatif))
+    db.upsert_model_result("etf", _payload_modele(res_etf))
+
+    db.replace_shap_latest("jour", calculer_shap_derniere_ligne(res_jour, df_actions))
+    db.replace_shap_latest("relatif", calculer_shap_derniere_ligne(res_relatif, df_actions))
+    db.replace_shap_latest("etf", calculer_shap_derniere_ligne(res_etf, df_etf))
+    db.replace_screener_snapshot(construire_snapshot(df_actions, df_etf))
+
+    date_max = max(
+        [pd.Timestamp(d["date"].max()) for d in (df_actions, df_etf) if d is not None and not d.empty]
+    )
+    db.upsert_model_result("meta", {
+        "n_symboles": int(n_symboles),
+        "date_donnees": str(date_max.date()),
+        "synchro_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+    })
 
 
 # ------------------------------------------------------------------------------
-# 5. POINT D'ENTREE UNIQUE — a appeler depuis chaque page Streamlit
+# 5a. PIPELINE COMPLET — réservé au CRON (télécharge, entraîne, publie)
 # ------------------------------------------------------------------------------
 def get_all_data(univers_etendu: list[str] = None):
     """
-    Retourne un dict avec toutes les donnees necessaires aux pages.
-    univers_etendu : si fourni, les PRIX (Yahoo) sont synchronisés pour cette
-                      liste élargie. Les FONDAMENTAUX restent limités à
-                      utils.actifs_sp500 (rate-limit Alpha Vantage).
+    Exécuté UNIQUEMENT par cron_sync.py (GitHub Actions). L'app Streamlit n'appelle
+    jamais cette fonction : elle lit ce qui est publié ici (voir get_app_data).
+    univers_etendu : prix Yahoo pour cette liste ; fondamentaux/Z-Score limités à
+    utils.actifs_sp500 (rate-limit Alpha Vantage).
     """
     tickers_core = tuple(utils.actifs_sp500)
     macro = tuple(utils.actifs_macro)
@@ -864,58 +937,110 @@ def get_all_data(univers_etendu: list[str] = None):
 
     etape = st.empty()
 
-    etape.info("Étape 1/5 — Synchronisation des données de marché (Yahoo Finance)...")
+    etape.info("Étape 1/6 — Synchronisation des données de marché (Yahoo Finance)...")
     market_data_raw = sync_market_data(tickers_prix)
+    if market_data_raw.empty:
+        raise RuntimeError("Aucune donnée de marché téléchargée (Yahoo Finance indisponible ?).")
 
-    etape.info("Étape 2/5 — Synchronisation des données macro (VIX, SPY)...")
+    etape.info("Étape 2/6 — Synchronisation des données macro (VIX, SPY)...")
     macro_data_raw = sync_macro_data(macro)
 
-    etape.info("Étape 3/5 — Vérification des fondamentaux (Alpha Vantage)...")
+    etape.info("Étape 3/6 — Fondamentaux (Alpha Vantage)...")
     fonda_data_clean = sync_fonda_data(tickers_core)
 
-    etape.info("Étape 4/5 — Calcul du Z-Score Altman...")
-    market_core = market_data_raw[market_data_raw["symbol"].isin(tickers_core)] if not market_data_raw.empty else market_data_raw
+    etape.info("Étape 4/6 — Z-Score Altman...")
+    market_core = market_data_raw[market_data_raw["symbol"].isin(tickers_core)]
     prix_actuels = {}
     if not market_core.empty:
         derniers = market_core.sort_values("date").groupby("symbol").last()
         prix_actuels = derniers["close"].to_dict()
     zscore_df = sync_altman_zscore(tickers_core, prix_actuels)
 
-    etape.info("Étape 5/5 — Calcul des indicateurs et entraînement des modèles IA...")
-
-    # Séparation actions / ETFs — les fondamentaux (roe, margin...) n'ont pas de
-    # sens pour un ETF, et ses dynamiques de prix diffèrent d'une action isolée
-    # (déjà diversifié). Deux modèles distincts plutôt que de tout mélanger.
+    etape.info("Étape 5/6 — Indicateurs et entraînement des modèles...")
     symboles_etf = set(universe.ETFS_SECTORIELS.keys())
-    market_actions = market_data_raw[~market_data_raw["symbol"].isin(symboles_etf)] if not market_data_raw.empty else market_data_raw
-    market_etf = market_data_raw[market_data_raw["symbol"].isin(symboles_etf)] if not market_data_raw.empty else market_data_raw
+    market_actions = market_data_raw[~market_data_raw["symbol"].isin(symboles_etf)]
+    market_etf = market_data_raw[market_data_raw["symbol"].isin(symboles_etf)]
 
-    market_data_clean = build_features(market_actions, macro_data_raw, utils.dict_secteurs, fonda_data_clean)
-    cache_key = f"{len(market_data_clean)}_{market_data_clean['date'].max() if not market_data_clean.empty else 'empty'}"
-    model_result = train_ia(cache_key, market_data_clean, features=utils.FEATURES_DEFAUT)
+    df_actions = build_features(market_actions, macro_data_raw, utils.dict_secteurs, fonda_data_clean,
+                                garder_sans_cible=True)
+    df_etf = build_features_etf(market_etf, macro_data_raw, garder_sans_cible=True)
 
-    market_etf_clean = build_features_etf(market_etf, macro_data_raw)
+    def cle(df, suffixe):
+        return f"{len(df)}_{df['date'].max() if not df.empty else 'empty'}_{suffixe}"
 
+    res_jour = train_ia(cle(df_actions, "jour"), df_actions, features=utils.FEATURES_DEFAUT)
+    res_relatif = train_ia(cle(df_actions, "rel"), df_actions, seuil_neutre=0.0,
+                           features=utils.FEATURES_RELATIF, cible="relatif_5j")
+    res_etf = train_ia(cle(df_etf, "etf"), df_etf, features=utils.FEATURES_ETF)
+    comparaison = comparer_seuils_neutres(df_actions, utils.FEATURES_DEFAUT)
+
+    etape.info("Étape 6/6 — Publication des résultats dans Supabase...")
+    publier_resultats(df_actions, df_etf, res_jour, res_relatif, res_etf, comparaison,
+                      n_symboles=market_data_raw["symbol"].nunique())
     etape.empty()
-
-    importance_df = pd.DataFrame()
-    if model_result["model"] is not None:
-        importance_df = pd.DataFrame({
-            "Feature": model_result["features"],
-            "Importance": model_result["model"].feature_importances_,
-        }).sort_values("Importance", ascending=False)
-
-    ratings_df = db.fetch_ratings()
 
     return {
         "market_data_raw": market_data_raw,
         "macro_data_raw": macro_data_raw,
         "fonda_data_clean": fonda_data_clean,
-        "market_data_clean": market_data_clean,
-        "market_etf_clean": market_etf_clean,
         "zscore_df": zscore_df,
-        "model_result": model_result,
-        "model_ia": model_result["model"],
-        "importance_df": importance_df,
-        "ratings_df": ratings_df,
+        "model_result": res_jour,
+        "model_result_relatif": res_relatif,
+        "model_result_etf": res_etf,
     }
+
+
+# ------------------------------------------------------------------------------
+# 5b. DONNEES DE L'APP — lecture seule de Supabase, aucun calcul lourd
+# ------------------------------------------------------------------------------
+def _importance_df(payload: dict) -> pd.DataFrame:
+    rows = (payload or {}).get("importance") or []
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["Feature", "Importance"])
+
+
+@st.cache_data(ttl=600, show_spinner="Chargement des données...")
+def get_app_data() -> dict:
+    """
+    Tout ce que lisent les pages, en quelques requêtes légères (~500 lignes chacune).
+    Le CRON GitHub Actions télécharge les prix, entraîne les modèles et publie les
+    résultats ; l'app n'entraîne et ne télécharge plus rien.
+    """
+    core = list(utils.actifs_sp500)
+    res_jour = db.fetch_model_result("jour") or {}
+    res_rel = db.fetch_model_result("relatif") or {}
+    res_etf = db.fetch_model_result("etf") or {}
+    meta = db.fetch_model_result("meta") or {}
+    snapshot = db.fetch_screener_snapshot()
+
+    symboles_etf = set(universe.ETFS_SECTORIELS.keys())
+    return {
+        "snapshot": snapshot,
+        "snapshot_actions": snapshot[~snapshot["symbol"].isin(symboles_etf)] if not snapshot.empty else snapshot,
+        "snapshot_etf": snapshot[snapshot["symbol"].isin(symboles_etf)] if not snapshot.empty else snapshot,
+        "fonda_data_clean": db.fetch_fonda_data(core),
+        "zscore_df": db.fetch_zscore_data(core),
+        "ratings_df": db.fetch_ratings(),
+        "model_result": res_jour,
+        "model_result_relatif": res_rel,
+        "model_result_etf": res_etf,
+        "importance_df": _importance_df(res_jour),
+        "importance_df_etf": _importance_df(res_etf),
+        "meta": meta,
+    }
+
+
+@st.cache_data(ttl=3600, show_spinner="Chargement des prix...")
+def get_prix_historique(tickers: tuple[str, ...], jours: int = 1100) -> pd.DataFrame:
+    """Prix d'une sélection de titres (pour Markowitz / Monte-Carlo), lus dans Supabase."""
+    depuis = str((pd.Timestamp.today() - pd.Timedelta(days=jours)).date())
+    return db.fetch_prix_historique(list(tickers), depuis)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_shap_symbols(model: str) -> list[str]:
+    return db.fetch_shap_symbols(model)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_shap(model: str, symbol: str) -> dict | None:
+    return db.fetch_shap_latest(model, symbol)

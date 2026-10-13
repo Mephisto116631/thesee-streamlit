@@ -148,7 +148,7 @@ with tab_credit:
 with tab_tech:
     st.subheader("Sources de données")
     st.dataframe(pd.DataFrame([
-        {"Donnée": "Prix OHLCV (univers élargi)", "Source": "Yahoo Finance (yfinance)", "Fréquence": "3 fois par jour (CRON)"},
+        {"Donnée": "Prix OHLCV (univers élargi)", "Source": "Yahoo Finance (yfinance)", "Fréquence": "3 fois par jour (CRON), écriture incrémentale"},
         {"Donnée": "VIX, SPY", "Source": "Yahoo Finance", "Fréquence": "3 fois par jour (CRON)"},
         {"Donnée": "Fondamentaux", "Source": "Alpha Vantage OVERVIEW", "Fréquence": "TTL 7 jours"},
         {"Donnée": "Z-Score d'Altman", "Source": "Alpha Vantage BALANCE_SHEET + INCOME_STATEMENT", "Fréquence": "TTL 7 jours"},
@@ -158,10 +158,12 @@ with tab_tech:
 
     st.subheader("Persistance et cache")
     st.markdown(
-        "- **Supabase** (PostgreSQL) est la source de vérité : prix, macro, fondamentaux, Z-Scores, spreads.\n"
-        "- **GitHub Actions** (CRON, jours ouvrés) rafraîchit Supabase indépendamment des visites : "
-        "l'app ne fait que lire des données à jour.\n"
-        "- **Cache Streamlit** de 1 heure pour les lectures ; modèles entraînés mis en cache par jeu de données."
+        "- **GitHub Actions** (CRON, jours ouvrés) fait tout le travail lourd : téléchargement des prix, "
+        "fondamentaux, Z-Score, entraînement des trois modèles, calcul des valeurs SHAP du jour.\n"
+        "- **Supabase** (PostgreSQL) stocke les prix, les fondamentaux, les spreads et les **résultats des modèles**.\n"
+        "- **L'app Streamlit ne fait que lire** ces résultats : aucun entraînement ni téléchargement dans "
+        "l'app, donc des pages rapides (cache de 10 minutes).\n"
+        "- Les prix du Portefeuille sont lus à la demande pour les seuls titres sélectionnés."
     )
 
     st.subheader("Stack")

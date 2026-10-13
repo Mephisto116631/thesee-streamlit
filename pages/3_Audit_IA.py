@@ -17,7 +17,7 @@ apply_theme()
 st.title("🧠 Audit Intelligence Artificielle")
 
 if "thesee_data" not in st.session_state:
-    st.session_state["thesee_data"] = dp.get_all_data()
+    st.session_state["thesee_data"] = dp.get_app_data()
 data = st.session_state["thesee_data"]
 
 DICT_FEATURES_NOMS = {
@@ -30,17 +30,15 @@ DICT_FEATURES_NOMS = {
     "ev_ebitda": "EV/EBITDA", "debt_eq": "Dette/Capitaux Propres",
 }
 
-market_clean = data["market_data_clean"]
 model_result = data["model_result"]
-model_ia = data["model_ia"]
-diag = model_result.get("diagnostics")
+diag = model_result.get("diagnostics") if model_result else None
+tickers_shap = dp.get_shap_symbols("jour") if model_result else []
 
 with st.sidebar:
     palette_selector_sidebar()
     st.divider()
     st.subheader("Audit Intelligence Artificielle")
-    tickers_dispo = sorted(market_clean["symbol"].unique().tolist()) if not market_clean.empty else []
-    ticker = st.selectbox("Sélectionner un actif pour audit :", tickers_dispo) if tickers_dispo else None
+    ticker = st.selectbox("Sélectionner un actif pour audit :", tickers_shap) if tickers_shap else None
     st.caption("Interprétation mathématique fine de la structure de décision du modèle.")
 
 # ------------------------------------------------------------------------------
@@ -49,7 +47,7 @@ with st.sidebar:
 st.subheader("📊 Diagnostic du modèle")
 
 if diag is None:
-    st.warning("Diagnostics indisponibles — modèle non entraîné ou données insuffisantes.")
+    st.warning("Diagnostics indisponibles — pas encore publiés par le CRON (ou données insuffisantes).")
 else:
     # Le chiffre qui compte le plus : le modèle bat-il une baseline naïve
     # (toujours prédire la classe majoritaire) ? Si non, il n'apprend rien.
@@ -166,52 +164,43 @@ else:
 
     with st.expander("🔬 Comparer différents seuils de zone neutre"):
         st.caption(
-            "Teste plusieurs seuils d'exclusion des mouvements faibles pour voir "
-            "lequel maximise le delta vs baseline sur tes données réelles actuelles. "
-            "Entraîne plusieurs modèles — prend quelques secondes à ~1 minute."
+            "Le CRON entraîne plusieurs modèles avec différents seuils d'exclusion des mouvements "
+            "faibles et publie le résultat. Sert à voir si le seuil est le facteur limitant."
         )
-        if st.button("Lancer la comparaison", key="btn_comparer_seuils"):
-            with st.spinner("Entraînement de plusieurs modèles avec différents seuils..."):
-                comparaison = dp.comparer_seuils_neutres(
-                    market_clean, model_result["features"],
-                    seuils=[0.001, 0.003, 0.005, 0.01, 0.015, 0.02],
-                )
-            if not comparaison.empty:
-                comp_display = comparaison.rename(columns={
-                    "seuil_pct": "Seuil (%)", "accuracy": "Accuracy (%)",
-                    "baseline_accuracy": "Baseline (%)", "delta_vs_baseline": "Delta (pts)",
-                    "roc_auc": "ROC AUC (%)", "n_train": "N train", "n_test": "N test",
-                    "n_exclus": "N exclus",
-                })
-                st.dataframe(comp_display, use_container_width=True, hide_index=True)
-                meilleur = comparaison.iloc[0]
+        comparaison = pd.DataFrame(model_result.get("comparaison_seuils") or [])
+        if comparaison.empty:
+            st.info("Comparaison non disponible : elle sera publiée au prochain passage du CRON.")
+        else:
+            comp_display = comparaison.rename(columns={
+                "seuil_pct": "Seuil (%)", "accuracy": "Accuracy (%)",
+                "baseline_accuracy": "Baseline (%)", "delta_vs_baseline": "Delta (pts)",
+                "roc_auc": "ROC AUC (%)", "n_train": "N train", "n_test": "N test",
+                "n_exclus": "N exclus",
+            })
+            st.dataframe(comp_display, use_container_width=True, hide_index=True)
+            meilleur = comparaison.iloc[0]
+            st.caption(
+                f"Meilleur seuil testé : {meilleur['seuil_pct']}% "
+                f"(delta {meilleur['delta_vs_baseline']:+.1f} pts vs baseline). "
+                "Si tous les deltas restent proches de 0 ou négatifs, le seuil n'est "
+                "pas le facteur limitant — le signal manque plutôt côté features/données."
+            )
+            if meilleur["n_test"] < 200:
                 st.caption(
-                    f"Meilleur seuil testé : {meilleur['seuil_pct']}% "
-                    f"(delta {meilleur['delta_vs_baseline']:+.1f} pts vs baseline). "
-                    "Si tous les deltas restent proches de 0 ou négatifs, le seuil n'est "
-                    "pas le facteur limitant — le signal manque plutôt côté features/données."
+                    f"⚠️ Attention : ce résultat repose sur seulement {meilleur['n_test']} "
+                    "observations de test. Un échantillon aussi petit peut donner un delta "
+                    "élevé par pur hasard statistique — méfiance avant de le considérer fiable."
                 )
-                if meilleur["n_test"] < 200:
-                    st.caption(
-                        f"⚠️ Attention : ce résultat repose sur seulement {meilleur['n_test']} "
-                        "observations de test. Un échantillon aussi petit peut donner un delta "
-                        "élevé par pur hasard statistique — méfiance avant de le considérer fiable."
-                    )
-            else:
-                st.warning("Comparaison impossible — données insuffisantes.")
 
 # ------------------------------------------------------------------------------
 # MODELE RELATIF — cible : battre la médiane de l'univers sur 5 jours
 # ------------------------------------------------------------------------------
 st.subheader("🎯 Modèle relatif (cross-sectionnel, 5 jours)")
-if st.button("Calculer le modèle relatif", key="btn_modele_relatif",
-             help="Entraîne le modèle sur tout l'univers : quelques minutes au premier calcul, ensuite en cache."):
-    st.session_state["thesee_modele_relatif"] = dp.entrainer_modele_relatif(data)
-res_rel = st.session_state.get("thesee_modele_relatif")
+res_rel = data.get("model_result_relatif")
 diag_rel = res_rel.get("diagnostics") if res_rel else None
 
-if res_rel is None:
-    st.caption("Non calculé. Le calcul est lancé à la demande pour ne pas ralentir le chargement de la page.")
+if not res_rel:
+    st.caption("Pas encore publié : il apparaîtra après le prochain passage du CRON.")
 elif diag_rel is None:
     st.info("Modèle relatif indisponible — historique insuffisant (≥ 1 an requis pour mom_12_1).")
 else:
@@ -249,22 +238,25 @@ st.divider()
 
 
 def get_shap_data(ticker):
-    if not ticker or model_ia is None:
+    """Valeurs SHAP du dernier jour, calculées par le CRON et lues dans Supabase."""
+    if not ticker:
         return None
-    row = market_clean[market_clean["symbol"] == ticker].tail(1)
-    X_raw = row[model_result["features"]].values
-    X_sc = model_result["scaler"].transform(model_result["imputer"].transform(X_raw))
-    explainer = shap.TreeExplainer(model_ia)
-    shap_values = explainer(X_sc)
+    rec = dp.get_shap("jour", ticker)
+    if not rec:
+        return None
+    feats = model_result["features"]
+    noms = [DICT_FEATURES_NOMS.get(f, f) for f in feats]
+    valeurs = np.array([rec["features"][f] if rec["features"][f] is not None else np.nan for f in feats], dtype=float)
+    impacts = np.array([rec["shap"][f] for f in feats], dtype=float)
 
     df = pd.DataFrame({
-        "Indicateur": [DICT_FEATURES_NOMS.get(f, f) for f in model_result["features"]],
-        "Valeur Observée": np.round(X_raw[0], 4),
-        "Impact sur le Signal": np.round(shap_values.values[0], 4),
+        "Indicateur": noms,
+        "Valeur Observée": np.round(valeurs, 4),
+        "Impact sur le Signal": np.round(impacts, 4),
     }).sort_values("Impact sur le Signal", key=abs, ascending=False)
 
-    shap_values.feature_names = [DICT_FEATURES_NOMS.get(f, f) for f in model_result["features"]]
-    return {"df": df, "shap_obj": shap_values[0]}
+    expl = shap.Explanation(values=impacts, base_values=rec["base_value"], data=valeurs, feature_names=noms)
+    return {"df": df, "shap_obj": expl, "date": rec.get("date"), "proba": rec.get("proba")}
 
 
 col1, col2 = st.columns([1, 1])
@@ -274,6 +266,8 @@ shap_data = get_shap_data(ticker) if ticker else None
 with col1:
     st.subheader("Vecteurs de Données et Impacts SHAP")
     if shap_data:
+        st.caption(f"Dernier jour disponible : {shap_data['date']} · probabilité de hausse : "
+                   f"{shap_data['proba'] * 100:.1f} %")
         st.dataframe(shap_data["df"], use_container_width=True, hide_index=True)
     else:
         st.info("Sélectionne un actif dans la barre latérale.")

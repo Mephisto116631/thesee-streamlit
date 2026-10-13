@@ -3,7 +3,6 @@
 # MODULE : SCREENER QUANTAMENTAL — univers élargi S&P 500 + Nasdaq 100 + ETFs
 # ==============================================================================
 import streamlit as st
-import pandas as pd
 from theme import apply_theme, palette_selector_sidebar
 import data_pipeline as dp
 import universe
@@ -17,8 +16,7 @@ st.title("📊 Screener Quantamental")
 if "thesee_univers" not in st.session_state:
     st.session_state["thesee_univers"] = universe.get_univers_complet()
 if "thesee_data" not in st.session_state:
-    univers_df = st.session_state["thesee_univers"]
-    st.session_state["thesee_data"] = dp.get_all_data(univers_etendu=univers_df["symbol"].tolist())
+    st.session_state["thesee_data"] = dp.get_app_data()
 
 data = st.session_state["thesee_data"]
 univers_df = st.session_state["thesee_univers"]
@@ -37,7 +35,7 @@ with st.sidebar:
 
     st.caption(f"Univers total : {len(univers_df)} tickers (S&P 500 + Nasdaq 100 + ETFs)")
 
-market_clean = data["market_data_clean"]
+market_clean = data["snapshot"]
 
 if market_clean.empty:
     st.warning("Aucune donnée de marché disponible.")

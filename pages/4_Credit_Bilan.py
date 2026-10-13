@@ -3,7 +3,6 @@
 # MODULE : CREDIT & BILAN — Z-Score Altman réel + spreads FRED réels
 # ==============================================================================
 import streamlit as st
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from theme import apply_theme, palette_selector_sidebar, get_active_palette
@@ -17,7 +16,7 @@ apply_theme()
 st.title("🛡️ Crédit & Bilan")
 
 if "thesee_data" not in st.session_state:
-    st.session_state["thesee_data"] = dp.get_all_data()
+    st.session_state["thesee_data"] = dp.get_app_data()
 data = st.session_state["thesee_data"]
 
 ratings_df = data["ratings_df"] if not data["ratings_df"].empty else pd.DataFrame(columns=["symbol", "rating_sp"])
@@ -103,7 +102,7 @@ with st.sidebar:
     st.caption("Z-Score Altman réel (5 ratios), calculé depuis les bilans Alpha Vantage.")
 
 fonda = data["fonda_data_clean"]
-market = data["market_data_raw"]
+market = data["snapshot"]
 zscore_df = data.get("zscore_df", pd.DataFrame())
 
 if not ratings_df.empty:

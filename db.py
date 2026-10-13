@@ -56,12 +56,13 @@ def upsert_market_data(df: pd.DataFrame, table: str = "market_data"):
 
 
 def fetch_market_data(tickers: list[str], table: str = "market_data") -> pd.DataFrame:
+    """Lecture complète (paginée) — réservé au CRON / aux petites tables (macro)."""
     client = get_client()
-    res = client.table(table).select("*").in_("symbol", tickers).execute()
-    df = pd.DataFrame(res.data)
+    rows = _fetch_all(lambda: client.table(table).select("*").in_("symbol", tickers)
+                      .order("symbol").order("date"))
+    df = pd.DataFrame(rows)
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
-        df = df.sort_values(["symbol", "date"])
     return df
 
 
@@ -176,3 +177,133 @@ def last_credit_spread_date(serie_id: str):
     if res.data:
         return pd.to_datetime(res.data[0]["date"]).date()
     return None
+
+
+# ------------------------------------------------------------------------------
+# LECTURE PAGINEE — PostgREST plafonne chaque réponse (1000 lignes par défaut sur
+# Supabase) : sans pagination, un select("*") ne renvoie qu'une fraction des lignes.
+# ------------------------------------------------------------------------------
+PAGE_SIZE = 1000
+
+
+def _json_safe(obj):
+    """Convertit récursivement numpy/pandas en types JSON natifs (NaN/inf -> None)."""
+    import math
+    import numpy as np
+    if isinstance(obj, dict):
+        return {str(k): _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return _json_safe(obj.tolist())
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating, float)):
+        v = float(obj)
+        return None if (math.isnan(v) or math.isinf(v)) else v
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    if isinstance(obj, (pd.Timestamp,)):
+        return str(obj.date())
+    if obj is pd.NaT:
+        return None
+    return obj
+
+
+def _fetch_all(build_query) -> list[dict]:
+    """build_query() -> requête fraîche ; on enchaîne les .range() jusqu'à épuisement."""
+    rows, start = [], 0
+    while True:
+        res = build_query().range(start, start + PAGE_SIZE - 1).execute()
+        batch = res.data or []
+        rows.extend(batch)
+        if len(batch) < PAGE_SIZE:
+            return rows
+        start += PAGE_SIZE
+
+
+def fetch_prix_historique(tickers: list[str], depuis: str, table: str = "market_data") -> pd.DataFrame:
+    """Prix (date, close, volume) d'une liste restreinte de titres depuis une date. Pour l'app."""
+    if not tickers:
+        return pd.DataFrame()
+    client = get_client()
+    rows = _fetch_all(lambda: client.table(table).select("symbol,date,close,volume")
+                      .in_("symbol", tickers).gte("date", depuis).order("symbol").order("date"))
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
+def fetch_market_status() -> pd.DataFrame:
+    """Dernière date et nombre de lignes par titre (vue market_data_status)."""
+    client = get_client()
+    rows = _fetch_all(lambda: client.table("market_data_status").select("*").order("symbol"))
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["max_date"] = pd.to_datetime(df["max_date"])
+    return df
+
+
+# ------------------------------------------------------------------------------
+# RESULTATS DES MODELES (écrits par le CRON, lus par l'app)
+# ------------------------------------------------------------------------------
+def upsert_model_result(model: str, payload: dict):
+    client = get_client()
+    client.table("model_results").upsert(
+        {"model": model, "payload": _json_safe(payload), "updated_at": pd.Timestamp.now(tz="UTC").isoformat()},
+        on_conflict="model",
+    ).execute()
+
+
+def fetch_model_result(model: str) -> dict | None:
+    client = get_client()
+    res = client.table("model_results").select("payload,updated_at").eq("model", model).limit(1).execute()
+    if not res.data:
+        return None
+    out = res.data[0]["payload"]
+    out["_updated_at"] = res.data[0]["updated_at"]
+    return out
+
+
+def replace_shap_latest(model: str, records: list[dict]):
+    """records : [{symbol, date, payload}] ; remplace toutes les lignes du modèle."""
+    client = get_client()
+    client.table("shap_latest").delete().eq("model", model).execute()
+    rows = [{"model": model, "symbol": r["symbol"], "date": r.get("date"), "payload": _json_safe(r["payload"])}
+            for r in records]
+    for i in range(0, len(rows), 200):
+        client.table("shap_latest").insert(rows[i:i + 200]).execute()
+
+
+def fetch_shap_symbols(model: str) -> list[str]:
+    client = get_client()
+    rows = _fetch_all(lambda: client.table("shap_latest").select("symbol").eq("model", model).order("symbol"))
+    return [r["symbol"] for r in rows]
+
+
+def fetch_shap_latest(model: str, symbol: str) -> dict | None:
+    client = get_client()
+    res = client.table("shap_latest").select("date,payload").eq("model", model).eq("symbol", symbol).limit(1).execute()
+    if not res.data:
+        return None
+    return {"date": res.data[0]["date"], **res.data[0]["payload"]}
+
+
+def replace_screener_snapshot(records: list[dict]):
+    """records : [{symbol, date, payload}] ; remplace tout le snapshot."""
+    client = get_client()
+    client.table("screener_snapshot").delete().neq("symbol", "").execute()
+    rows = [{"symbol": r["symbol"], "date": r.get("date"), "payload": _json_safe(r["payload"])} for r in records]
+    for i in range(0, len(rows), 200):
+        client.table("screener_snapshot").insert(rows[i:i + 200]).execute()
+
+
+def fetch_screener_snapshot() -> pd.DataFrame:
+    client = get_client()
+    rows = _fetch_all(lambda: client.table("screener_snapshot").select("symbol,date,payload").order("symbol"))
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame([{"symbol": r["symbol"], "date": r["date"], **r["payload"]} for r in rows])
+    df["date"] = pd.to_datetime(df["date"])
+    return df

@@ -21,7 +21,7 @@ st.caption(
 )
 
 if "thesee_data" not in st.session_state:
-    st.session_state["thesee_data"] = dp.get_all_data()
+    st.session_state["thesee_data"] = dp.get_app_data()
 data = st.session_state["thesee_data"]
 
 DICT_FEATURES_NOMS_ETF = {
@@ -34,19 +34,16 @@ DICT_FEATURES_NOMS_ETF = {
     "dollar_volume_relatif": "Volume-Dollar Relatif (proxy flux)",
 }
 
-market_etf_clean = data.get("market_etf_clean", pd.DataFrame())
-if "thesee_modele_etf" not in st.session_state:
-    st.session_state["thesee_modele_etf"] = dp.entrainer_modele_etf(data)
-model_result_etf, importance_df_etf = st.session_state["thesee_modele_etf"]
-model_ia_etf = model_result_etf["model"]
+model_result_etf = data.get("model_result_etf") or {}
+importance_df_etf = data.get("importance_df_etf", pd.DataFrame())
 diag = model_result_etf.get("diagnostics") if model_result_etf else None
+tickers_shap = dp.get_shap_symbols("etf") if model_result_etf else []
 
 with st.sidebar:
     palette_selector_sidebar()
     st.divider()
     st.subheader("Audit ETF")
-    tickers_dispo = sorted(market_etf_clean["symbol"].unique().tolist()) if not market_etf_clean.empty else []
-    ticker = st.selectbox("Sélectionner un ETF pour audit :", tickers_dispo) if tickers_dispo else None
+    ticker = st.selectbox("Sélectionner un ETF pour audit :", tickers_shap) if tickers_shap else None
     st.caption("Interprétation SHAP du modèle dédié aux ETFs sectoriels/indiciels.")
 
 # ------------------------------------------------------------------------------
@@ -55,7 +52,7 @@ with st.sidebar:
 st.subheader("📊 Diagnostic du modèle ETF")
 
 if diag is None:
-    st.warning("Diagnostics indisponibles — modèle ETF non entraîné ou données insuffisantes.")
+    st.warning("Diagnostics indisponibles — pas encore publiés par le CRON (ou données insuffisantes).")
 else:
     delta = diag["amelioration_vs_baseline"]
     if delta <= 0:
@@ -155,22 +152,25 @@ st.divider()
 
 
 def get_shap_data(ticker):
-    if not ticker or model_ia_etf is None:
+    """Valeurs SHAP du dernier jour, calculées par le CRON et lues dans Supabase."""
+    if not ticker:
         return None
-    row = market_etf_clean[market_etf_clean["symbol"] == ticker].tail(1)
-    X_raw = row[model_result_etf["features"]].values
-    X_sc = model_result_etf["scaler"].transform(model_result_etf["imputer"].transform(X_raw))
-    explainer = shap.TreeExplainer(model_ia_etf)
-    shap_values = explainer(X_sc)
+    rec = dp.get_shap("etf", ticker)
+    if not rec:
+        return None
+    feats = model_result_etf["features"]
+    noms = [DICT_FEATURES_NOMS_ETF.get(f, f) for f in feats]
+    valeurs = np.array([rec["features"][f] if rec["features"][f] is not None else np.nan for f in feats], dtype=float)
+    impacts = np.array([rec["shap"][f] for f in feats], dtype=float)
 
     df = pd.DataFrame({
-        "Indicateur": [DICT_FEATURES_NOMS_ETF.get(f, f) for f in model_result_etf["features"]],
-        "Valeur Observée": np.round(X_raw[0], 4),
-        "Impact sur le Signal": np.round(shap_values.values[0], 4),
+        "Indicateur": noms,
+        "Valeur Observée": np.round(valeurs, 4),
+        "Impact sur le Signal": np.round(impacts, 4),
     }).sort_values("Impact sur le Signal", key=abs, ascending=False)
 
-    shap_values.feature_names = [DICT_FEATURES_NOMS_ETF.get(f, f) for f in model_result_etf["features"]]
-    return {"df": df, "shap_obj": shap_values[0]}
+    expl = shap.Explanation(values=impacts, base_values=rec["base_value"], data=valeurs, feature_names=noms)
+    return {"df": df, "shap_obj": expl, "date": rec.get("date"), "proba": rec.get("proba")}
 
 
 col1, col2 = st.columns([1, 1])
@@ -180,6 +180,8 @@ shap_data = get_shap_data(ticker) if ticker else None
 with col1:
     st.subheader("Vecteurs de Données et Impacts SHAP")
     if shap_data:
+        st.caption(f"Dernier jour disponible : {shap_data['date']} · probabilité de hausse : "
+                   f"{shap_data['proba'] * 100:.1f} %")
         st.dataframe(shap_data["df"], use_container_width=True, hide_index=True)
     else:
         st.info("Sélectionne un ETF dans la barre latérale.")

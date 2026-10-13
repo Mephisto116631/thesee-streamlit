@@ -24,19 +24,30 @@ apply_theme()
 st.title("📈 Thésée — Terminal Quantamental")
 st.caption("Screener, Portefeuille, Audit IA, Crédit & Bilan — univers S&P 500 + Nasdaq 100 + ETFs")
 
-# Univers élargi (prix uniquement) — utilisé par le Screener pour la recherche
+# Lecture seule : le CRON GitHub Actions télécharge les prix, entraîne les modèles
+# et publie les résultats dans Supabase. L'app n'entraîne plus rien.
 univers_df = universe.get_univers_complet()
-tickers_univers = univers_df["symbol"].tolist()
-
-data = dp.get_all_data(univers_etendu=tickers_univers)
+data = dp.get_app_data()
 st.session_state["thesee_data"] = data
 st.session_state["thesee_univers"] = univers_df
 
+meta = data.get("meta") or {}
+diag = (data.get("model_result") or {}).get("diagnostics")
+if not meta:
+    st.warning("Aucun résultat publié pour l'instant : lance le workflow « sync » (GitHub → Actions → Run workflow).")
+else:
+    st.caption(f"Données au {meta.get('date_donnees', '?')} · dernière synchronisation (UTC) : "
+               f"{str(meta.get('synchro_utc', '?'))[:16].replace('T', ' ')}")
+
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.metric("Titres suivis (prix)", len(data["market_data_raw"]["symbol"].unique()) if not data["market_data_raw"].empty else 0)
+    st.metric("Titres suivis (prix)", int(meta.get("n_symboles", 0)))
 with col2:
-    st.metric("Précision modèle IA", f"{data['model_result']['accuracy']:.1f}%")
+    if diag:
+        st.metric("Précision modèle IA", f"{diag['accuracy']:.1f}%",
+                  f"{diag['amelioration_vs_baseline']:+.1f} pts vs baseline")
+    else:
+        st.metric("Précision modèle IA", "N/A")
 with col3:
     st.metric("Fondamentaux à jour", len(data["fonda_data_clean"]))
 with col4:

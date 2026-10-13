@@ -41,7 +41,8 @@ def main():
         f"[CRON] Terminé — {n_prix} tickers (prix), "
         f"{len(data['fonda_data_clean'])} fondamentaux, "
         f"{len(data['zscore_df'])} Z-Scores, "
-        f"accuracy modèle: {data['model_result']['accuracy']}%"
+        f"accuracy modèle: {data['model_result']['accuracy']}% · "
+        f"IC modèle relatif: {(data['model_result_relatif'].get('diagnostics') or {}).get('ic_moyen')}"
     )
 
     # --- 3. Spreads de crédit FRED ---

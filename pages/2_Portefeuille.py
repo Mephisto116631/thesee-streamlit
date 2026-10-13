@@ -15,10 +15,6 @@ apply_theme()
 
 st.title("💼 Portefeuille")
 
-if "thesee_data" not in st.session_state:
-    st.session_state["thesee_data"] = dp.get_all_data()
-data = st.session_state["thesee_data"]
-market_data_raw = data["market_data_raw"]
 
 with st.sidebar:
     palette_selector_sidebar()
@@ -57,6 +53,9 @@ def calc_weights(actifs, weight_mode, market_data_raw):
         "Allocation (EUR)": np.round(w * capital, 2),
     }).sort_values(by="Poids (%)", ascending=False)
 
+
+# Prix des seuls titres sélectionnés, lus dans Supabase (cache 1 h)
+market_data_raw = dp.get_prix_historique(tuple(sorted(actifs))) if actifs else pd.DataFrame(columns=["symbol", "date", "close"])
 
 weights_df = calc_weights(actifs, weight_mode, market_data_raw)
 
