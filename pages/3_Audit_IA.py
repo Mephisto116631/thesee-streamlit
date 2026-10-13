@@ -204,10 +204,15 @@ else:
 # MODELE RELATIF — cible : battre la médiane de l'univers sur 5 jours
 # ------------------------------------------------------------------------------
 st.subheader("🎯 Modèle relatif (cross-sectionnel, 5 jours)")
-res_rel = data.get("model_result_relatif")
+if st.button("Calculer le modèle relatif", key="btn_modele_relatif",
+             help="Entraîne le modèle sur tout l'univers : quelques minutes au premier calcul, ensuite en cache."):
+    st.session_state["thesee_modele_relatif"] = dp.entrainer_modele_relatif(data)
+res_rel = st.session_state.get("thesee_modele_relatif")
 diag_rel = res_rel.get("diagnostics") if res_rel else None
 
-if diag_rel is None:
+if res_rel is None:
+    st.caption("Non calculé. Le calcul est lancé à la demande pour ne pas ralentir le chargement de la page.")
+elif diag_rel is None:
     st.info("Modèle relatif indisponible — historique insuffisant (≥ 1 an requis pour mom_12_1).")
 else:
     st.caption(

@@ -824,6 +824,31 @@ def comparer_seuils_neutres(df: pd.DataFrame, feat: list[str], seuils: list[floa
 
 
 # ------------------------------------------------------------------------------
+# 4 bis. MODELES A LA DEMANDE — entraînés seulement quand une page en a besoin
+# (évite d'entraîner 3 modèles à chaque chargement ; train_ia est mis en cache)
+# ------------------------------------------------------------------------------
+def entrainer_modele_relatif(data: dict) -> dict:
+    """Modèle relatif : bat la médiane de l'univers sur 5 jours (features en rang cross-sectionnel)."""
+    df = data["market_data_clean"]
+    cle = f"{len(df)}_{df['date'].max() if not df.empty else 'empty'}_rel"
+    return train_ia(cle, df, seuil_neutre=0.0, features=utils.FEATURES_RELATIF, cible="relatif_5j")
+
+
+def entrainer_modele_etf(data: dict) -> tuple[dict, pd.DataFrame]:
+    """Modèle ETF + tableau d'importance des features."""
+    df = data["market_etf_clean"]
+    cle = f"{len(df)}_{df['date'].max() if not df.empty else 'empty'}_etf"
+    res = train_ia(cle, df, features=utils.FEATURES_ETF)
+    importance = pd.DataFrame()
+    if res["model"] is not None:
+        importance = pd.DataFrame({
+            "Feature": res["features"],
+            "Importance": res["model"].feature_importances_,
+        }).sort_values("Importance", ascending=False)
+    return res, importance
+
+
+# ------------------------------------------------------------------------------
 # 5. POINT D'ENTREE UNIQUE — a appeler depuis chaque page Streamlit
 # ------------------------------------------------------------------------------
 def get_all_data(univers_etendu: list[str] = None):
@@ -869,14 +894,7 @@ def get_all_data(univers_etendu: list[str] = None):
     cache_key = f"{len(market_data_clean)}_{market_data_clean['date'].max() if not market_data_clean.empty else 'empty'}"
     model_result = train_ia(cache_key, market_data_clean, features=utils.FEATURES_DEFAUT)
 
-    # Modèle "relatif" : cible = battre la médiane de l'univers sur 5 jours,
-    # features en rang cross-sectionnel (voir utils.FEATURES_RELATIF)
-    model_result_relatif = train_ia(cache_key + "_rel", market_data_clean,
-                                    seuil_neutre=0.0, features=utils.FEATURES_RELATIF, cible="relatif_5j")
-
     market_etf_clean = build_features_etf(market_etf, macro_data_raw)
-    cache_key_etf = f"{len(market_etf_clean)}_{market_etf_clean['date'].max() if not market_etf_clean.empty else 'empty'}"
-    model_result_etf = train_ia(cache_key_etf, market_etf_clean, features=utils.FEATURES_ETF)
 
     etape.empty()
 
@@ -885,13 +903,6 @@ def get_all_data(univers_etendu: list[str] = None):
         importance_df = pd.DataFrame({
             "Feature": model_result["features"],
             "Importance": model_result["model"].feature_importances_,
-        }).sort_values("Importance", ascending=False)
-
-    importance_df_etf = pd.DataFrame()
-    if model_result_etf["model"] is not None:
-        importance_df_etf = pd.DataFrame({
-            "Feature": model_result_etf["features"],
-            "Importance": model_result_etf["model"].feature_importances_,
         }).sort_values("Importance", ascending=False)
 
     ratings_df = db.fetch_ratings()
@@ -904,11 +915,7 @@ def get_all_data(univers_etendu: list[str] = None):
         "market_etf_clean": market_etf_clean,
         "zscore_df": zscore_df,
         "model_result": model_result,
-        "model_result_relatif": model_result_relatif,
         "model_ia": model_result["model"],
         "importance_df": importance_df,
-        "model_result_etf": model_result_etf,
-        "model_ia_etf": model_result_etf["model"],
-        "importance_df_etf": importance_df_etf,
         "ratings_df": ratings_df,
     }

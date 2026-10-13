@@ -35,8 +35,10 @@ DICT_FEATURES_NOMS_ETF = {
 }
 
 market_etf_clean = data.get("market_etf_clean", pd.DataFrame())
-model_result_etf = data.get("model_result_etf")
-model_ia_etf = data.get("model_ia_etf")
+if "thesee_modele_etf" not in st.session_state:
+    st.session_state["thesee_modele_etf"] = dp.entrainer_modele_etf(data)
+model_result_etf, importance_df_etf = st.session_state["thesee_modele_etf"]
+model_ia_etf = model_result_etf["model"]
 diag = model_result_etf.get("diagnostics") if model_result_etf else None
 
 with st.sidebar:
@@ -197,7 +199,6 @@ with col2:
         st.info("En attente d'une sélection.")
 
 st.subheader("Hiérarchie Globale des Métriques Prédictives")
-importance_df_etf = data.get("importance_df_etf", pd.DataFrame())
 if not importance_df_etf.empty:
     importance = importance_df_etf.copy()
     importance["Feature"] = importance["Feature"].map(DICT_FEATURES_NOMS_ETF)
