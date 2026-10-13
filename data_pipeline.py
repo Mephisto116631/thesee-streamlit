@@ -313,15 +313,26 @@ def build_features(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None, dict_sec
 
         grp["mom_5j"] = grp["close"].pct_change(5)
         grp["mom_20j"] = grp["close"].pct_change(20)
+        grp["mom_60j"] = grp["close"].pct_change(60)
+        # Momentum 12 mois hors dernier mois (évite l'effet retournement court terme)
+        grp["mom_12_1"] = grp["close"].shift(21) / grp["close"].shift(252) - 1
         grp["volatility"] = grp["daily_return"].rolling(20).std() * np.sqrt(252)
         grp["vol_relative"] = grp["volume"] / grp["volume"].rolling(20).mean()
         grp["macd_diff"] = grp["close"].ewm(span=12).mean() - grp["close"].ewm(span=26).mean()
         grp["target_next_return"] = grp["daily_return"].shift(-1)
+        grp["target_fwd_5j"] = grp["close"].shift(-5) / grp["close"] - 1
         parts.append(grp)
 
     df = pd.concat(parts) if parts else pd.DataFrame()
     if df.empty:
         return df
+
+    # --- Features en rang cross-sectionnel + cible relative (modèle "relatif") ---
+    # Rang percentile par date sur tout l'univers : retire l'effet de marché.
+    # target_rel_5j = rendement 5j - médiane du jour (NaN sur les 5 derniers jours).
+    for f in utils.CS_BASE:
+        df[f + "_cs"] = df.groupby("date")[f].rank(pct=True)
+    df["target_rel_5j"] = df["target_fwd_5j"] - df.groupby("date")["target_fwd_5j"].transform("median")
 
     # --- vix_regime réel : jointure sur la date avec le niveau de clôture du VIX ---
     if macro_df is not None and not macro_df.empty and "^VIX" in macro_df["symbol"].unique():
@@ -433,7 +444,7 @@ def build_features_etf(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None) -> p
 # ------------------------------------------------------------------------------
 # 4. MODELE XGBOOST — split temporel correct + métriques de diagnostic complètes
 # ------------------------------------------------------------------------------
-def _split_temporel_par_date(df: pd.DataFrame, train_ratio: float = 0.8):
+def _split_temporel_par_date(df: pd.DataFrame, train_ratio: float = 0.8, embargo: int = 0):
     """
     Split train/test par DATE DE COUPURE UNIQUE (pas par tri+index).
     Avec plusieurs tickers partageant les mêmes dates, un simple
@@ -446,14 +457,42 @@ def _split_temporel_par_date(df: pd.DataFrame, train_ratio: float = 0.8):
     split_idx = int(len(dates_uniques) * train_ratio)
     date_coupure = dates_uniques[split_idx]
 
-    train = df[df["date"] < date_coupure]
+    # embargo : retire les `embargo` dernières dates du train. Une cible à 5 jours
+    # chevauche la période de test ; sans embargo, les derniers jours du train
+    # "voient" des prix du test (fuite d'information).
+    date_fin_train = dates_uniques[max(split_idx - embargo, 0)]
+    train = df[df["date"] < date_fin_train]
     test = df[df["date"] >= date_coupure]
     return train, test
 
 
+def _cible_cfg(cible: str):
+    """(colonne cible, embargo en jours). 'relatif_5j' = battre la médiane du jour sur 5 jours."""
+    if cible == "relatif_5j":
+        return "target_rel_5j", 5
+    return "target_next_return", 0
+
+
+def _ic_par_date(test_df: pd.DataFrame, y_proba: np.ndarray, col_cible: str):
+    """IC moyen (corrélation de rang par date), t-stat et nombre de jours."""
+    t = pd.DataFrame({"date": test_df["date"].values,
+                      "p": np.asarray(y_proba, dtype=float),
+                      "r": test_df[col_cible].values})
+    t["rp"] = t.groupby("date")["p"].rank()
+    t["rr"] = t.groupby("date")["r"].rank()
+    ics = t.groupby("date").apply(
+        lambda g: g["rp"].corr(g["rr"]) if len(g) >= 30 else np.nan
+    ).dropna()
+    if len(ics) < 10:
+        return None, None, int(len(ics))
+    ic = float(ics.mean())
+    tstat = ic / (float(ics.std()) / np.sqrt(len(ics))) if ics.std() > 0 else None
+    return round(ic, 4), (round(float(tstat), 2) if tstat is not None else None), int(len(ics))
+
+
 @st.cache_resource(show_spinner="Entraînement du modèle IA...")
 def train_ia(_df_hash: str, df: pd.DataFrame, seuil_neutre: float = 0.003,
-             features: list[str] = None) -> dict:
+             features: list[str] = None, cible: str = "jour") -> dict:
     """
     _df_hash : cle de cache stable (nombre de lignes + derniere date),
                car st.cache_resource ne hash pas bien les gros DataFrame.
@@ -490,27 +529,29 @@ def train_ia(_df_hash: str, df: pd.DataFrame, seuil_neutre: float = 0.003,
     )
 
     feat = features if features is not None else utils.FEATURES_DEFAUT
+    col_cible, embargo = _cible_cfg(cible)
 
-    if df.empty:
+    if df.empty or col_cible not in df.columns:
         return {"model": None, "features": feat, "accuracy": 0.0, "diagnostics": None}
 
     # Filtrage de la zone neutre — appliqué ICI (pas dans build_features) pour
     # que target_next_return brut reste disponible ailleurs si besoin.
-    df_signif = df[df["target_next_return"].abs() >= seuil_neutre].copy()
+    df = df.dropna(subset=[col_cible])
+    df_signif = df[df[col_cible].abs() >= seuil_neutre].copy()
     n_exclus = len(df) - len(df_signif)
 
     if df_signif.empty:
         return {"model": None, "features": feat, "accuracy": 0.0, "diagnostics": None}
 
-    train_df, test_df = _split_temporel_par_date(df_signif, train_ratio=0.8)
+    train_df, test_df = _split_temporel_par_date(df_signif, train_ratio=0.8, embargo=embargo)
 
     if train_df.empty or test_df.empty:
         return {"model": None, "features": feat, "accuracy": 0.0, "diagnostics": None}
 
     X_train = train_df[feat].values
-    y_train = (train_df["target_next_return"] > 0).astype(int).values
+    y_train = (train_df[col_cible] > 0).astype(int).values
     X_test = test_df[feat].values
-    y_test = (test_df["target_next_return"] > 0).astype(int).values
+    y_test = (test_df[col_cible] > 0).astype(int).values
 
     # Répartition des classes — révèle un éventuel biais structurel du marché
     taux_hausse_train = y_train.mean()
@@ -608,9 +649,19 @@ def train_ia(_df_hash: str, df: pd.DataFrame, seuil_neutre: float = 0.003,
     # --- Walk-forward validation : plusieurs fenêtres temporelles indépendantes
     # pour juger si l'accuracy est stable dans le temps ou si le chiffre unique
     # du split principal ci-dessus est un coup de chance sur cette période précise.
-    wf = walk_forward_validation(df, feat, seuil_neutre=seuil_neutre, n_fenetres=5)
+    wf = walk_forward_validation(df, feat, seuil_neutre=seuil_neutre, n_fenetres=5, cible=cible)
+
+    # --- IC (Information Coefficient) : corrélation de rang, PAR DATE, entre la
+    # probabilité prédite et le rendement réalisé, puis moyenne sur les dates.
+    # C'est la mesure standard du pouvoir prédictif cross-sectionnel : 0.02-0.05
+    # est déjà un signal exploitable ; l'accuracy seule masque ce genre d'effet.
+    ic_moyen, ic_t, ic_n = _ic_par_date(test_df, y_proba, col_cible)
 
     diagnostics = {
+        "cible": cible,
+        "ic_moyen": ic_moyen,
+        "ic_t": ic_t,
+        "ic_n_jours": ic_n,
         "accuracy": accuracy,
         "baseline_accuracy": baseline_accuracy,
         "amelioration_vs_baseline": round(accuracy - baseline_accuracy, 1),
@@ -638,7 +689,7 @@ def train_ia(_df_hash: str, df: pd.DataFrame, seuil_neutre: float = 0.003,
     # zone neutre) pour l'usage en production (audit SHAP, etc.), tout en
     # gardant les métriques mesurées honnêtement sur le split test ci-dessus.
     X_full = df_signif[feat].values
-    y_full = (df_signif["target_next_return"] > 0).astype(int).values
+    y_full = (df_signif[col_cible] > 0).astype(int).values
     X_full_s = scl.fit_transform(imp.fit_transform(X_full))
     model.fit(X_full_s, y_full)
 
@@ -649,7 +700,7 @@ def train_ia(_df_hash: str, df: pd.DataFrame, seuil_neutre: float = 0.003,
 
 
 def walk_forward_validation(df: pd.DataFrame, feat: list[str], seuil_neutre: float = 0.003,
-                             n_fenetres: int = 5, train_ratio: float = 0.8) -> dict:
+                             n_fenetres: int = 5, train_ratio: float = 0.8, cible: str = "jour") -> dict:
     """
     Un seul split 80/20 donne UN chiffre d'accuracy, qui peut être un coup de
     chance (ou de malchance) selon la période testée. La walk-forward
@@ -669,7 +720,9 @@ def walk_forward_validation(df: pd.DataFrame, feat: list[str], seuil_neutre: flo
     from sklearn.impute import SimpleImputer
     from sklearn.metrics import accuracy_score
 
-    df_signif = df[df["target_next_return"].abs() >= seuil_neutre].copy()
+    col_cible, embargo = _cible_cfg(cible)
+    df = df.dropna(subset=[col_cible])
+    df_signif = df[df[col_cible].abs() >= seuil_neutre].copy()
     if df_signif.empty:
         return {"fenetres": [], "accuracy_moyenne": None, "accuracy_ecart_type": None}
 
@@ -682,15 +735,15 @@ def walk_forward_validation(df: pd.DataFrame, feat: list[str], seuil_neutre: flo
 
     for i, dates_fenetre in enumerate(limites):
         df_fenetre = df_signif[df_signif["date"].isin(dates_fenetre)]
-        train_f, test_f = _split_temporel_par_date(df_fenetre, train_ratio=train_ratio)
+        train_f, test_f = _split_temporel_par_date(df_fenetre, train_ratio=train_ratio, embargo=embargo)
 
         if train_f.empty or test_f.empty or len(train_f) < 30 or len(test_f) < 10:
             continue
 
         X_train = train_f[feat].values
-        y_train = (train_f["target_next_return"] > 0).astype(int).values
+        y_train = (train_f[col_cible] > 0).astype(int).values
         X_test = test_f[feat].values
-        y_test = (test_f["target_next_return"] > 0).astype(int).values
+        y_test = (test_f[col_cible] > 0).astype(int).values
 
         if len(np.unique(y_train)) < 2:  # une seule classe présente, impossible d'entraîner
             continue
@@ -804,6 +857,11 @@ def get_all_data(univers_etendu: list[str] = None):
     cache_key = f"{len(market_data_clean)}_{market_data_clean['date'].max() if not market_data_clean.empty else 'empty'}"
     model_result = train_ia(cache_key, market_data_clean, features=utils.FEATURES_DEFAUT)
 
+    # Modèle "relatif" : cible = battre la médiane de l'univers sur 5 jours,
+    # features en rang cross-sectionnel (voir utils.FEATURES_RELATIF)
+    model_result_relatif = train_ia(cache_key + "_rel", market_data_clean,
+                                    seuil_neutre=0.0, features=utils.FEATURES_RELATIF, cible="relatif_5j")
+
     market_etf_clean = build_features_etf(market_etf, macro_data_raw)
     cache_key_etf = f"{len(market_etf_clean)}_{market_etf_clean['date'].max() if not market_etf_clean.empty else 'empty'}"
     model_result_etf = train_ia(cache_key_etf, market_etf_clean, features=utils.FEATURES_ETF)
@@ -834,6 +892,7 @@ def get_all_data(univers_etendu: list[str] = None):
         "market_etf_clean": market_etf_clean,
         "zscore_df": zscore_df,
         "model_result": model_result,
+        "model_result_relatif": model_result_relatif,
         "model_ia": model_result["model"],
         "importance_df": importance_df,
         "model_result_etf": model_result_etf,

@@ -193,6 +193,42 @@ else:
             else:
                 st.warning("Comparaison impossible — données insuffisantes.")
 
+# ------------------------------------------------------------------------------
+# MODELE RELATIF — cible : battre la médiane de l'univers sur 5 jours
+# ------------------------------------------------------------------------------
+st.subheader("🎯 Modèle relatif (cross-sectionnel, 5 jours)")
+res_rel = data.get("model_result_relatif")
+diag_rel = res_rel.get("diagnostics") if res_rel else None
+
+if diag_rel is None:
+    st.info("Modèle relatif indisponible — historique insuffisant (≥ 1 an requis pour mom_12_1).")
+else:
+    st.caption(
+        "Cible : le titre bat-il la médiane de l'univers sur les 5 prochains jours ? "
+        "Features en rang percentile par date, embargo de 5 jours entre train et test. "
+        "Retire l'effet de marché commun, qui domine la cible « hausse demain »."
+    )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("IC moyen", f"{diag_rel['ic_moyen']}" if diag_rel["ic_moyen"] is not None else "N/A",
+              help="Corrélation de rang par date entre proba prédite et rendement réalisé. "
+                   "0.02-0.05 = signal exploitable en pratique.")
+    c2.metric("t-stat IC", f"{diag_rel['ic_t']}" if diag_rel["ic_t"] is not None else "N/A",
+              help="|t| > 2 = significatif (hors chevauchement des fenêtres à 5 jours).")
+    c3.metric("ROC AUC", f"{diag_rel['roc_auc']}%" if diag_rel["roc_auc"] else "N/A")
+    c4.metric("Log loss", f"{diag_rel['logloss_modele']}",
+              f"{diag_rel['logloss_modele'] - diag_rel['logloss_baseline']:+.4f} vs baseline",
+              delta_color="inverse")
+    wf_rel = diag_rel.get("walk_forward") or {}
+    if wf_rel.get("accuracy_moyenne") is not None:
+        st.caption(
+            f"Walk-forward : accuracy moyenne {wf_rel['accuracy_moyenne']}% "
+            f"(± {wf_rel['accuracy_ecart_type']} pt sur {len(wf_rel['fenetres'])} fenêtres) — "
+            f"{diag_rel['n_test']} observations de test sur {diag_rel['ic_n_jours']} jours."
+        )
+    if diag_rel["logloss_modele"] >= diag_rel["logloss_baseline"]:
+        st.warning("Log loss ≥ baseline : les probabilités ne valent pas un simple taux de base. "
+                   "Se fier à l'IC et à sa stabilité dans le temps, pas à l'accuracy.")
+
 st.divider()
 
 
