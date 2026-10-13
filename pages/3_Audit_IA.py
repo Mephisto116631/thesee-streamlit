@@ -8,6 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import shap
 from theme import apply_theme, palette_selector_sidebar
+from glossaire import info_button
 import data_pipeline as dp
 
 st.set_page_config(page_title="Audit IA — Thésée", page_icon="🧠", layout="wide")
@@ -76,6 +77,12 @@ else:
     col3.metric("Rappel", f"{diag['recall']}%", help="Parmi les vraies hausses, combien ont été détectées")
     col4.metric("ROC AUC", f"{diag['roc_auc']}%" if diag["roc_auc"] else "N/A",
                 help="50% = hasard, 100% = discrimination parfaite")
+
+    bi1, bi2, bi3, bi4, _ = st.columns([1, 1, 1, 1, 6])
+    with bi1: info_button("accuracy")
+    with bi2: info_button("roc_auc")
+    with bi3: info_button("logloss")
+    with bi4: info_button("zone_neutre")
 
     with st.expander("Détails techniques (matrice de confusion, répartition des classes)"):
         cm = diag["confusion_matrix"]
@@ -218,6 +225,10 @@ else:
     c4.metric("Log loss", f"{diag_rel['logloss_modele']}",
               f"{diag_rel['logloss_modele'] - diag_rel['logloss_baseline']:+.4f} vs baseline",
               delta_color="inverse")
+    bj1, bj2, bj3, _ = st.columns([1, 1, 1, 7])
+    with bj1: info_button("ic")
+    with bj2: info_button("cible_relative")
+    with bj3: info_button("walk_forward")
     wf_rel = diag_rel.get("walk_forward") or {}
     if wf_rel.get("accuracy_moyenne") is not None:
         st.caption(
