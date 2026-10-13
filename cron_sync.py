@@ -10,7 +10,10 @@
 # Objectif : rafraîchir Supabase en arrière-plan, indépendamment des visites
 # sur l'app — l'app Streamlit ne fait plus alors que LIRE des données à jour.
 # ==============================================================================
+import os
 import sys
+
+os.environ["THESEE_CRON"] = "1"  # autorise le rafraîchissement Alpha Vantage (lent), réservé au CRON
 
 # --- Injection du shim AVANT tout import de nos modules internes ---
 import _st_shim

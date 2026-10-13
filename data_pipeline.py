@@ -2,6 +2,7 @@
 # ==============================================================================
 # PIPELINE ETL — Yahoo Finance + Alpha Vantage -> Supabase, cache Streamlit
 # ==============================================================================
+import os
 import time
 import requests
 import numpy as np
@@ -14,6 +15,17 @@ import utils
 import universe
 
 CLE_ALPHA_VANTAGE = db._get_secret("ALPHA_VANTAGE_KEY")
+
+
+def _refresh_alpha_autorise() -> bool:
+    """
+    Alpha Vantage (plan gratuit) impose ~13 s par appel : rafraîchir 12 tickers
+    prend plusieurs minutes. Ce rafraîchissement est donc réservé au CRON
+    GitHub Actions (variable THESEE_CRON=1). L'app Streamlit, elle, lit
+    toujours ce qui est déjà dans Supabase, même légèrement périmé (> TTL),
+    au lieu de bloquer l'utilisateur pendant le chargement de la page.
+    """
+    return os.environ.get("THESEE_CRON") == "1"
 
 
 # ------------------------------------------------------------------------------
@@ -125,7 +137,7 @@ def sync_fonda_data(tickers: tuple[str, ...]) -> pd.DataFrame:
     fonda_df = db.fetch_fonda_data(tickers)
     a_rafraichir = db.tickers_a_rafraichir(tickers, fonda_df, ttl_jours=7)
 
-    if not a_rafraichir:
+    if not a_rafraichir or not _refresh_alpha_autorise():
         return fonda_df
 
     if not CLE_ALPHA_VANTAGE:
@@ -200,7 +212,7 @@ def sync_altman_zscore(tickers: tuple[str, ...], prix_actuels: dict) -> pd.DataF
     zscore_df = db.fetch_zscore_data(tickers)
     a_rafraichir = db.tickers_a_rafraichir_zscore(tickers, zscore_df, ttl_jours=7)
 
-    if not a_rafraichir:
+    if not a_rafraichir or not _refresh_alpha_autorise():
         return zscore_df
 
     if not CLE_ALPHA_VANTAGE:
