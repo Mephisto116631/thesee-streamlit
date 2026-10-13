@@ -6,7 +6,7 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from theme import apply_theme, palette_selector_sidebar
+from theme import apply_theme, palette_selector_sidebar, get_active_palette
 import data_pipeline as dp
 import fred
 import utils
@@ -63,15 +63,15 @@ with col_g:
     st.subheader("📈 Historique Spreads (source : FRED)")
     if not spreads["hy"].empty and not spreads["ig"].empty:
         fig, ax = plt.subplots(figsize=(8, 4))
-        fig.patch.set_facecolor("#1e293b")
-        ax.set_facecolor("#1e293b")
+        fig.patch.set_facecolor(get_active_palette()["card"])
+        ax.set_facecolor(get_active_palette()["card"])
         ax.plot(spreads["hy"]["date"], spreads["hy"]["valeur"] * 100, color="#e74c3c", label="High Yield (HY)")
         ax.plot(spreads["ig"]["date"], spreads["ig"]["valeur"] * 100, color="#3498db", label="Investment Grade (IG)")
-        ax.tick_params(colors="#cbd5e1")
-        ax.set_ylabel("Spread (pb)", color="#cbd5e1")
+        ax.tick_params(colors=get_active_palette()["text_muted"])
+        ax.set_ylabel("Spread (pb)", color=get_active_palette()["text_muted"])
         ax.legend(facecolor="#0f172a", edgecolor="#334155", labelcolor="#ffffff")
         for spine in ax.spines.values():
-            spine.set_color("#475569")
+            spine.set_color(get_active_palette()["border"])
         st.pyplot(fig, use_container_width=True)
     else:
         st.info("Données FRED indisponibles — vérifie ta clé FRED_API_KEY.")
@@ -80,13 +80,13 @@ with col_d:
     st.subheader("🥧 Distribution Ratings S&P")
     if not ratings_df.empty:
         fig, ax = plt.subplots(figsize=(6, 4))
-        fig.patch.set_facecolor("#1e293b")
-        ax.set_facecolor("#1e293b")
+        fig.patch.set_facecolor(get_active_palette()["card"])
+        ax.set_facecolor(get_active_palette()["card"])
         counts = ratings_df["rating_sp"].value_counts()
         ax.bar(counts.index, counts.values, color="#3498db")
-        ax.tick_params(colors="#cbd5e1")
+        ax.tick_params(colors=get_active_palette()["text_muted"])
         for spine in ax.spines.values():
-            spine.set_color("#475569")
+            spine.set_color(get_active_palette()["border"])
         st.pyplot(fig, use_container_width=True)
     else:
         st.info("Aucune donnée de rating disponible.")

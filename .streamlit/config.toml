@@ -1,0 +1,13 @@
+# Thème de base forcé en sombre : sans ça, Streamlit suit le réglage clair/sombre
+# du navigateur et les tableaux, champs et listes s'affichent en clair sur un
+# fond sombre (texte illisible). Les couleurs ci-dessous = palette "Nuit".
+[theme]
+base = "dark"
+primaryColor = "#e3a63b"
+backgroundColor = "#11151c"
+secondaryBackgroundColor = "#1a2029"
+textColor = "#e6e9ef"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"

@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import shap
-from theme import apply_theme, palette_selector_sidebar
+from theme import apply_theme, palette_selector_sidebar, get_active_palette
 from glossaire import info_button
 import data_pipeline as dp
 
@@ -278,11 +278,11 @@ with col2:
     if shap_data:
         plt.style.use("dark_background")
         fig, ax = plt.subplots(figsize=(8, 5))
-        fig.patch.set_facecolor("#1e293b")
-        ax.set_facecolor("#1e293b")
+        fig.patch.set_facecolor(get_active_palette()["card"])
+        ax.set_facecolor(get_active_palette()["card"])
         shap.plots.waterfall(shap_data["shap_obj"], show=False)
         for t in plt.gcf().findobj(plt.Text):
-            t.set_color("#f8fafc")
+            t.set_color(get_active_palette()["text"])
         st.pyplot(fig, use_container_width=True)
     else:
         st.info("En attente d'une sélection.")
@@ -295,10 +295,10 @@ if not importance_df.empty:
 
     plt.style.use("dark_background")
     fig, ax = plt.subplots(figsize=(10, 4))
-    fig.patch.set_facecolor("#1e293b")
-    ax.set_facecolor("#1e293b")
-    ax.barh(importance["Feature"], importance["Importance"], color="#3b82f6")
-    ax.tick_params(colors="#cbd5e1")
+    fig.patch.set_facecolor(get_active_palette()["card"])
+    ax.set_facecolor(get_active_palette()["card"])
+    ax.barh(importance["Feature"], importance["Importance"], color=get_active_palette()["accent"])
+    ax.tick_params(colors=get_active_palette()["text_muted"])
     st.pyplot(fig, use_container_width=True)
 else:
     st.info("Modèle non entraîné — données insuffisantes.")

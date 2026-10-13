@@ -6,7 +6,7 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from theme import apply_theme, palette_selector_sidebar
+from theme import apply_theme, palette_selector_sidebar, get_active_palette
 import data_pipeline as dp
 import utils
 
@@ -83,19 +83,20 @@ if lancer_mc and not weights_df.empty:
     trajectories = capital * np.cumprod(1 + simulations, axis=0)
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    fig.patch.set_facecolor("#1e293b")
-    ax.set_facecolor("#1e293b")
+    pal = get_active_palette()
+    fig.patch.set_facecolor(pal["card"])
+    ax.set_facecolor(pal["card"])
 
     x = np.arange(252)
     ax.fill_between(x, np.percentile(trajectories, 5, axis=1), np.percentile(trajectories, 95, axis=1),
-                     color="#3b82f6", alpha=0.25)
-    ax.plot(x, np.percentile(trajectories, 50, axis=1), color="#f59e0b", linewidth=2)
+                     color=pal["up"], alpha=0.22)
+    ax.plot(x, np.percentile(trajectories, 50, axis=1), color=pal["accent"], linewidth=2)
 
-    ax.tick_params(colors="#e2e8f0")
-    ax.set_xlabel("Jours", color="#cbd5e1")
-    ax.set_ylabel("Valeur", color="#cbd5e1")
+    ax.tick_params(colors=pal["text_muted"])
+    ax.set_xlabel("Jours", color=pal["text_muted"])
+    ax.set_ylabel("Valeur", color=pal["text_muted"])
     for spine in ax.spines.values():
-        spine.set_color("#475569")
+        spine.set_color(pal["border"])
 
     st.pyplot(fig, use_container_width=True)
 elif not lancer_mc:
