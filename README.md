@@ -54,3 +54,15 @@ npm test
 
 Le cron tourne 3 fois par jour ouvré (ouverture, mi-séance, clôture US). Un job *keepalive*
 empêche GitHub de désactiver le workflow après 60 jours sans commit.
+
+## Relancer le calcul depuis l'appli
+
+Le bouton « Relancer le calcul » (Risque & IA, Réglages) appelle la fonction Supabase
+`relancer-calcul` (`supabase/functions/relancer-calcul/`), qui déclenche le workflow
+`sync.yml`. Le jeton GitHub reste dans Supabase, jamais dans l'APK :
+
+1. GitHub → Settings → Developer settings → Fine-grained tokens → *Generate new token* :
+   accès au seul dépôt `thesee-streamlit`, permission **Actions : Read and write**.
+2. Supabase → projet Thésée → Edge Functions → Secrets : ajouter `GH_DISPATCH_TOKEN` = ce jeton.
+
+Garde-fous : refus si un calcul tourne déjà ou a démarré il y a moins de 10 minutes.

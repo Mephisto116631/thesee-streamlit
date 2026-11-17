@@ -1,15 +1,19 @@
 import { useCallback, useMemo, useState } from "preact/hooks";
 import { api } from "../api";
-import { Card, ChartBox, cssVar, Details, HelpButton, Loading, OfflineNote, RefreshButton, Stat, toneOf, useData } from "../components";
+import { Card, ChartBox, Chip, cssVar, Details, HelpButton, Loading, OfflineNote, RefreshButton, Stat, toneOf, useData } from "../components";
 import { frontiere as calculerFrontiere, type Univers } from "../optim";
 import { nbModifies, useParametres } from "../settings";
 import { ilYA, num, pct } from "../format";
 import { choisirPoint, HORIZON_DEFAUT, HORIZONS, projection } from "../strategy";
+import { CourtTerme } from "./CourtTerme";
 import { MesTitres } from "./MesTitres";
 import { PlanAchat } from "./PlanAchat";
 
 const KEY = "thesee:objectif:v1";
-type Onglet = "objectif" | "titres";
+type Onglet = "objectif" | "court" | "titres";
+const ONGLETS: { k: Onglet; label: string }[] = [{ k: "objectif", label: "Hold" }, { k: "court", label: "Court terme" }, { k: "titres", label: "Mes titres" }];
+// Hold : horizons de 6 mois et plus (en dessous, c'est le mode court terme)
+const HORIZONS_HOLD = HORIZONS.filter((x) => x.annees >= 0.5);
 interface Etat { onglet: Onglet; capital: number; cible: number; horizon: string }
 const DEFAUT: Etat = { onglet: "objectif", capital: 200, cible: 0.08, horizon: HORIZON_DEFAUT };
 const charger = (): Etat => {
@@ -27,7 +31,11 @@ export function Portfolio() {
   const ov = useData(api.overview);
   const snap = useData(api.snapshot);
 
-  const h = HORIZONS.find((x) => x.k === e.horizon) ?? HORIZONS[4];
+  const h = HORIZONS_HOLD.find((x) => x.k === e.horizon) ?? HORIZONS_HOLD.find((x) => x.k === "1a")!;
+  // Score IA du modèle horizon le plus proche (6 mois ou 1 an) pour chaque titre retenu
+  const horizonIA = h.annees <= 0.5 ? "6m" : "1a";
+  const scoresIA = useData(() => api.scores(horizonIA), [horizonIA]);
+  const scoreDe = new Map((scoresIA.data ?? []).map((x) => [x.symbol, x.score]));
   const params = useParametres();
   const u = reco.data?.univers as Univers | undefined;
   // Frontière recalculée sur le téléphone avec les hypothèses de la page Paramètres
@@ -41,7 +49,8 @@ export function Portfolio() {
     ...Object.fromEntries(Object.entries(reco.data?.titres ?? {}).map(([k, v]) => [k, v.prix])),
     ...Object.fromEntries((snap.data ?? []).map((x) => [x.symbol, x.close])),
   };
-  const proj = choix ? projection(e.capital, choix.point.rendement, choix.point.volatilite, h.annees, e.cible) : null;
+  const proj = choix ? projection(e.capital, choix.point.rendement, choix.point.volatilite, h.annees, e.cible, params.confiance) : null;
+  const queue = pct((1 - params.confiance) / 2, 0, false);
 
   return (
     <div class="screen">
@@ -62,8 +71,9 @@ export function Portfolio() {
       {modifies > 0 && <div class="note">Calculé avec {modifies} hypothèse(s) personnalisée(s) — <a href="#/parametres">voir les Paramètres</a>.</div>}
 
       <div class="seg full" role="tablist">
-        <button role="tab" aria-selected={e.onglet === "objectif"} class={e.onglet === "objectif" ? "on" : ""} onClick={() => maj({ onglet: "objectif" })}>Objectif</button>
-        <button role="tab" aria-selected={e.onglet === "titres"} class={e.onglet === "titres" ? "on" : ""} onClick={() => maj({ onglet: "titres" })}>Mes titres</button>
+        {ONGLETS.map((o) => (
+          <button role="tab" aria-selected={e.onglet === o.k} class={e.onglet === o.k ? "on" : ""} onClick={() => maj({ onglet: o.k })}>{o.label}</button>
+        ))}
       </div>
 
       <Card title="Mon objectif" class="tint-accent">
@@ -71,12 +81,16 @@ export function Portfolio() {
           <input type="number" inputMode="numeric" min={50} step={50} value={e.capital}
             onChange={(ev) => maj({ capital: Math.max(50, Number((ev.target as HTMLInputElement).value) || 200) })} />
         </label>
-        <div class="field" style={{ marginTop: 10 }}>Horizon de placement
-          <div class="chips wrap" role="group" aria-label="Horizon">
-            {HORIZONS.map((x) => <button class={`chip ${e.horizon === x.k ? "on" : ""}`} onClick={() => maj({ horizon: x.k })}>{x.label}</button>)}
-          </div>
-        </div>
-        <p class="hint" style={{ marginTop: 4 }}>{h.conseil}</p>
+        {e.onglet !== "court" && (
+          <>
+            <div class="field" style={{ marginTop: 10 }}>Horizon de placement
+              <div class="chips wrap" role="group" aria-label="Horizon">
+                {HORIZONS_HOLD.map((x) => <button class={`chip ${e.horizon === x.k ? "on" : ""}`} onClick={() => maj({ horizon: x.k })}>{x.label}</button>)}
+              </div>
+            </div>
+            <p class="hint" style={{ marginTop: 4 }}>{h.conseil}</p>
+          </>
+        )}
         {e.onglet === "objectif" && (
           <div class="field" style={{ marginTop: 12 }}>
             <span>Rentabilité visée : <b class="accent">{pct(e.cible, 0, false)} par an</b></span>
@@ -87,7 +101,9 @@ export function Portfolio() {
         )}
       </Card>
 
-      {e.onglet === "titres" ? (
+      {e.onglet === "court" ? (
+        <CourtTerme capital={e.capital} eurusd={ov.data?.eurusd ?? null} />
+      ) : e.onglet === "titres" ? (
         <MesTitres capital={e.capital} depart={lignes.map((l) => l.symbol)} eurusd={ov.data?.eurusd ?? null} />
       ) : (
         <>
@@ -110,9 +126,9 @@ export function Portfolio() {
                   <>
                     <h3 class="h3">Dans {h.label}, pour {num(e.capital, 0)} € investis</h3>
                     <div class="stats">
-                      <Stat label="Scénario bas (5 %)" value={`${num(proj.bas, 0)} €`} tone={proj.bas < e.capital ? "bad" : "good"} />
+                      <Stat label={`Scénario bas (${queue})`} value={`${num(proj.bas, 0)} €`} tone={proj.bas < e.capital ? "bad" : "good"} />
                       <Stat label="Médian" value={`${num(proj.median, 0)} €`} tone={proj.median >= e.capital ? "good" : "bad"} />
-                      <Stat label="Scénario haut (95 %)" value={`${num(proj.haut, 0)} €`} tone="good" />
+                      <Stat label={`Scénario haut (${pct(1 - (1 - params.confiance) / 2, 0, false)})`} value={`${num(proj.haut, 0)} €`} tone="good" />
                     </div>
                     <div class="stats">
                       <Stat label="Probabilité de perte" value={pct(proj.probPerte, 0, false)}
@@ -134,7 +150,8 @@ export function Portfolio() {
                     const maxP = Math.max(...lignes.map((x) => x.poids));
                     return (
                       <tr>
-                        <td><b>{l.symbol}</b><br /><small class="muted">{t?.nom ?? ""}{t?.secteur ? ` · ${t.secteur}` : ""}</small></td>
+                        <td><b>{l.symbol}</b><br /><small class="muted">{t?.nom ?? ""}{t?.secteur ? ` · ${t.secteur}` : ""}</small>
+                          {scoreDe.has(l.symbol) && <div class="mchips"><Chip k="proba_hausse" v={scoreDe.get(l.symbol)} label={`IA ${horizonIA === "6m" ? "6 mois" : "1 an"}`} value={pct(scoreDe.get(l.symbol), 0, false)} /></div>}</td>
                         <td><div class="wbar"><div style={{ width: `${(l.poids / maxP) * 100}%` }} /></div>{pct(l.poids, 1, false)}</td>
                         <td><b>{num(l.poids * e.capital, 2)} €</b></td>
                       </tr>

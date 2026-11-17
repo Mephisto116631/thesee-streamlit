@@ -358,3 +358,25 @@ input[type="range"] { width: 100%; margin: 10px 0 2px; accent-color: var(--accen
 .banniere-maj button { background: var(--bg); color: var(--accent); border: 0; border-radius: 8px; padding: 6px 12px; font-weight: 700; }
 .banniere-maj .fermer { background: transparent; color: var(--bg); padding: 6px; }
 .tabbar a span { white-space: nowrap; }
+
+/* ---- Fiche de calculs, bornes, menu avancé -------------------------------- */
+.etape { padding: 8px 0; border-top: 1px solid var(--border); }
+.card > .etape:first-of-type, .card-head + .etape { border-top: 0; }
+.formule { display: block; background: var(--card2); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; white-space: normal; line-height: 1.5; }
+.calcul { font-size: 13.5px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.table-scroll { overflow-x: auto; margin-top: 8px; }
+.table-scroll .table { min-width: 520px; }
+.bornes { padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.bornes-nom { display: block; font-weight: 600; margin-bottom: 4px; }
+.bornes.modifie .bornes-nom::after { content: " •"; color: var(--accent); }
+.bornes-zones { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.bornes-zones input { width: 64px; min-height: 34px; padding: 4px 6px; text-align: right; }
+.menu-avance { text-align: center; margin: 8px 0 24px; }
+.menu-avance a { color: var(--muted); font-size: 13px; text-decoration: none; border-bottom: 1px dotted var(--muted); }
+.relance .more { margin-top: 0; }
+.qbar { position: relative; height: 8px; background: var(--card2); border-radius: 4px; }
+.qbar::after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--muted); }
+.qbar > div { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+.qbar > .pos { background: var(--up); }
+.qbar > .neg { background: var(--down); }
+.imp li:has(.qbar) { grid-template-columns: minmax(0, 1.3fr) 1fr auto; }
