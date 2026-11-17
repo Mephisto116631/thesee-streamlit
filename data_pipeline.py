@@ -116,6 +116,16 @@ def sync_macro_data(tickers: tuple[str, ...], telecharger: bool = True) -> pd.Da
 #    Reste limité à la liste "core" suivie activement (pas l'univers élargi)
 #    pour respecter le rate-limit Alpha Vantage (5 req/min plan gratuit).
 # ------------------------------------------------------------------------------
+def _av_message(data) -> str:
+    """Résume une réponse Alpha Vantage sans données (quota, clé, symbole inconnu)."""
+    if not isinstance(data, dict):
+        return f"réponse inattendue ({type(data).__name__})"
+    for k in ("Note", "Information", "Error Message"):
+        if k in data:
+            return f"{k} : {str(data[k])[:200]}"
+    return f"clés reçues : {sorted(data.keys())[:8] or 'aucune (réponse vide)'}"
+
+
 def _safe_cast(data: dict, key: str) -> float:
     v = data.get(key, "0")
     return float(v) if v not in ["None", "-", "", None] else 0.0
@@ -159,6 +169,9 @@ def sync_fonda_data(tickers: tuple[str, ...]) -> pd.DataFrame:
                     "margin": _safe_cast(data, "OperatingMarginTTM"),
                     "last_updated": str(pd.Timestamp.today().date()),
                 })
+            else:
+                # Avant : ignoré en silence -> fondamentaux figés sans explication
+                st.warning(f"Alpha Vantage OVERVIEW sans données pour {t} — {_av_message(data)}")
         except Exception as e:
             st.warning(f"Erreur Alpha Vantage sur {t} : {e}")
 
@@ -226,6 +239,9 @@ def sync_altman_zscore(tickers: tuple[str, ...], prix_actuels: dict) -> pd.DataF
 
             bs_annual = bs.get("annualReports", [{}])
             inc_annual = inc.get("annualReports", [{}])
+            if "annualReports" not in bs or "annualReports" not in inc:
+                st.warning(f"Alpha Vantage bilan/compte de résultat sans données pour {t} — "
+                           f"{_av_message(bs if 'annualReports' not in bs else inc)}")
             if not bs_annual or not inc_annual:
                 continue
 
