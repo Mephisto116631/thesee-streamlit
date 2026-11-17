@@ -49,6 +49,22 @@ export function inverse(M: number[][]): number[][] | null {
 }
 
 /** Poids : équipondéré, ou Markowitz (portefeuille tangent, ventes à découvert interdites). */
+/** Plafonne chaque poids à `cap` en redistribuant l'excédent sur les autres. */
+export function capWeights(w: number[], cap: number): number[] {
+  let out = [...w];
+  if (cap * out.length < 1) return out; // plafond impossible à respecter
+  for (let it = 0; it < 20; it++) {
+    const over = out.map((v) => v > cap + 1e-12);
+    if (!over.some(Boolean)) break;
+    const surplus = out.reduce((a, v, i) => a + (over[i] ? v - cap : 0), 0);
+    const rest = out.reduce((a, v, i) => a + (over[i] ? 0 : v), 0);
+    out = out.map((v, i) => over[i] ? cap : rest > 0 ? v + surplus * v / rest : v + surplus / out.filter((_, j) => !over[j]).length);
+  }
+  return out;
+}
+
+export const POIDS_MAX = 0.2; // même plafond que le portefeuille recommandé (portefeuille.py)
+
 export function weights(R: number[][], mode: "equal" | "markowitz"): number[] {
   const n = R[0]?.length ?? 0;
   const eq = Array(n).fill(1 / n);
@@ -59,7 +75,7 @@ export function weights(R: number[][], mode: "equal" | "markowitz"): number[] {
   const ex = Array.from({ length: n }, (_, j) => mean(R.map((r) => r[j])) * 252 - RF);
   let w = inv.map((row) => row.reduce((acc, v, j) => acc + v * ex[j], 0)).map((v) => Math.max(0, v));
   const s = w.reduce((a, b) => a + b, 0);
-  return s > 0 ? w.map((v) => v / s) : eq;
+  return s > 0 ? capWeights(w.map((v) => v / s), POIDS_MAX) : eq;
 }
 
 export function portfolioStats(R: number[][], w: number[]) {

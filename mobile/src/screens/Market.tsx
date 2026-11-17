@@ -1,6 +1,6 @@
 import { useMemo, useState } from "preact/hooks";
 import { api, getFavoris, type Snapshot } from "../api";
-import { Dot, HelpButton, Loading, OfflineNote, useData } from "../components";
+import { Chip, HelpButton, Loading, OfflineNote, useData } from "../components";
 import { pct, prix, signClass } from "../format";
 
 type Tri = "symbol" | "chg_1d" | "chg_20d" | "chg_1y" | "rsi_14" | "proba_hausse";
@@ -41,7 +41,7 @@ export function Market({ go }: { go: (h: string) => void }) {
       <header class="screen-head">
         <div><h1>Marché</h1><p class="sub">{rows.length} titres · S&P 500, Nasdaq-100, ETF</p></div>
         <HelpButton keys={["chg_20d", "rsi_14", "volatility", "proba_hausse"]}
-          intro={<p>Chaque carte montre le prix, la variation du jour et <b>4 pastilles</b> : momentum 1 mois · RSI · volatilité · signal IA. <span class="badge good">vert</span> favorable, <span class="badge neutral">gris</span> neutre, <span class="badge bad">rouge</span> défavorable, <span class="badge info">bleu</span> excès à surveiller.</p>} />
+          intro={<p>Chaque carte montre le prix, la variation du jour (bord gauche <span class="up">vert</span> = hausse, <span class="down">rouge</span> = baisse) et <b>4 étiquettes</b> : performance 1 mois · RSI · volatilité · signal IA. <span class="badge good">vert</span> favorable, <span class="badge neutral">gris</span> neutre, <span class="badge bad">rouge</span> défavorable, <span class="badge info">bleu</span> excès à surveiller.</p>} />
       </header>
       <OfflineNote res={snap.res} />
 
@@ -77,10 +77,15 @@ export function Market({ go }: { go: (h: string) => void }) {
 function Row({ r, go, fav }: { r: Snapshot; go: (h: string) => void; fav: boolean }) {
   return (
     <li>
-      <button class="row" onClick={() => go(`#/titre/${r.symbol}`)}>
+      <button class={`row ${r.chg_1d == null ? "" : r.chg_1d > 0 ? "row-up" : r.chg_1d < 0 ? "row-down" : ""}`} onClick={() => go(`#/titre/${r.symbol}`)}>
         <div class="row-main">
           <div class="row-title"><b>{r.symbol}</b>{fav && <span class="star">★</span>}<span class="muted ellipsis">{r.nom}</span></div>
-          <div class="dots"><Dot k="chg_20d" v={r.chg_20d} /><Dot k="rsi_14" v={r.rsi_14} /><Dot k="volatility" v={r.volatility} /><Dot k="proba_hausse" v={r.proba_hausse} /></div>
+          <div class="mchips">
+            <Chip k="chg_20d" v={r.chg_20d} label="1 mois" value={pct(r.chg_20d, 0)} />
+            <Chip k="rsi_14" v={r.rsi_14} label="RSI" />
+            <Chip k="volatility" v={r.volatility} label="Vol" />
+            <Chip k="proba_hausse" v={r.proba_hausse} label="IA" />
+          </div>
         </div>
         <div class="row-side"><span>{prix(r.close)}</span><span class={signClass(r.chg_1d)}>{pct(r.chg_1d)}</span></div>
       </button>

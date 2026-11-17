@@ -1,7 +1,9 @@
-export const pct = (v: number | null | undefined, d = 1, signed = true) =>
-  v === null || v === undefined || Number.isNaN(v)
-    ? "—"
-    : `${signed && v > 0 ? "+" : ""}${(v * 100).toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d })} %`;
+export const pct = (v: number | null | undefined, d = 1, signed = true) => {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  // Arrondi d'abord : évite « -0 % » / « +0 % » pour une variation quasi nulle
+  const r = Math.round(v * 100 * 10 ** d) / 10 ** d || 0;
+  return `${signed && r > 0 ? "+" : ""}${r.toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d })} %`;
+};
 
 export const num = (v: number | null | undefined, d = 2) =>
   v === null || v === undefined || Number.isNaN(v)

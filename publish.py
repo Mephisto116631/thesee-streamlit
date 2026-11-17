@@ -15,6 +15,7 @@ import pandas as pd
 
 import data_pipeline as dp
 import db
+import portefeuille
 import universe
 import utils
 
@@ -275,7 +276,20 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
                                   ligne_model_run(data["model_result_etf"], "etf")], on_conflict="kind")
     db.upsert_rows("market_overview", [overview], on_conflict="id")
 
-    return {"snapshot": len(snap), "secteurs": len(med), "signaux": len(sig)}
+    # Portefeuille recommandé : bonus, ne doit jamais faire échouer la publication
+    n_lignes = 0
+    try:
+        reco = portefeuille.portefeuille_recommande(raw, snap)
+        if reco:
+            db.upsert_rows("portefeuille_recommande", [_clean({
+                "id": 1, "date": snap["date"].max(), **reco,
+                "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
+            })], on_conflict="id")
+            n_lignes = len(reco["lignes"])
+    except Exception as e:
+        print(f"[PUBLISH][WARN] Portefeuille recommandé non calculé : {e}")
+
+    return {"snapshot": len(snap), "secteurs": len(med), "signaux": len(sig), "portefeuille": n_lignes}
 
 
 if __name__ == "__main__":

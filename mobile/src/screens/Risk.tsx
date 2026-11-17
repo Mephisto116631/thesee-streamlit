@@ -1,6 +1,6 @@
 import { useCallback, useState } from "preact/hooks";
 import { api, type ModelRun } from "../api";
-import { Card, ChartBox, cssVar, Details, HelpButton, Loading, OfflineNote, RangeBar, Stat, useData, ZoneBadge } from "../components";
+import { Card, ChartBox, cssVar, Details, HelpButton, Loading, OfflineNote, RangeBar, Stat, toneOf, useData, ZoneBadge } from "../components";
 import { dateFr, ilYA, num } from "../format";
 import { isIG } from "./Stock";
 
@@ -107,8 +107,8 @@ function ModelView({ m }: { m: ModelRun }) {
       <Card title="Verdict" right={<small class="muted">entraîné {ilYA(m.trained_at)}</small>}>
         <RangeBar k="gain_pts" v={m.gain_pts} />
         <div class="stats">
-          <Stat label="Modèle" value={`${num(m.accuracy, 1)} %`} sub="bonnes directions" />
-          <Stat label="Règle naïve" value={`${num(m.baseline, 1)} %`} sub="toujours la plus fréquente" />
+          <Stat label="Modèle" value={`${num(m.accuracy, 1)} %`} sub="bonnes directions" tone={toneOf("gain_pts", m.gain_pts)} />
+          <Stat label="Règle naïve" value={`${num(m.baseline, 1)} %`} sub="toujours la plus fréquente" tone="neutral" />
           {wf?.accuracy_moyenne != null && <Stat label="Stabilité" value={`${num(wf.accuracy_moyenne, 1)} ± ${num(wf.accuracy_ecart_type, 1)}`} sub={`${wf.fenetres.length} périodes`} />}
         </div>
         <p class="hint">Un modèle de marché qui dépasse durablement 52-53 % est déjà rare : les marchés sont proches du hasard à 1 jour.</p>
@@ -135,22 +135,22 @@ function ModelView({ m }: { m: ModelRun }) {
             </>
           )}
           <div class="stats">
-            <Stat label="Précision" value={`${d.precision ?? "—"} %`} />
-            <Stat label="Rappel" value={`${d.recall ?? "—"} %`} />
-            <Stat label="ROC AUC" value={d.roc_auc != null ? `${d.roc_auc} %` : "—"} sub="50 % = hasard" />
-            <Stat label="Log loss" value={d.logloss_modele ?? "—"} sub={`naïf : ${d.logloss_baseline ?? "—"}`} />
-            <Stat label="Brier" value={d.brier_score ?? "—"} sub="0,25 = pile ou face" />
+            <Stat label="Précision" value={`${num(d.precision, 1)} %`} />
+            <Stat label="Rappel" value={`${num(d.recall, 1)} %`} />
+            <Stat label="ROC AUC" value={d.roc_auc != null ? `${num(d.roc_auc, 1)} %` : "—"} sub="50 % = hasard" />
+            <Stat label="Log loss" value={num(d.logloss_modele, 4)} sub={`naïf : ${num(d.logloss_baseline, 4)}`} />
+            <Stat label="Brier" value={num(d.brier_score, 3)} sub="0,25 = pile ou face" />
           </div>
           {d.perf_par_regime?.length > 0 && (
             <>
               <h3 class="h3">Par régime de marché</h3>
-              <table class="table small"><tbody>{d.perf_par_regime.map((r: any) => <tr><td>{r.regime}</td><td>{r.accuracy} %</td><td class="muted">{r.n_observations} obs.</td></tr>)}</tbody></table>
+              <table class="table small"><tbody>{d.perf_par_regime.map((r: any) => <tr><td>{r.regime}</td><td>{num(r.accuracy, 1)} %</td><td class="muted">{r.n_observations} obs.</td></tr>)}</tbody></table>
             </>
           )}
           {wf?.fenetres?.length > 0 && (
             <>
               <h3 class="h3">Walk-forward (périodes successives)</h3>
-              <table class="table small"><tbody>{wf.fenetres.map((f: any) => <tr><td>{dateFr(f.date_debut)} → {dateFr(f.date_fin)}</td><td>{f.accuracy} %</td></tr>)}</tbody></table>
+              <table class="table small"><tbody>{wf.fenetres.map((f: any) => <tr><td>{dateFr(f.date_debut)} → {dateFr(f.date_fin)}</td><td>{num(f.accuracy, 1)} %</td></tr>)}</tbody></table>
             </>
           )}
           {d.calibration_bins?.length > 0 && (
@@ -158,7 +158,7 @@ function ModelView({ m }: { m: ModelRun }) {
               <h3 class="h3">Calibration</h3>
               <table class="table small">
                 <thead><tr><th>Proba prédite</th><th>Moyenne</th><th>Réel</th></tr></thead>
-                <tbody>{d.calibration_bins.map((c: any) => <tr><td>{c.tranche}</td><td>{c.proba_moyenne_predite} %</td><td>{c.taux_reel_observe} %</td></tr>)}</tbody>
+                <tbody>{d.calibration_bins.map((c: any) => <tr><td>{c.tranche}</td><td>{num(c.proba_moyenne_predite, 1)} %</td><td>{num(c.taux_reel_observe, 1)} %</td></tr>)}</tbody>
               </table>
             </>
           )}
