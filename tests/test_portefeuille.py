@@ -59,3 +59,17 @@ def test_frontiere_croissante():
         assert abs(w - 1) < 1e-6
         assert max(l["poids"] for l in p["lignes"]) <= pf.POIDS_MAX + 1e-6
     assert set(reco["titres"]) >= {l["symbol"] for p in f for l in p["lignes"]}
+
+
+def test_rendement_attendu_prudent():
+    """Un titre qui a fait +60 %/an ne doit pas promettre plus de ~20 %/an (biais de sélection)."""
+    rng = np.random.default_rng(1)
+    jours = 756
+    marche = pd.Series(rng.normal(0.0004, 0.01, jours))
+    gagnant = marche * 1.2 + rng.normal(0.0, 0.01, jours)      # bêta 1,2
+    gagnant = gagnant - gagnant.mean() + 0.60 / 252               # moyenne exacte : +60 %/an
+    R = pd.DataFrame({"G": gagnant, "M": marche})
+    mu, _ = pf.estimations(R, marche)
+    assert R["G"].mean() * 252 > 0.45
+    assert mu[0] < 0.20
+    assert 0.06 < mu[1] < 0.12   # le marché lui-même : ~ taux sans risque + prime

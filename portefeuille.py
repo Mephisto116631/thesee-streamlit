@@ -10,9 +10,9 @@
 #      sans vente à découvert, avec un plafond par ligne (20 %) pour éviter
 #      qu'un seul titre domine.
 #      - Covariance estimée par Ledoit-Wolf (stable avec peu d'observations).
-#      - Rendements attendus « rétrécis » de 50 % vers une hypothèse de long
-#        terme (8 %/an) : le rendement passé d'un titre prédit mal son rendement
-#        futur ; sans rétrécissement, Markowitz concentre tout sur les gagnants.
+#      - Rendements attendus = 90 % CAPM (taux sans risque + bêta x 5 %) + 10 %
+#        historique : les titres étant présélectionnés sur leur hausse passée,
+#        l'historique seul promettrait 20 à 50 %/an (biais de sélection).
 #      - Estimation sur 3 ans d'historique.
 #   4. Frontière efficiente : pour une grille de rentabilités visées, le
 #      portefeuille de variance minimale qui l'atteint (même contraintes).
@@ -30,8 +30,9 @@ N_CANDIDATS = 40
 POIDS_MAX = 0.20
 POIDS_MIN = 0.03
 N_MAX_LIGNES = 12       # au-delà, trop de petits ordres pour un petit capital
-RETRECISSEMENT = 0.5    # poids de l'hypothèse long terme dans le rendement attendu
-RENDEMENT_LT = 0.08     # hypothèse de rendement long terme des actions US (~8 %/an)
+POIDS_HISTORIQUE = 0.1  # part du rendement historique dans le rendement attendu
+PRIME_RISQUE = 0.05     # prime de risque actions de long terme (au-dessus du taux sans risque)
+INDICE_MARCHE = "SPY"
 JOURS = 252
 JOURS_ESTIMATION = 3 * 252  # 3 ans pour estimer rendements et covariance (plus stable qu'1 an)
 N_FRONTIERE = 12
@@ -46,12 +47,22 @@ def _matrice_rendements(market_raw: pd.DataFrame, symboles: list[str], jours: in
     return px.pct_change().dropna()
 
 
-def estimations(R: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """(rendements attendus annuels rétrécis, covariance annuelle Ledoit-Wolf)."""
+def estimations(R: pd.DataFrame, marche: pd.Series | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """(rendements attendus annuels, covariance annuelle Ledoit-Wolf).
+
+    Rendement attendu = 90 % modèle CAPM (taux sans risque + bêta x prime de risque
+    de 5 %) + 10 % historique. Les titres sont présélectionnés parce qu'ils ont
+    monté : leur rendement historique surestime fortement le futur (biais de
+    sélection). Le CAPM ne récompense que le risque de marché (bêta).
+    """
     from sklearn.covariance import LedoitWolf
     cov = LedoitWolf().fit(R.values).covariance_ * JOURS
     mu_hist = R.mean().values * JOURS
-    mu = (1 - RETRECISSEMENT) * mu_hist + RETRECISSEMENT * RENDEMENT_LT
+    m = marche.reindex(R.index).fillna(0.0) if marche is not None else R.mean(axis=1)
+    var_m = float(m.var())
+    betas = np.array([float(R[c].cov(m)) / var_m if var_m > 0 else 1.0 for c in R.columns])
+    mu_capm = RF + betas * PRIME_RISQUE
+    mu = (1 - POIDS_HISTORIQUE) * mu_capm + POIDS_HISTORIQUE * mu_hist
     return mu, cov
 
 
@@ -128,21 +139,22 @@ def _optimiser_epure(mu: np.ndarray, cov: np.ndarray, colonnes, poids_max: float
     return _nettoyer(pd.Series(w, index=[colonnes[i] for i in idx]))
 
 
-def markowitz_tangent(R: pd.DataFrame, poids_max: float = POIDS_MAX) -> pd.Series:
+def markowitz_tangent(R: pd.DataFrame, poids_max: float = POIDS_MAX, marche: pd.Series | None = None) -> pd.Series:
     """Poids long-only maximisant le Sharpe, plafonnés, au plus N_MAX_LIGNES lignes."""
-    mu, cov = estimations(R)
+    mu, cov = estimations(R, marche)
     w = _optimiser_epure(mu, cov, list(R.columns), poids_max, None)
     return w if w is not None else pd.Series(1 / R.shape[1], index=R.columns)
 
 
-def frontiere_efficiente(R: pd.DataFrame, n_points: int = N_FRONTIERE, poids_max: float = POIDS_MAX) -> list[dict]:
+def frontiere_efficiente(R: pd.DataFrame, n_points: int = N_FRONTIERE, poids_max: float = POIDS_MAX,
+                         marche: pd.Series | None = None) -> list[dict]:
     """Pour une grille de rentabilités visées : portefeuille de variance minimale.
 
     Chaque point : {cible, rendement, volatilite, sharpe, lignes: [{symbol, poids}]}.
     La grille va du portefeuille le moins risqué au plus rentable atteignable
     sous le plafond par ligne.
     """
-    mu, cov = estimations(R)
+    mu, cov = estimations(R, marche)
     cols = list(R.columns)
     w_minvar = _optimiser_epure(mu, cov, cols, poids_max, -np.inf)
     if w_minvar is None:
@@ -217,11 +229,15 @@ def portefeuille_recommande(market_raw: pd.DataFrame, snapshot: pd.DataFrame) ->
     if len(candidats) < 5:
         return None
     R = _matrice_rendements(market_raw, candidats, JOURS_ESTIMATION)
+    marche = None
+    if INDICE_MARCHE in set(market_raw["symbol"]):
+        px_m = market_raw[market_raw["symbol"] == INDICE_MARCHE].set_index("date")["close"].sort_index()
+        marche = px_m.pct_change().reindex(R.index)
     if R.shape[1] < 5 or len(R) < JOURS // 2:
         return None
 
-    w = markowitz_tangent(R)
-    mu, cov = estimations(R)
+    w = markowitz_tangent(R, marche=marche)
+    mu, cov = estimations(R, marche)
     wv = w.reindex(R.columns).fillna(0).values
     infos = snapshot.set_index("symbol")
     lignes = []
@@ -257,11 +273,11 @@ def portefeuille_recommande(market_raw: pd.DataFrame, snapshot: pd.DataFrame) ->
             "rendement_attendu": float(wv @ mu),
             "volatilite_attendue": float(np.sqrt(wv @ cov @ wv)),
         },
-        "frontiere": frontiere_efficiente(R),
+        "frontiere": frontiere_efficiente(R, marche=marche),
         "titres": titres,
         "methode": (f"Markowitz (Sharpe max), {len(candidats)} candidats présélectionnés par "
                     f"momentum 12-1 ajusté du risque, plafond {int(POIDS_MAX * 100)} % par ligne, "
                     f"au plus {N_MAX_LIGNES} lignes d'au moins {int(POIDS_MIN * 100)} %, "
-                    f"covariance Ledoit-Wolf sur 3 ans, rendements attendus = 50 % historique + 50 % hypothèse "
-                    f"long terme de {int(RENDEMENT_LT * 100)} %/an."),
+                    f"covariance Ledoit-Wolf sur 3 ans, rendements attendus = 90 % CAPM (taux sans risque "
+                    f"+ bêta x prime de risque de {int(PRIME_RISQUE * 100)} %) + 10 % historique."),
     }
