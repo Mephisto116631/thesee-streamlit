@@ -5,7 +5,8 @@ name: Appli mobile — APK + PWA
 #   - PWA, déployée sur GitHub Pages (accès depuis un ordinateur)
 on:
   push:
-    branches: [main]
+    # Sur main : build + publication (Release, Pages). Sur les autres branches :
+    # build seul (artefact téléchargeable), pour vérifier avant de merger.
     paths: ["mobile/**", "ranges.json", ".github/workflows/mobile.yml"]
   workflow_dispatch: {}
 
@@ -30,8 +31,11 @@ jobs:
       - name: Vérification de la configuration
         run: |
           if [ -z "$VITE_SUPABASE_URL" ] || [ -z "$VITE_SUPABASE_ANON_KEY" ]; then
-            echo "::error::Secrets SUPABASE_URL et/ou SUPABASE_ANON_KEY absents (Settings > Secrets and variables > Actions)."
-            exit 1
+            if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+              echo "::error::Secrets SUPABASE_URL et/ou SUPABASE_ANON_KEY absents (Settings > Secrets and variables > Actions)."
+              exit 1
+            fi
+            echo "::warning::Secrets Supabase absents : build de test, l'appli affichera « non configurée »."
           fi
       - run: npm test
       - run: npm run build
