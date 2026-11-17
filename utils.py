@@ -38,3 +38,16 @@ FEATURES_ETF = [
     'mom_20j', 'vol_relative', 'rsi_14', 'volatility',
     'vix_regime', 'tracking_vs_ref', 'dollar_volume_relatif',
 ]
+
+# Libellés lisibles des features (partagés : pages d'audit Streamlit + publish.py pour l'APK)
+FEATURE_LABELS = {
+    "daily_return": "Rendement du jour", "pct_vs_ma50": "Écart à la moyenne 50 j",
+    "macd_diff": "MACD (tendance court vs moyen terme)", "mom_5j": "Momentum 1 semaine",
+    "mom_20j": "Momentum 1 mois", "vol_relative": "Volume vs habitude",
+    "rsi_14": "RSI 14 j", "volatility": "Volatilité 20 j",
+    "vix_regime": "Régime de marché (VIX)", "rsi_rank_sec": "RSI vs secteur",
+    "roe": "ROE", "margin": "Marge opérationnelle",
+    "ev_ebitda": "EV/EBITDA", "debt_eq": "Dette/Capitaux propres",
+    "tracking_vs_ref": "Écart vs indice de référence",
+    "dollar_volume_relatif": "Volume en dollars vs habitude",
+}

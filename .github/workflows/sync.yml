@@ -3,25 +3,30 @@ name: Sync Thésée — Supabase
 # Déclenchement automatique + possibilité de lancer manuellement depuis l'onglet Actions
 on:
   schedule:
-    # Les heures GitHub Actions sont en UTC. Le marché US (NYSE/Nasdaq) ouvre
-    # 9h30 ET et ferme 16h00 ET. En heure d'été US (mars-nov), ET = UTC-4.
-    # En heure d'hiver US (nov-mars), ET = UTC-5 -> décale d'1h les horaires ci-dessous.
-    - cron: "0 14 * * 1-5"   # 14:00 UTC = 10:00 ET (peu après l'ouverture)
-    - cron: "0 17 * * 1-5"   # 17:00 UTC = 13:00 ET (mi-journée)
-    - cron: "30 20 * * 1-5"  # 20:30 UTC = 16:30 ET (peu après la clôture)
+    # Les heures GitHub Actions sont en UTC (et souvent retardées de quelques
+    # minutes à quelques heures en période de charge). Marché US : 9h30-16h00 ET.
+    # Heure d'été US (mars-nov) : ET = UTC-4 ; heure d'hiver : ET = UTC-5.
+    - cron: "0 14 * * 1-5"   # ~10:00 ET (peu après l'ouverture)
+    - cron: "0 17 * * 1-5"   # ~13:00 ET (mi-journée)
+    - cron: "30 21 * * 1-5"  # ~16:30 ET hiver / 17:30 ET été (après la clôture)
   workflow_dispatch: {}       # bouton "Run workflow" manuel dans l'onglet Actions
+
+# Jamais deux synchronisations en même temps (écritures concurrentes dans Supabase)
+concurrency:
+  group: sync-supabase
+  cancel-in-progress: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout du code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Installation Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: "pip"
@@ -31,8 +36,23 @@ jobs:
 
       - name: Exécution de la synchronisation
         env:
+          # SUPABASE_KEY doit être la clé "service_role" : depuis l'activation de
+          # RLS (supabase_schema.sql), la clé "anon" ne peut plus écrire.
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           ALPHA_VANTAGE_KEY: ${{ secrets.ALPHA_VANTAGE_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python cron_sync.py
+
+  # GitHub désactive automatiquement les workflows planifiés après 60 jours sans
+  # commit sur le dépôt (c'est ce qui a arrêté la synchro le 23/09/2026).
+  # Ce job ré-active le workflow via l'API GitHub, sans créer de commit.
+  keepalive:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: gautamkrishnar/keepalive-workflow@v2
+        with:
+          use_api: true

@@ -1,0 +1,133 @@
+name: Appli mobile — APK + PWA
+
+# Construit l'appli mobile (dossier mobile/) :
+#   - APK Android, publié dans les Releases GitHub (téléchargeable depuis le téléphone)
+#   - PWA, déployée sur GitHub Pages (accès depuis un ordinateur)
+on:
+  push:
+    # Sur main : build + publication (Release, Pages). Sur les autres branches :
+    # build seul (artefact téléchargeable), pour vérifier avant de merger.
+    paths: ["mobile/**", "ranges.json", ".github/workflows/mobile.yml"]
+  workflow_dispatch: {}
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Clé "anon" uniquement (publique, lecture seule via RLS). JAMAIS la service_role.
+  VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mobile } }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: npm, cache-dependency-path: mobile/package-lock.json }
+      - run: npm ci
+      - name: Vérification de la configuration
+        run: |
+          if [ -z "$VITE_SUPABASE_URL" ] || [ -z "$VITE_SUPABASE_ANON_KEY" ]; then
+            if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+              echo "::error::Secrets SUPABASE_URL et/ou SUPABASE_ANON_KEY absents (Settings > Secrets and variables > Actions)."
+              exit 1
+            fi
+            echo "::warning::Secrets Supabase absents : build de test, l'appli affichera « non configurée »."
+          fi
+      - run: npm test
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with: { name: web-dist, path: mobile/dist }
+
+  apk:
+    needs: web
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # publication de la Release
+    defaults: { run: { working-directory: mobile } }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: npm, cache-dependency-path: mobile/package-lock.json }
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: 21 }
+      # Le SDK Android est préinstallé sur ubuntu-latest ($ANDROID_HOME)
+      - name: SDK Android
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - run: npm ci
+      - uses: actions/download-artifact@v5
+        with: { name: web-dist, path: mobile/dist }
+
+      - name: Projet Android (Capacitor) + icônes
+        run: |
+          npx cap add android
+          npx capacitor-assets generate --android
+          npx cap sync android
+          # Numéro de version croissant = numéro du run -> Android accepte la mise à jour
+          sed -i "s/versionCode 1$/versionCode ${{ github.run_number }}/; s/versionName \"1.0\"/versionName \"1.${{ github.run_number }}\"/" android/app/build.gradle
+
+      - name: Compilation de l'APK
+        working-directory: mobile/android
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Signature
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          UNSIGNED=android/app/build/outputs/apk/release/app-release-unsigned.apk
+          "$BT/zipalign" -f -p 4 "$UNSIGNED" aligned.apk
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > release.jks
+            "$BT/apksigner" sign --ks release.jks --ks-pass env:KEYSTORE_PASSWORD \
+              --ks-key-alias "$KEY_ALIAS" --out thesee.apk aligned.apk
+            rm release.jks
+          else
+            # Sans keystore : clé de debug JETABLE (change à chaque build) ->
+            # il faudra désinstaller l'ancienne version avant d'installer la nouvelle.
+            echo "::warning::ANDROID_KEYSTORE_BASE64 absent : APK signé avec une clé de debug jetable."
+            keytool -genkeypair -keystore debug.jks -storepass android -keypass android -alias debug \
+              -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Thesee Debug"
+            "$BT/apksigner" sign --ks debug.jks --ks-pass pass:android --ks-key-alias debug --out thesee.apk aligned.apk
+          fi
+          "$BT/apksigner" verify thesee.apk
+
+      - uses: actions/upload-artifact@v4
+        with: { name: thesee-apk, path: mobile/thesee.apk }
+
+      - name: Publication dans les Releases
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: Thésée Android 1.${{ github.run_number }}
+          body: |
+            APK Android de Thésée (lecture seule).
+            Sur le téléphone : télécharger `thesee.apk`, l'ouvrir, autoriser l'installation depuis cette source.
+          files: mobile/thesee.apk
+          make_latest: true
+
+  pages:
+    needs: web
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v5
+        with: { name: web-dist, path: dist }
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: dist }
+      - id: deploy
+        uses: actions/deploy-pages@v4

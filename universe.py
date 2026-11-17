@@ -66,9 +66,18 @@ FALLBACK_SP500 = [
     "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "GOOG", "META", "TSLA", "BRK.B", "JPM",
     "V", "LLY", "AVGO", "UNH", "XOM", "MA", "PG", "HD", "COST", "MRK",
 ]
+# Composition Nasdaq-100 (fin 2025) — repli complet si Wikipedia est inaccessible.
 FALLBACK_NASDAQ100 = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "GOOG", "META", "TSLA", "AVGO", "COST",
-    "NFLX", "AMD", "PEP", "ADBE", "CSCO", "INTC", "QCOM", "AMGN", "TXN", "INTU",
+    "AAPL", "ABNB", "ADBE", "ADI", "ADP", "ADSK", "AEP", "AMAT", "AMD", "AMGN",
+    "AMZN", "APP", "ARM", "ASML", "AVGO", "AXON", "AZN", "BIIB", "BKNG", "BKR",
+    "CCEP", "CDNS", "CDW", "CEG", "CHTR", "CMCSA", "COST", "CPRT", "CRWD", "CSCO",
+    "CSGP", "CSX", "CTAS", "CTSH", "DASH", "DDOG", "DXCM", "EA", "EXC", "FANG",
+    "FAST", "FTNT", "GEHC", "GFS", "GILD", "GOOG", "GOOGL", "HON", "IDXX", "INTC",
+    "INTU", "ISRG", "KDP", "KHC", "KLAC", "LIN", "LRCX", "LULU", "MAR", "MCHP",
+    "MDLZ", "MELI", "META", "MNST", "MRVL", "MSFT", "MSTR", "MU", "NFLX", "NVDA",
+    "NXPI", "ODFL", "ON", "ORLY", "PANW", "PAYX", "PCAR", "PDD", "PEP", "PLTR",
+    "PYPL", "QCOM", "REGN", "ROP", "ROST", "SBUX", "SHOP", "SNPS", "TEAM", "TMUS",
+    "TRI", "TSLA", "TTD", "TTWO", "TXN", "VRSK", "VRTX", "WBD", "WDAY", "XEL", "ZS",
 ]
 
 
@@ -117,8 +126,11 @@ def get_nasdaq100_tickers() -> pd.DataFrame:
         # La table des composants n'est pas toujours au même index selon les éditions Wikipedia
         df = None
         for t in tables:
+            if isinstance(t.columns, pd.MultiIndex):
+                t.columns = [" ".join(str(x) for x in c) for c in t.columns]
             cols = [str(c).lower() for c in t.columns]
-            if any("ticker" in c or "symbol" in c for c in cols):
+            # La table des composants a ~100 lignes et une colonne Ticker/Symbol
+            if any("ticker" in c or "symbol" in c for c in cols) and 80 <= len(t) <= 120:
                 df = t
                 break
         if df is None:
@@ -136,7 +148,7 @@ def get_nasdaq100_tickers() -> pd.DataFrame:
         out["indice"] = "Nasdaq-100"
         return out
     except Exception as e:
-        st.warning(f"Impossible de charger la liste Nasdaq-100 depuis Wikipedia ({e}) — repli sur liste statique réduite.")
+        st.info(f"Liste Nasdaq-100 Wikipedia indisponible ({e}) — repli sur la liste statique (101 titres).")
         return pd.DataFrame({
             "symbol": FALLBACK_NASDAQ100,
             "nom": FALLBACK_NASDAQ100,
