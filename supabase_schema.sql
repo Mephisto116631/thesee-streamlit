@@ -247,3 +247,10 @@ do $$ begin
         create policy "lecture publique" on portefeuille_recommande for select to anon, authenticated using (true);
     end if;
 end $$;
+
+-- ==============================================================================
+-- V4 — Objectif de rentabilité (frontière efficiente) et taux EUR/USD
+-- ==============================================================================
+alter table portefeuille_recommande add column if not exists frontiere jsonb;  -- [{cible, rendement, volatilite, sharpe, lignes}]
+alter table portefeuille_recommande add column if not exists titres jsonb;     -- {symbol: {nom, secteur, prix, rendement_1y, volatilite}}
+alter table market_overview add column if not exists eurusd double precision; -- 1 EUR = x USD

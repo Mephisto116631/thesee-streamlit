@@ -1,159 +1,176 @@
-import { useCallback, useMemo, useState } from "preact/hooks";
-import { api, getFavoris } from "../api";
-import { Card, ChartBox, cssVar, Details, HelpButton, Loading, RangeBar, Stat, toneOf, useData } from "../components";
-import { ilYA, num, pct, signClass } from "../format";
-import { monteCarlo, portfolioStats, returnsMatrix, RF, weights } from "../portfolio";
+import { useCallback, useState } from "preact/hooks";
+import { api } from "../api";
+import { Card, ChartBox, cssVar, Details, HelpButton, Loading, OfflineNote, Stat, toneOf, useData } from "../components";
+import { ilYA, num, pct } from "../format";
+import { choisirPoint, HORIZON_DEFAUT, HORIZONS, projection } from "../strategy";
+import { MesTitres } from "./MesTitres";
+import { PlanAchat } from "./PlanAchat";
 
-type Mode = "reco" | "markowitz" | "equal";
-const KEY = "thesee:portefeuille:v2"; // v2 : capital 200 € et portefeuille recommandé par défaut
-const load = (): { syms: string[]; capital: number; mode: Mode } => {
-  try { const s = JSON.parse(localStorage.getItem(KEY) ?? "null"); if (s?.mode) return s; } catch { /* ignore */ }
-  const f = getFavoris();
-  return { syms: f.length >= 2 ? f.slice(0, 8) : ["AAPL", "MSFT", "NVDA"], capital: 200, mode: "reco" };
+const KEY = "thesee:objectif:v1";
+type Onglet = "objectif" | "titres";
+interface Etat { onglet: Onglet; capital: number; cible: number; horizon: string }
+const DEFAUT: Etat = { onglet: "objectif", capital: 200, cible: 0.08, horizon: HORIZON_DEFAUT };
+const charger = (): Etat => {
+  try { return { ...DEFAUT, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") }; } catch { return DEFAUT; }
 };
-const MODES: { k: Mode; label: string }[] = [
-  { k: "reco", label: "Recommandé" }, { k: "markowitz", label: "Markowitz" }, { k: "equal", label: "Équipondéré" },
-];
 
 export function Portfolio() {
-  const init = load();
-  const [mesTitres, setSyms] = useState<string[]>(init.syms);
-  const [capital, setCapital] = useState<number>(init.capital);
-  const [mode, setMode] = useState<Mode>(init.mode);
-  const reco = useData(api.portefeuilleReco);
-  const recoW = new Map((reco.data?.lignes ?? []).map((l) => [l.symbol, l.poids]));
-  const syms = mode === "reco" && recoW.size ? [...recoW.keys()] : mesTitres;
-  const [q, setQ] = useState("");
-  const save = (s: string[], c: number, m: string) => { try { localStorage.setItem(KEY, JSON.stringify({ syms: s, capital: c, mode: m })); } catch { /* ignore */ } };
-
-  const snap = useData(api.snapshot);
-  const prices = useData(() => api.prices(syms), [syms.join(",")]);
-
-  const calc = useMemo(() => {
-    if (!prices.data?.length || syms.length < 1) return null;
-    const { syms: ok, R } = returnsMatrix(prices.data, syms);
-    if (R.length < 30) return null;
-    let w: number[];
-    if (mode === "reco" && recoW.size) {
-      const raw = ok.map((s) => recoW.get(s) ?? 0);
-      const tot = raw.reduce((a, b) => a + b, 0) || 1;
-      w = raw.map((v) => v / tot); // poids publiés par le cron (renormalisés si un cours manque)
-    } else {
-      w = weights(R, mode === "reco" ? "markowitz" : mode);
-    }
-    const st = portfolioStats(R, w);
-    const mc = monteCarlo(st.returns, capital);
-    return { ok, w, st, mc };
-  }, [prices.data, mode, capital, syms.join(","), reco.data?.updated_at]);
-
-  const suggestions = q.trim().length >= 1
-    ? (snap.data ?? []).filter((s) => !syms.includes(s.symbol) && (s.symbol.includes(q.toUpperCase()) || (s.nom ?? "").toUpperCase().includes(q.toUpperCase()))).slice(0, 6)
-    : [];
-  const add = (s: string) => { const n = [...mesTitres, s].slice(0, 15); setSyms(n); setQ(""); save(n, capital, mode); };
-  const remove = (s: string) => { const n = mesTitres.filter((x) => x !== s); setSyms(n); save(n, capital, mode); };
-  const choisirMode = (m: Mode) => {
-    // Passer du recommandé à Markowitz/équipondéré : on part des titres recommandés
-    const base = mode === "reco" && m !== "reco" && recoW.size ? [...recoW.keys()] : mesTitres;
-    setSyms(base); setMode(m); save(base, capital, m);
+  const [e, setE] = useState<Etat>(charger());
+  const maj = (p: Partial<Etat>) => {
+    const n = { ...e, ...p };
+    setE(n);
+    try { localStorage.setItem(KEY, JSON.stringify(n)); } catch { /* ignore */ }
   };
+  const reco = useData(api.portefeuilleReco);
+  const ov = useData(api.overview);
+  const snap = useData(api.snapshot);
 
-  const mcCfg = useCallback(() => {
-    const mc = calc!.mc;
-    const labels = mc.p50.map((_, i) => (i % 21 === 0 ? `M${i / 21}` : ""));
-    const accent = cssVar("--accent"), band = cssVar("--band");
-    return {
-      type: "line",
-      data: {
-        labels,
-        datasets: [
-          { label: "Scénario défavorable (5 %)", data: mc.p5, borderColor: cssVar("--down"), borderWidth: 1, pointRadius: 0 },
-          { label: "Scénario favorable (95 %)", data: mc.p95, borderColor: cssVar("--up"), borderWidth: 1, pointRadius: 0, backgroundColor: band, fill: "-1" },
-          { label: "Médiane", data: mc.p50, borderColor: accent, borderWidth: 2, pointRadius: 0 },
-        ],
-      },
-      options: { plugins: { legend: { position: "bottom" } } },
-    };
-  }, [calc]);
+  const h = HORIZONS.find((x) => x.k === e.horizon) ?? HORIZONS[4];
+  const frontiere = reco.data?.frontiere ?? [];
+  const choix = choisirPoint(frontiere, e.cible);
+  const lignes = choix?.point.lignes ?? [];
+  const prix: Record<string, number | null | undefined> = {
+    ...Object.fromEntries(Object.entries(reco.data?.titres ?? {}).map(([k, v]) => [k, v.prix])),
+    ...Object.fromEntries((snap.data ?? []).map((x) => [x.symbol, x.close])),
+  };
+  const proj = choix ? projection(e.capital, choix.point.rendement, choix.point.volatilite, h.annees, e.cible) : null;
 
   return (
     <div class="screen">
       <header class="screen-head">
-        <div><h1>Portefeuille</h1><p class="sub">{num(capital, 0)} € · simulation sur 1 an d'historique</p></div>
-        <HelpButton keys={["sharpe", "max_drawdown", "volatility"]} intro={<>
-          <p><b>Recommandé</b> : portefeuille Markowitz calculé par le serveur sur tout l'univers (présélection par momentum, 20 % max par ligne). <b>Équipondéré</b> : même montant sur chaque titre. <b>Markowitz</b> : poids qui maximisent le rendement par unité de risque (portefeuille « tangent », taux sans risque {pct(RF, 2, false)}), sans vente à découvert, 20 % max par ligne.</p>
-          <p>Avec un petit capital (200 €), certaines lignes font quelques euros : il faut un courtier qui accepte les <b>fractions d'actions</b>.</p>
-          <p><b>Monte-Carlo</b> : 1 000 trajectoires d'un an tirées au hasard parmi les rendements quotidiens passés du portefeuille. La zone colorée contient 90 % des scénarios.</p>
-          <p>⚠️ Basé sur 1 an de données passées : Markowitz a tendance à sur-pondérer les titres qui ont le plus monté récemment.</p>
+        <div><h1>Portefeuille</h1><p class="sub">{num(e.capital, 0)} € · horizon {h.label}</p></div>
+        <HelpButton keys={["sharpe", "volatility", "max_drawdown"]} intro={<>
+          <p><b>Objectif</b> : tu fixes la rentabilité visée par an et ton horizon. L'appli choisit, parmi les meilleurs titres du moment,
+            le portefeuille <b>le moins risqué</b> qui l'atteint en théorie (frontière efficiente de Markowitz, 20 % max par titre).</p>
+          <p><b>Rentabilité attendue</b> : moitié historique sur 3 ans, moitié hypothèse long terme de 8 %/an. Ce n'est pas une promesse :
+            c'est une estimation volontairement prudente.</p>
+          <p><b>Fourchette</b> : 90 % des scénarios simulés finissent entre la valeur basse et la valeur haute (modèle log-normal).</p>
+          <p><b>Mes titres</b> : tu choisis toi-même les titres ; l'appli calcule les poids (Markowitz ou parts égales).</p>
         </>} />
       </header>
 
-      <Card title="Composition" class="tint-accent">
-        <div class="seg full" role="group" aria-label="Méthode">
-          {MODES.map((m) => <button class={mode === m.k ? "on" : ""} onClick={() => choisirMode(m.k)}>{m.label}</button>)}
-        </div>
-        {mode === "reco" ? (
-          reco.data ? (
-            <>
-              <p class="hint" style={{ marginTop: 0 }}>
-                Portefeuille <b>Markowitz</b> calculé chaque jour par le serveur sur tout l'univers
-                ({reco.data.lignes.length} lignes, mis à jour {ilYA(reco.data.updated_at)}).
-                Pour le modifier, passe en mode Markowitz : il sera repris comme point de départ.
-              </p>
-              <Details summary="Méthode">{reco.data.methode}</Details>
-            </>
-          ) : reco.loading ? <Loading /> : (
-            <div class="note">Portefeuille recommandé pas encore publié : il apparaîtra après la prochaine synchro.</div>
-          )
-        ) : (
-          <>
-            <div class="chips wrap">
-              {syms.map((s) => <button class="chip on" onClick={() => remove(s)} aria-label={`Retirer ${s}`}>{s} ✕</button>)}
-            </div>
-            <input type="search" placeholder="Ajouter un titre…" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} aria-label="Ajouter un titre" />
-            {suggestions.length > 0 && <ul class="suggest">{suggestions.map((s) => <li><button onClick={() => add(s.symbol)}><b>{s.symbol}</b> <span class="muted">{s.nom}</span></button></li>)}</ul>}
-          </>
-        )}
-        <label class="field" style={{ marginTop: 10 }}>Capital à investir (€)
-          <input type="number" inputMode="numeric" min={50} step={50} value={capital}
-            onChange={(e) => { const c = Math.max(50, Number((e.target as HTMLInputElement).value) || 200); setCapital(c); save(mesTitres, c, mode); }} />
+      <div class="seg full" role="tablist">
+        <button role="tab" aria-selected={e.onglet === "objectif"} class={e.onglet === "objectif" ? "on" : ""} onClick={() => maj({ onglet: "objectif" })}>Objectif</button>
+        <button role="tab" aria-selected={e.onglet === "titres"} class={e.onglet === "titres" ? "on" : ""} onClick={() => maj({ onglet: "titres" })}>Mes titres</button>
+      </div>
+
+      <Card title="Mon objectif" class="tint-accent">
+        <label class="field">Capital à investir (€)
+          <input type="number" inputMode="numeric" min={50} step={50} value={e.capital}
+            onChange={(ev) => maj({ capital: Math.max(50, Number((ev.target as HTMLInputElement).value) || 200) })} />
         </label>
+        <div class="field" style={{ marginTop: 10 }}>Horizon de placement
+          <div class="chips wrap" role="group" aria-label="Horizon">
+            {HORIZONS.map((x) => <button class={`chip ${e.horizon === x.k ? "on" : ""}`} onClick={() => maj({ horizon: x.k })}>{x.label}</button>)}
+          </div>
+        </div>
+        <p class="hint" style={{ marginTop: 4 }}>{h.conseil}</p>
+        {e.onglet === "objectif" && (
+          <div class="field" style={{ marginTop: 12 }}>
+            <span>Rentabilité visée : <b class="accent">{pct(e.cible, 0, false)} par an</b></span>
+            <input type="range" min={0.02} max={0.3} step={0.01} value={e.cible} aria-label="Rentabilité visée par an"
+              onInput={(ev) => maj({ cible: Number((ev.target as HTMLInputElement).value) })} />
+            <div class="range-labels"><span>2 %</span><span>8 % ≈ actions long terme</span><span>30 %</span></div>
+          </div>
+        )}
       </Card>
 
-      {prices.loading && !calc ? <Loading label="Chargement des cours…" /> : !calc ? (
-        <div class="note">Ajoute au moins un titre avec un historique suffisant.</div>
+      {e.onglet === "titres" ? (
+        <MesTitres capital={e.capital} depart={lignes.map((l) => l.symbol)} eurusd={ov.data?.eurusd ?? null} />
       ) : (
         <>
-          <Card title="Répartition">
-            <table class="table">
-              <thead><tr><th>Titre</th><th>Poids</th><th>Montant</th></tr></thead>
-              <tbody>{calc.ok.map((s, i) => ({ s, w: calc.w[i] })).sort((a, b) => b.w - a.w).map(({ s, w }) => (
-                <tr><td><b>{s}</b>{recoW.size && mode === "reco" && <><br /><small class="muted">{reco.data?.lignes.find((l) => l.symbol === s)?.secteur ?? ""}</small></>}</td>
-                  <td><div class="wbar"><div style={{ width: `${(w / Math.max(...calc.w)) * 100}%` }} /></div>{pct(w, 1, false)}</td><td><b>{num(w * capital, w * capital < 100 ? 2 : 0)} €</b></td></tr>
-              ))}</tbody>
-            </table>
-          </Card>
+          <OfflineNote res={reco.res} />
+          {reco.loading && !reco.data ? <Loading /> : !choix ? (
+            <div class="note">Le portefeuille objectif sera disponible après la prochaine synchronisation du serveur.</div>
+          ) : (
+            <>
+              <Card title="Portefeuille proposé" class={`edge-${choix.atteignable ? "good" : "bad"}`}>
+                {choix.atteignable ? (
+                  <p class="verdict">Le portefeuille le moins risqué qui vise <b>{pct(e.cible, 0, false)}</b> par an attend
+                    <b> {pct(choix.point.rendement, 1, false)}</b> avec une volatilité de <b>{pct(choix.point.volatilite, 0, false)}</b>.</p>
+                ) : (
+                  <div class="note warn">
+                    {pct(e.cible, 0, false)} par an n'est pas atteignable sans dépasser 20 % par titre.
+                    Maximum estimé : <b>{pct(choix.max, 1, false)}</b> par an. Portefeuille affiché : le plus rentable possible.
+                  </div>
+                )}
+                {proj && (
+                  <>
+                    <h3 class="h3">Dans {h.label}, pour {num(e.capital, 0)} € investis</h3>
+                    <div class="stats">
+                      <Stat label="Scénario bas (5 %)" value={`${num(proj.bas, 0)} €`} tone={proj.bas < e.capital ? "bad" : "good"} />
+                      <Stat label="Médian" value={`${num(proj.median, 0)} €`} tone={proj.median >= e.capital ? "good" : "bad"} />
+                      <Stat label="Scénario haut (95 %)" value={`${num(proj.haut, 0)} €`} tone="good" />
+                    </div>
+                    <div class="stats">
+                      <Stat label="Probabilité de perte" value={pct(proj.probPerte, 0, false)}
+                        tone={proj.probPerte > 0.3 ? "bad" : proj.probPerte > 0.15 ? "neutral" : "good"} />
+                      <Stat label="Atteindre l'objectif" value={pct(proj.probObjectif, 0, false)} sub={`≥ ${num(proj.valeurObjectif, 0)} €`}
+                        tone={proj.probObjectif >= 0.5 ? "good" : proj.probObjectif >= 0.35 ? "neutral" : "bad"} />
+                      <Stat label="Volatilité" value={pct(choix.point.volatilite, 0, false)} tone={toneOf("volatility", choix.point.volatilite)} />
+                    </div>
+                  </>
+                )}
+                <Frontiere frontiere={frontiere} choisi={choix.point.rendement} cible={e.cible} />
+              </Card>
 
-          <Card title="Risque / rendement (1 an passé)">
-            <div class="stats">
-              <Stat label="Rendement annualisé" value={pct(calc.st.annReturn)} cls={signClass(calc.st.annReturn)} tone={calc.st.annReturn >= 0 ? "good" : "bad"} />
-              <Stat label="Volatilité" value={pct(calc.st.annVol, 1, false)} tone={toneOf("volatility", calc.st.annVol)} />
-            </div>
-            <RangeBar k="sharpe" v={calc.st.sharpe} />
-            <RangeBar k="max_drawdown" v={calc.st.maxDrawdown} />
-            <RangeBar k="volatility" v={calc.st.annVol} />
-          </Card>
+              <Card title={`Titres sélectionnés (${lignes.length})`}>
+                <table class="table">
+                  <thead><tr><th>Titre</th><th>Poids</th><th>Montant</th></tr></thead>
+                  <tbody>{lignes.map((l) => {
+                    const t = reco.data?.titres?.[l.symbol];
+                    const maxP = Math.max(...lignes.map((x) => x.poids));
+                    return (
+                      <tr>
+                        <td><b>{l.symbol}</b><br /><small class="muted">{t?.nom ?? ""}{t?.secteur ? ` · ${t.secteur}` : ""}</small></td>
+                        <td><div class="wbar"><div style={{ width: `${(l.poids / maxP) * 100}%` }} /></div>{pct(l.poids, 1, false)}</td>
+                        <td><b>{num(l.poids * e.capital, 2)} €</b></td>
+                      </tr>
+                    );
+                  })}</tbody>
+                </table>
+                <Details summary="Comment ces titres sont choisis">
+                  <p>{reco.data?.methode}</p>
+                  <p class="hint">Mis à jour {ilYA(reco.data?.updated_at)}. Les titres changent quand le marché change :
+                    en buy and hold, garde ton portefeuille et ne suis pas chaque mise à jour.</p>
+                </Details>
+              </Card>
 
-          <Card title="Simulation Monte-Carlo à 1 an">
-            <ChartBox config={mcCfg} height={240} label="Éventail des trajectoires simulées du portefeuille sur un an" />
-            <div class="stats">
-              <Stat label="Défavorable (5 %)" value={`${num(calc.mc.final5, 0)} €`} cls="down" tone="bad" />
-              <Stat label="Médiane" value={`${num(calc.mc.final50, 0)} €`} tone={calc.mc.final50 >= capital ? "good" : "bad"} />
-              <Stat label="Favorable (95 %)" value={`${num(calc.mc.final95, 0)} €`} cls="up" tone="good" />
-            </div>
-            <p class="verdict">Probabilité de finir l'année <b>en perte</b> : <b class={calc.mc.probPerte > 0.3 ? "down" : ""}>{pct(calc.mc.probPerte, 0, false)}</b></p>
-          </Card>
+              <PlanAchat capital={e.capital} lignes={lignes} prix={prix} eurusd={ov.data?.eurusd ?? null} annees={h.annees} />
+            </>
+          )}
         </>
       )}
     </div>
   );
+}
+
+/** Frontière efficiente : risque (x) / rentabilité attendue (y), point choisi en évidence. */
+function Frontiere({ frontiere, choisi, cible }: { frontiere: { rendement: number; volatilite: number }[]; choisi: number; cible: number }) {
+  const cfg = useCallback(() => {
+    const pts = [...frontiere].sort((a, b) => a.volatilite - b.volatilite);
+    const accent = cssVar("--accent");
+    return {
+      type: "line",
+      data: {
+        datasets: [
+          { label: "Frontière efficiente", data: pts.map((p) => ({ x: p.volatilite * 100, y: p.rendement * 100 })),
+            borderColor: cssVar("--info"), borderWidth: 2, pointRadius: 2, tension: 0.3 },
+          { label: "Ton portefeuille", data: pts.filter((p) => Math.abs(p.rendement - choisi) < 1e-9).map((p) => ({ x: p.volatilite * 100, y: p.rendement * 100 })),
+            borderColor: accent, backgroundColor: accent, pointRadius: 7, showLine: false },
+          { label: "Objectif", data: [{ x: pts[0].volatilite * 100, y: cible * 100 }, { x: pts[pts.length - 1].volatilite * 100, y: cible * 100 }],
+            borderColor: cssVar("--muted"), borderDash: [4, 3], borderWidth: 1, pointRadius: 0 },
+        ],
+      },
+      options: {
+        plugins: { legend: { position: "bottom" } },
+        scales: {
+          x: { type: "linear", title: { display: true, text: "Risque (volatilité %/an)", color: cssVar("--muted") } },
+          y: { title: { display: true, text: "Rentabilité attendue %/an", color: cssVar("--muted") } },
+        },
+      },
+    };
+  }, [frontiere, choisi, cible]);
+  if (frontiere.length < 2) return null;
+  return <ChartBox config={cfg} height={220} label="Frontière efficiente : rentabilité attendue selon le risque" />;
 }

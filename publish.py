@@ -182,6 +182,18 @@ def _stats_spread(df: pd.DataFrame) -> dict:
     }
 
 
+def taux_eurusd() -> float | None:
+    """Dernier cours EUR/USD (Yahoo). Sert à convertir le plan d'achat en euros."""
+    try:
+        fx = dp.yf.download("EURUSD=X", period="10d", progress=False, auto_adjust=False)
+        close = fx["Close"].dropna()
+        v = close.iloc[-1]
+        return float(v.iloc[0] if hasattr(v, "iloc") else v)
+    except Exception as e:
+        print(f"[PUBLISH][WARN] EUR/USD indisponible : {e}")
+        return None
+
+
 def ligne_overview(macro_raw: pd.DataFrame, snapshot: pd.DataFrame, spreads: dict) -> dict:
     vix = None
     if not macro_raw.empty and "^VIX" in set(macro_raw["symbol"]):
@@ -202,6 +214,7 @@ def ligne_overview(macro_raw: pd.DataFrame, snapshot: pd.DataFrame, spreads: dic
         "pct_above_ma200": float((actions["pct_vs_ma200"] > 0).mean() * 100) if not actions.empty else None,
         "n_hausse_1d": int((actions["chg_1d"] > 0).sum()) if not actions.empty else 0,
         "n_baisse_1d": int((actions["chg_1d"] < 0).sum()) if not actions.empty else 0,
+        "eurusd": taux_eurusd(),
         "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
     })
 
