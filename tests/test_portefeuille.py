@@ -66,7 +66,8 @@ def test_rendement_attendu_prudent():
     rng = np.random.default_rng(1)
     jours = 756
     marche = pd.Series(rng.normal(0.0004, 0.01, jours))
-    gagnant = marche * 1.2 + rng.normal(0.0015, 0.01, jours)   # ~ +60 %/an, bêta 1,2
+    gagnant = marche * 1.2 + rng.normal(0.0, 0.01, jours)      # bêta 1,2
+    gagnant = gagnant - gagnant.mean() + 0.60 / 252               # moyenne exacte : +60 %/an
     R = pd.DataFrame({"G": gagnant, "M": marche})
     mu, _ = pf.estimations(R, marche)
     assert R["G"].mean() * 252 > 0.45
