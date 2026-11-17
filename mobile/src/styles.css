@@ -316,3 +316,17 @@ input[type="search"], input[type="number"], select {
 
 /* Barres de poids : dégradé accent */
 .wbar > div { background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, var(--up))); }
+
+/* ---- Objectif / plan d'achat --------------------------------------------- */
+.accent { color: var(--accent); }
+.reglages { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.toggle { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; }
+.toggle input { width: 20px; height: 20px; accent-color: var(--accent); }
+input[type="range"] { width: 100%; margin: 10px 0 2px; accent-color: var(--accent); height: 28px; }
+.range-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+.etapes { margin: 0; padding-left: 20px; font-size: 14px; }
+.etapes li { margin-bottom: 8px; }
+.calendrier { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.calendrier li { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.field > .seg, .field > .chips { margin-top: 6px; }
+.table tr.muted td { color: var(--muted); }

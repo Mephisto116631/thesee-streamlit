@@ -33,12 +33,16 @@ export interface Overview {
   hy_spread_bp: number | null; hy_pct_10y: number | null; hy_min_10y: number | null; hy_med_10y: number | null; hy_max_10y: number | null;
   ig_spread_bp: number | null; ig_pct_10y: number | null; ig_min_10y: number | null; ig_med_10y: number | null; ig_max_10y: number | null;
   pct_above_ma50: number | null; pct_above_ma200: number | null; n_hausse_1d: number; n_baisse_1d: number;
+  eurusd?: number | null;
 }
 export interface LigneReco { symbol: string; nom: string; secteur: string | null; poids: number; rendement_1y: number; volatilite: number }
 export interface PortefeuilleReco {
   date: string; methode: string; updated_at: string;
   lignes: LigneReco[];
-  stats: { rendement_1y: number; volatilite: number; sharpe: number | null; perte_max: number; poids_secteur_max: number; secteur_principal: string };
+  stats: { rendement_1y: number; volatilite: number; sharpe: number | null; perte_max: number; poids_secteur_max: number; secteur_principal: string;
+    rendement_attendu?: number; volatilite_attendue?: number };
+  frontiere?: { cible: number; rendement: number; volatilite: number; sharpe: number | null; lignes: { symbol: string; poids: number }[] }[];
+  titres?: Record<string, { nom: string; secteur: string | null; prix: number | null; rendement_1y: number; volatilite: number }>;
 }
 export interface SyncLog { started_at: string; finished_at: string | null; status: string; message: string | null }
 export interface PricePoint { symbol: string; date: string; close: number }
