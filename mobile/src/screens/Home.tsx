@@ -1,5 +1,5 @@
 import { api } from "../api";
-import { Card, HelpButton, Loading, OfflineNote, RangeBar, Stat, toneOf, useData, ZoneBadge } from "../components";
+import { Card, HelpButton, Loading, OfflineNote, RangeBar, Stat, toneOf, useData, ZoneBadge, RefreshButton } from "../components";
 import { dateFr, ilYA, num, pct, prix, signClass } from "../format";
 
 const VERDICT_TXT: Record<string, string> = {
@@ -31,6 +31,7 @@ export function Home({ go }: { go: (h: string) => void }) {
             {o?.date && <> · séance du {dateFr(o.date)}</>}
           </p>
         </div>
+        <RefreshButton />
         <HelpButton keys={["vix", "spread_pct", "pct_vs_ma50", "gain_pts"]}
           intro={<p>L'accueil résume l'<b>humeur du marché</b> : volatilité attendue (VIX), coût du crédit (spreads), proportion de titres en tendance haussière, et fiabilité du modèle IA.</p>} />
       </header>

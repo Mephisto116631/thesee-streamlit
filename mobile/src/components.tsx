@@ -13,16 +13,35 @@ Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryS
 // ---------------------------------------------------------------------------
 // Chargement asynchrone avec cache (affiche d'abord le cache, puis le réseau)
 // ---------------------------------------------------------------------------
+// Bouton « rafraîchir » : un événement global relance toutes les requêtes affichées.
+const EVT_REFRESH = "thesee:refresh";
+export const rafraichir = () => window.dispatchEvent(new CustomEvent(EVT_REFRESH));
+
 export function useData<T>(loader: () => Promise<Result<T>>, deps: unknown[] = []) {
   const [res, setRes] = useState<Result<T> | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const on = () => setTick((t) => t + 1);
+    window.addEventListener(EVT_REFRESH, on);
+    return () => window.removeEventListener(EVT_REFRESH, on);
+  }, []);
   useEffect(() => {
     let alive = true;
     setLoading(true);
     loader().then((r) => { if (alive) { setRes(r); setLoading(false); } });
     return () => { alive = false; };
-  }, deps);
+  }, [...deps, tick]);
   return { data: res?.data, res, loading };
+}
+
+/** Bouton d'en-tête : recharge toutes les données de l'écran depuis Supabase. */
+export function RefreshButton() {
+  const [tourne, setTourne] = useState(false);
+  return (
+    <button class={`help-btn refresh ${tourne ? "spin" : ""}`} aria-label="Rafraîchir les données"
+      onClick={() => { setTourne(true); rafraichir(); setTimeout(() => setTourne(false), 900); }}>↻</button>
+  );
 }
 
 export function Loading({ label = "Chargement…" }: { label?: string }) {
