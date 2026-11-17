@@ -257,3 +257,19 @@ alter table market_overview add column if not exists eurusd double precision; --
 
 -- V5 — ingrédients de la frontière (l'appli la recalcule avec les hypothèses de l'utilisateur)
 alter table portefeuille_recommande add column if not exists univers jsonb;  -- {symbols, mu_hist, beta, cov, jours}
+
+-- V6 — Modèles « horizon » : score de classement relatif par titre et par horizon
+create table if not exists scores_horizon (
+    symbol      text not null,
+    horizon     text not null,          -- 'court' (1 mois) | '6m' | '1a'
+    score       double precision,       -- rang 0..1 (1 = meilleure performance relative attendue)
+    date        date,
+    primary key (symbol, horizon)
+);
+alter table scores_horizon enable row level security;
+do $$ begin
+    if not exists (select 1 from pg_policies where schemaname = 'public'
+                   and tablename = 'scores_horizon' and policyname = 'lecture publique') then
+        create policy "lecture publique" on scores_horizon for select to anon, authenticated using (true);
+    end if;
+end $$;

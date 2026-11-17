@@ -15,6 +15,7 @@ import pandas as pd
 
 import data_pipeline as dp
 import db
+import modele_horizon
 import portefeuille
 import universe
 import utils
@@ -289,6 +290,21 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
                                   ligne_model_run(data["model_result_etf"], "etf")], on_conflict="kind")
     db.upsert_rows("market_overview", [overview], on_conflict="id")
 
+    # Modèles « horizon » (1 mois, 6 mois, 1 an) : classement relatif des titres
+    n_scores = 0
+    for nom in modele_horizon.HORIZONS:
+        try:
+            ligne, scores = modele_horizon.entrainer_horizon(raw, snap["symbol"].tolist(), nom)
+            if ligne:
+                db.upsert_rows("model_runs", [_clean(ligne)], on_conflict="kind")
+                db.upsert_rows("scores_horizon", _records(scores), on_conflict="symbol,horizon")
+                n_scores += len(scores)
+                d = ligne["diagnostics"]
+                print(f"[PUBLISH] Modèle {nom} : IC {d.get('ic_moyen', 0):.3f} (t={d.get('t_stat', 0):.1f}, "
+                      f"momentum seul {d.get('ic_momentum') or 0:.3f}) -> {ligne['verdict']}")
+        except Exception as e:
+            print(f"[PUBLISH][WARN] Modèle horizon {nom} non calculé : {e}")
+
     # Portefeuille recommandé : bonus, ne doit jamais faire échouer la publication
     n_lignes = 0
     try:
@@ -302,7 +318,7 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
     except Exception as e:
         print(f"[PUBLISH][WARN] Portefeuille recommandé non calculé : {e}")
 
-    return {"snapshot": len(snap), "secteurs": len(med), "signaux": len(sig), "portefeuille": n_lignes}
+    return {"snapshot": len(snap), "secteurs": len(med), "signaux": len(sig), "portefeuille": n_lignes, "scores_horizon": n_scores}
 
 
 if __name__ == "__main__":
