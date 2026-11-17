@@ -42,8 +42,9 @@ export function Portfolio() {
         <HelpButton keys={["sharpe", "volatility", "max_drawdown"]} intro={<>
           <p><b>Objectif</b> : tu fixes la rentabilité visée par an et ton horizon. L'appli choisit, parmi les meilleurs titres du moment,
             le portefeuille <b>le moins risqué</b> qui l'atteint en théorie (frontière efficiente de Markowitz, 20 % max par titre).</p>
-          <p><b>Rentabilité attendue</b> : moitié historique sur 3 ans, moitié hypothèse long terme de 8 %/an. Ce n'est pas une promesse :
-            c'est une estimation volontairement prudente.</p>
+          <p><b>Rentabilité attendue</b> : estimée surtout par le modèle CAPM (taux sans risque + prime de risque selon la sensibilité
+            du titre au marché), et seulement à 10 % par l'historique. Les titres ont été choisis parce qu'ils ont monté : leur passé
+            surestime l'avenir. Ce n'est pas une promesse, c'est une estimation volontairement prudente (≈ 8 à 12 %/an pour des actions).</p>
           <p><b>Fourchette</b> : 90 % des scénarios simulés finissent entre la valeur basse et la valeur haute (modèle log-normal).</p>
           <p><b>Mes titres</b> : tu choisis toi-même les titres ; l'appli calcule les poids (Markowitz ou parts égales).</p>
         </>} />
