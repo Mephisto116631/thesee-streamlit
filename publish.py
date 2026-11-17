@@ -4,7 +4,7 @@
 # ==============================================================================
 # L'appli mobile (APK / PWA) ne fait AUCUN calcul lourd : elle lit des tables
 # Supabase déjà calculées ici, à chaque run du cron :
-#   screener_snapshot, sector_medians, signals, model_runs, market_overview
+#   titres_snapshot, sector_medians, signals, model_runs, market_overview
 # Les fourchettes d'interprétation sont dans ranges.json (partagé avec l'appli).
 # ==============================================================================
 import json
@@ -267,8 +267,8 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
     med = construire_medianes(snap) if not snap.empty else pd.DataFrame()
     overview = ligne_overview(macro, snap, spreads)
 
-    db.upsert_rows("screener_snapshot", _records(snap), on_conflict="symbol")
-    db.delete_where_not_in("screener_snapshot", "symbol", snap["symbol"].tolist() if not snap.empty else [])
+    db.upsert_rows("titres_snapshot", _records(snap), on_conflict="symbol")
+    db.delete_where_not_in("titres_snapshot", "symbol", snap["symbol"].tolist() if not snap.empty else [])
     db.upsert_rows("sector_medians", _records(med), on_conflict="secteur")
     db.upsert_rows("signals", _records(sig), on_conflict="symbol")
     db.upsert_rows("model_runs", [ligne_model_run(data["model_result"], "actions"),

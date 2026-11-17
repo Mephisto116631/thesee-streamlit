@@ -65,9 +65,8 @@ on conflict (symbol) do nothing;
 -- ==============================================================================
 -- NOTES
 -- ==============================================================================
--- - Pas de RLS (Row Level Security) active : conforme a ta demande "SQL standard,
---   pas d'auth pour l'instant". Les clients Streamlit utiliseront la cle anon
---   ou service_role selon le niveau d'acces souhaite cote .env.
+-- - RLS (Row Level Security) : voir la section SÉCURITÉ en fin de fichier
+--   (lecture seule pour la clé anon, écriture réservée à la clé service_role).
 -- - Le TTL de 7 jours sur fonda_data est gere cote application Python
 --   (comparaison a current_date - 7), pas par une contrainte SQL.
 -- - market_data et macro_data utilisent une cle composite (symbol, date) pour
@@ -110,8 +109,9 @@ create table if not exists sync_log (
     message      text
 );
 
--- 9. Instantané du screener : 1 ligne par ticker, tout pré-calculé par le cron
-create table if not exists screener_snapshot (
+-- 9. Instantané par titre : 1 ligne par ticker, tout pré-calculé par le cron
+--    (nom distinct de `screener_snapshot`, utilisée par la branche test-modele-relatif)
+create table if not exists titres_snapshot (
     symbol        text primary key,
     nom           text,
     secteur       text,
@@ -215,7 +215,7 @@ declare t text;
 begin
     foreach t in array array[
         'market_data', 'macro_data', 'fonda_data', 'ratings_sp', 'zscore_data',
-        'credit_spreads', 'sync_log', 'screener_snapshot', 'sector_medians',
+        'credit_spreads', 'sync_log', 'titres_snapshot', 'sector_medians',
         'model_runs', 'signals', 'market_overview'
     ] loop
         execute format('alter table %I enable row level security', t);

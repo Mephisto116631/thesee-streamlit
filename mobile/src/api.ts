@@ -82,7 +82,7 @@ async function selectAll<T>(build: (from: number, to: number) => PromiseLike<{ d
 
 export const api = {
   snapshot: () => cached<Snapshot[]>("snapshot",
-    () => selectAll((a, b) => sb!.from("screener_snapshot").select("*").order("symbol").range(a, b)), []),
+    () => selectAll((a, b) => sb!.from("titres_snapshot").select("*").order("symbol").range(a, b)), []),
 
   medians: () => cached<SectorMedian[]>("medians",
     () => selectAll((a, b) => sb!.from("sector_medians").select("*").range(a, b)), []),

@@ -12,7 +12,7 @@ GitHub Actions (cron)  ──écrit──▶  Supabase  ◀──lit──  Appl
 |---|---|
 | `cron_sync.py` | Point d'entrée du cron : synchro incrémentale, modèles, publication |
 | `data_pipeline.py`, `fred.py`, `universe.py` | Collecte (Yahoo, Alpha Vantage, FRED) et modèles XGBoost |
-| `publish.py` | Tables pour l'appli : `screener_snapshot`, `sector_medians`, `signals`, `model_runs`, `market_overview` |
+| `publish.py` | Tables pour l'appli : `titres_snapshot`, `sector_medians`, `signals`, `model_runs`, `market_overview` |
 | `ranges.json` | **Fourchettes d'interprétation** (RSI, ROE, Z-Score…), partagées par le cron et l'appli |
 | `supabase_schema.sql` | Schéma complet + sécurité RLS (lecture seule pour la clé publique) |
 | `mobile/` | Appli mobile (Preact + Capacitor) → APK Android et PWA |
