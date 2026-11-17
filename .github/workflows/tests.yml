@@ -1,0 +1,25 @@
+name: Tests Python
+
+# Vérifie chaque PR touchant le code Python (cron, pipeline, publication).
+on:
+  pull_request:
+    paths: ["**.py", "requirements.txt", "ranges.json", ".github/workflows/tests.yml"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install -r requirements.txt pytest
+      - name: Compilation
+        run: python -m compileall -q . -x "mobile/|\.git/"
+      - name: Tests
+        run: python -m pytest -q tests
