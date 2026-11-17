@@ -53,6 +53,21 @@ export function Dot({ k, v }: { k: string; v: number | null | undefined }) {
   return <span class={`dot ${z ? z.ton : "none"}`} title={z ? `${RANGES[k].label} : ${z.nom}` : "n.d."} />;
 }
 
+/** Puce colorée lisible : libellé court + valeur, couleur = zone de la fourchette. */
+export function Chip({ k, v, label, value }: { k: string; v: number | null | undefined; label: string; value?: string }) {
+  const z = zoneOf(k, v);
+  return (
+    <span class={`mchip ${z ? z.ton : "none"}`} title={z ? `${RANGES[k].label} : ${z.nom} — ${z.aide}` : `${RANGES[k].label} : n.d.`}>
+      {label} <b>{value ?? fmt(k, v, 0)}</b>
+    </span>
+  );
+}
+
+/** Ton (couleur) d'une valeur selon sa fourchette, pour colorer un bloc. */
+export function toneOf(k: string, v: number | null | undefined): string {
+  return zoneOf(k, v)?.ton ?? "";
+}
+
 // ---------------------------------------------------------------------------
 // Jauge de fourchette : 3 zones colorées, curseur = valeur, losange = médiane
 // ---------------------------------------------------------------------------
@@ -127,9 +142,10 @@ export function Card({ title, right, children, class: cls = "" }:
   );
 }
 
-export function Stat({ label, value, sub, cls = "" }: { label: string; value: ComponentChildren; sub?: ComponentChildren; cls?: string }) {
+export function Stat({ label, value, sub, cls = "", tone = "" }:
+  { label: string; value: ComponentChildren; sub?: ComponentChildren; cls?: string; tone?: string }) {
   return (
-    <div class="stat">
+    <div class={`stat ${tone ? `tone-${tone}` : ""}`}>
       <div class="stat-label">{label}</div>
       <div class={`stat-value ${cls}`}>{value}</div>
       {sub && <div class="stat-sub">{sub}</div>}

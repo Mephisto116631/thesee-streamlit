@@ -63,9 +63,9 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
       <Card title="Cours sur 1 an">
         {pts.length ? <ChartBox config={chartCfg} label={`Cours de ${symbol} sur un an`} /> : <Loading />}
         <div class="stats">
-          <Stat label="1 semaine" value={pct(s.chg_5d)} cls={signClass(s.chg_5d)} />
-          <Stat label="1 mois" value={pct(s.chg_20d)} cls={signClass(s.chg_20d)} />
-          <Stat label="1 an" value={pct(s.chg_1y)} cls={signClass(s.chg_1y)} />
+          <Stat label="1 semaine" value={pct(s.chg_5d)} cls={signClass(s.chg_5d)} tone={sgnTone(s.chg_5d)} />
+          <Stat label="1 mois" value={pct(s.chg_20d)} cls={signClass(s.chg_20d)} tone={sgnTone(s.chg_20d)} />
+          <Stat label="1 an" value={pct(s.chg_1y)} cls={signClass(s.chg_1y)} tone={sgnTone(s.chg_1y)} />
         </div>
         {pos52 !== null && (
           <div class="range52">
@@ -123,6 +123,8 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
     </div>
   );
 }
+
+const sgnTone = (v: number | null | undefined) => (v == null ? "" : v > 0 ? "good" : v < 0 ? "bad" : "");
 
 export function isIG(r: string) {
   return ["AAA", "AA+", "AA", "AA-", "A+", "A", "A-", "BBB+", "BBB", "BBB-"].includes(r);

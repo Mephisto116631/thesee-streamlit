@@ -112,7 +112,7 @@ def sync_macro_data(tickers: tuple[str, ...], telecharger: bool = True) -> pd.Da
 
 
 # ------------------------------------------------------------------------------
-# 2. FONDAMENTAUX (Alpha Vantage OVERVIEW -> Supabase, TTL 7 jours)
+# 2. FONDAMENTAUX + Z-SCORE (Alpha Vantage BALANCE_SHEET + INCOME_STATEMENT -> Supabase, TTL 7 jours)
 #    Reste limité à la liste "core" suivie activement (pas l'univers élargi)
 #    pour respecter le rate-limit Alpha Vantage (5 req/min plan gratuit).
 # ------------------------------------------------------------------------------
@@ -124,64 +124,6 @@ def _av_message(data) -> str:
         if k in data:
             return f"{k} : {str(data[k])[:200]}"
     return f"clés reçues : {sorted(data.keys())[:8] or 'aucune (réponse vide)'}"
-
-
-def _safe_cast(data: dict, key: str) -> float:
-    v = data.get(key, "0")
-    return float(v) if v not in ["None", "-", "", None] else 0.0
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def sync_fonda_data(tickers: tuple[str, ...]) -> pd.DataFrame:
-    tickers = list(tickers)
-    fonda_df = db.fetch_fonda_data(tickers)
-    a_rafraichir = db.tickers_a_rafraichir(tickers, fonda_df, ttl_jours=7)
-
-    if not a_rafraichir:
-        return fonda_df
-
-    if not CLE_ALPHA_VANTAGE:
-        st.warning(
-            f"Clé Alpha Vantage absente : {len(a_rafraichir)} ticker(s) "
-            "non rafraîchis (ALPHA_VANTAGE_KEY manquante dans les secrets)."
-        )
-        return fonda_df
-
-    total = len(a_rafraichir)
-    progress_bar = st.progress(0, text=f"Fondamentaux : 0/{total} tickers traités")
-
-    nouveaux_records = []
-    for i, t in enumerate(a_rafraichir):
-        progress_bar.progress(
-            i / total,
-            text=f"Fondamentaux : {i}/{total} tickers traités — récupération de {t}...",
-        )
-        time.sleep(13)  # Rate limit Alpha Vantage (plan gratuit : 5 req/min)
-        try:
-            url = f"https://www.alphavantage.co/query?function=OVERVIEW&symbol={t}&apikey={CLE_ALPHA_VANTAGE}"
-            data = requests.get(url, timeout=10).json()
-            if "ReturnOnEquityTTM" in data:
-                nouveaux_records.append({
-                    "symbol": t,
-                    "roe": _safe_cast(data, "ReturnOnEquityTTM"),
-                    "ev_ebitda": _safe_cast(data, "EVToEBITDA"),
-                    "debt_eq": _safe_cast(data, "DebtToEquityRatio"),
-                    "margin": _safe_cast(data, "OperatingMarginTTM"),
-                    "last_updated": str(pd.Timestamp.today().date()),
-                })
-            else:
-                # Avant : ignoré en silence -> fondamentaux figés sans explication
-                st.warning(f"Alpha Vantage OVERVIEW sans données pour {t} — {_av_message(data)}")
-        except Exception as e:
-            st.warning(f"Erreur Alpha Vantage sur {t} : {e}")
-
-    progress_bar.progress(1.0, text=f"Fondamentaux : {total}/{total} tickers traités")
-    progress_bar.empty()
-    if nouveaux_records:
-        st.toast(f"{len(nouveaux_records)} ticker(s) mis à jour (fondamentaux)", icon="✓")
-        db.upsert_fonda_data(nouveaux_records)
-
-    return db.fetch_fonda_data(tickers)
 
 
 # ------------------------------------------------------------------------------
@@ -204,88 +146,115 @@ def _safe_get(d: dict, key: str, default: float = 0.0) -> float:
         return default
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def sync_altman_zscore(tickers: tuple[str, ...], prix_actuels: dict) -> pd.DataFrame:
+def ratios_depuis_bilans(bs0: dict, inc0: dict, prix: float) -> dict | None:
+    """Z-Score Altman + fondamentaux calculés depuis le dernier exercice annuel.
+
+    L'endpoint OVERVIEW d'Alpha Vantage (ROE, marge, EV/EBITDA
+    « TTM ») est désormais réservé aux offres payantes. BALANCE_SHEET et INCOME_STATEMENT
+    restent gratuits : on recalcule les mêmes ratios à partir du dernier
+    exercice annuel (et non des 12 derniers mois glissants).
+    Retourne None si le bilan est inexploitable.
     """
-    prix_actuels : dict {symbol: dernier_prix} pour calculer la capitalisation
-                   boursière (approximation : prix x nombre d'actions du bilan).
-    Résultat stocké dans Supabase (table zscore_data), TTL 7 jours comme fonda_data.
+    total_assets = _safe_get(bs0, "totalAssets")
+    if total_assets <= 0:
+        return None
+    total_liabilities = _safe_get(bs0, "totalLiabilities")
+    equity = _safe_get(bs0, "totalShareholderEquity")
+    shares_out = _safe_get(bs0, "commonStockSharesOutstanding")
+    cash = _safe_get(bs0, "cashAndCashEquivalentsAtCarryingValue")
+    dette = _safe_get(bs0, "shortLongTermDebtTotal") or (
+        _safe_get(bs0, "longTermDebt") + _safe_get(bs0, "shortTermDebt"))
+
+    revenue = _safe_get(inc0, "totalRevenue")
+    ebit = _safe_get(inc0, "ebit")
+    ebitda = _safe_get(inc0, "ebitda")
+    net_income = _safe_get(inc0, "netIncome")
+    operating_income = _safe_get(inc0, "operatingIncome")
+
+    market_cap = (prix or 0.0) * shares_out
+
+    A = (_safe_get(bs0, "totalCurrentAssets") - _safe_get(bs0, "totalCurrentLiabilities")) / total_assets
+    B = _safe_get(bs0, "retainedEarnings") / total_assets
+    C = ebit / total_assets
+    D = market_cap / total_liabilities if total_liabilities > 0 else 0.0
+    E = revenue / total_assets
+    z = 1.2 * A + 1.4 * B + 3.3 * C + 0.6 * D + 1.0 * E
+
+    def ratio(num, den):
+        return round(num / den, 4) if den and den > 0 else None
+
+    return {
+        "z_score": round(z, 3),
+        "roe": ratio(net_income, equity),                        # fraction (0.25 = 25 %)
+        "margin": ratio(operating_income, revenue),              # fraction
+        "debt_eq": ratio(dette, equity),                         # multiple
+        "ev_ebitda": ratio(market_cap + dette - cash, ebitda) if market_cap > 0 else None,
+    }
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def sync_bilans(tickers: tuple[str, ...], prix_actuels: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Rafraîchit fondamentaux (fonda_data) ET Z-Score (zscore_data) en une seule
+    passe : 2 requêtes Alpha Vantage par titre (BALANCE_SHEET + INCOME_STATEMENT).
+    TTL 7 jours : un titre est rafraîchi si l'une des deux tables est périmée.
+    Plan gratuit : 25 requêtes/jour -> 12 titres max par jour.
+    prix_actuels : {symbol: dernier_prix} pour la capitalisation (prix x actions).
+    Retourne (fonda_df, zscore_df).
     """
     tickers = list(tickers)
+    fonda_df = db.fetch_fonda_data(tickers)
     zscore_df = db.fetch_zscore_data(tickers)
-    a_rafraichir = db.tickers_a_rafraichir_zscore(tickers, zscore_df, ttl_jours=7)
+    perimes = set(db.tickers_a_rafraichir(tickers, fonda_df, ttl_jours=7)) | \
+        set(db.tickers_a_rafraichir_zscore(tickers, zscore_df, ttl_jours=7))
+    a_rafraichir = [t for t in tickers if t in perimes]
 
     if not a_rafraichir:
-        return zscore_df
+        return fonda_df, zscore_df
 
     if not CLE_ALPHA_VANTAGE:
-        st.warning(f"Clé Alpha Vantage absente : Z-Score non calculé pour {len(a_rafraichir)} ticker(s).")
-        return zscore_df
+        st.warning(f"Clé Alpha Vantage absente : {len(a_rafraichir)} titre(s) non rafraîchi(s).")
+        return fonda_df, zscore_df
 
     total = len(a_rafraichir)
-    progress_bar = st.progress(0, text=f"Z-Score Altman : 0/{total} tickers traités")
-    nouveaux_records = []
+    progress_bar = st.progress(0, text=f"Bilans : 0/{total} titres traités")
+    fonda_records, z_records = [], []
+    aujourdhui = str(pd.Timestamp.today().date())
 
     for i, t in enumerate(a_rafraichir):
-        progress_bar.progress(i / total, text=f"Z-Score Altman : {i}/{total} — {t}...")
+        progress_bar.progress(i / total, text=f"Bilans : {i}/{total} — {t}...")
         try:
             url_bs = f"https://www.alphavantage.co/query?function=BALANCE_SHEET&symbol={t}&apikey={CLE_ALPHA_VANTAGE}"
             bs = requests.get(url_bs, timeout=10).json()
-            time.sleep(13)
+            time.sleep(13)  # Rate limit Alpha Vantage (plan gratuit : 5 req/min)
 
             url_is = f"https://www.alphavantage.co/query?function=INCOME_STATEMENT&symbol={t}&apikey={CLE_ALPHA_VANTAGE}"
             inc = requests.get(url_is, timeout=10).json()
             time.sleep(13)
 
-            bs_annual = bs.get("annualReports", [{}])
-            inc_annual = inc.get("annualReports", [{}])
-            if "annualReports" not in bs or "annualReports" not in inc:
+            if not bs.get("annualReports") or not inc.get("annualReports"):
                 st.warning(f"Alpha Vantage bilan/compte de résultat sans données pour {t} — "
-                           f"{_av_message(bs if 'annualReports' not in bs else inc)}")
-            if not bs_annual or not inc_annual:
+                           f"{_av_message(bs if not bs.get('annualReports') else inc)}")
                 continue
 
-            bs0, inc0 = bs_annual[0], inc_annual[0]
-
-            total_assets = _safe_get(bs0, "totalAssets")
-            total_liabilities = _safe_get(bs0, "totalLiabilities")
-            current_assets = _safe_get(bs0, "totalCurrentAssets")
-            current_liabilities = _safe_get(bs0, "totalCurrentLiabilities")
-            retained_earnings = _safe_get(bs0, "retainedEarnings")
-            shares_out = _safe_get(bs0, "commonStockSharesOutstanding")
-
-            ebit = _safe_get(inc0, "ebit")
-            revenue = _safe_get(inc0, "totalRevenue")
-
-            if total_assets <= 0:
+            r = ratios_depuis_bilans(bs["annualReports"][0], inc["annualReports"][0], prix_actuels.get(t, 0.0))
+            if r is None:
                 continue
-
-            prix = prix_actuels.get(t, 0.0)
-            market_cap = prix * shares_out
-
-            A = (current_assets - current_liabilities) / total_assets
-            B = retained_earnings / total_assets
-            C = ebit / total_assets
-            D = market_cap / total_liabilities if total_liabilities > 0 else 0.0
-            E = revenue / total_assets
-
-            z = 1.2 * A + 1.4 * B + 3.3 * C + 0.6 * D + 1.0 * E
-
-            nouveaux_records.append({
-                "symbol": t,
-                "z_score": round(z, 3),
-                "last_updated": str(pd.Timestamp.today().date()),
-            })
+            z_records.append({"symbol": t, "z_score": r["z_score"], "last_updated": aujourdhui})
+            fonda_records.append({"symbol": t, "roe": r["roe"], "margin": r["margin"],
+                                  "debt_eq": r["debt_eq"], "ev_ebitda": r["ev_ebitda"],
+                                  "last_updated": aujourdhui})
         except Exception as e:
-            st.warning(f"Erreur Z-Score sur {t} : {e}")
+            st.warning(f"Erreur Alpha Vantage sur {t} : {e}")
 
-    progress_bar.progress(1.0, text=f"Z-Score Altman : {total}/{total} tickers traités")
+    progress_bar.progress(1.0, text=f"Bilans : {total}/{total} titres traités")
     progress_bar.empty()
-    if nouveaux_records:
-        st.toast(f"{len(nouveaux_records)} Z-Score(s) recalculés", icon="✓")
-        db.upsert_zscore_data(nouveaux_records)
+    if z_records:
+        st.toast(f"{len(z_records)} bilan(s) mis à jour (fondamentaux + Z-Score)", icon="✓")
+        db.upsert_zscore_data(z_records)
+        db.upsert_fonda_data(fonda_records)
 
-    return db.fetch_zscore_data(tickers)
+    return db.fetch_fonda_data(tickers), db.fetch_zscore_data(tickers)
 
 
 # ------------------------------------------------------------------------------
@@ -799,24 +768,25 @@ def get_all_data(univers_etendu: list[str] = None, telecharger: bool = False):
 
     etape = st.empty()
 
-    etape.info("Étape 1/5 — Synchronisation des données de marché (Yahoo Finance)...")
+    etape.info("Étape 1/4 — Synchronisation des données de marché (Yahoo Finance)...")
     market_data_raw = sync_market_data(tickers_prix, telecharger)
 
-    etape.info("Étape 2/5 — Synchronisation des données macro (VIX, SPY)...")
+    etape.info("Étape 2/4 — Synchronisation des données macro (VIX, SPY)...")
     macro_data_raw = sync_macro_data(macro, telecharger)
 
-    etape.info("Étape 3/5 — Vérification des fondamentaux (Alpha Vantage)...")
-    fonda_data_clean = sync_fonda_data(tickers_core) if telecharger else db.fetch_fonda_data(list(tickers_core))
-
-    etape.info("Étape 4/5 — Calcul du Z-Score Altman...")
+    etape.info("Étape 3/4 — Bilans : fondamentaux et Z-Score Altman (Alpha Vantage)...")
     market_core = market_data_raw[market_data_raw["symbol"].isin(tickers_core)] if not market_data_raw.empty else market_data_raw
     prix_actuels = {}
     if not market_core.empty:
         derniers = market_core.sort_values("date").groupby("symbol").last()
         prix_actuels = derniers["close"].to_dict()
-    zscore_df = sync_altman_zscore(tickers_core, prix_actuels) if telecharger else db.fetch_zscore_data(list(tickers_core))
+    if telecharger:
+        fonda_data_clean, zscore_df = sync_bilans(tickers_core, prix_actuels)
+    else:
+        fonda_data_clean = db.fetch_fonda_data(list(tickers_core))
+        zscore_df = db.fetch_zscore_data(list(tickers_core))
 
-    etape.info("Étape 5/5 — Calcul des indicateurs et entraînement des modèles IA...")
+    etape.info("Étape 4/4 — Calcul des indicateurs et entraînement des modèles IA...")
 
     # Séparation actions / ETFs — les fondamentaux (roe, margin...) n'ont pas de
     # sens pour un ETF, et ses dynamiques de prix diffèrent d'une action isolée

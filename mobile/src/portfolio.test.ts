@@ -53,3 +53,20 @@ describe("libellés des bornes", () => {
     expect(bornesTexte("chg_20d")[2]).toBe("> 5 %");
   });
 });
+
+import { capWeights } from "./portfolio";
+describe("plafond des poids", () => {
+  it("plafonne à 20 % et garde une somme de 1", () => {
+    const w = capWeights([0.6, 0.1, 0.1, 0.1, 0.05, 0.05], 0.2);
+    expect(Math.max(...w)).toBeLessThanOrEqual(0.2 + 1e-9);
+    expect(w.reduce((a, b) => a + b, 0)).toBeCloseTo(1);
+  });
+});
+
+import { pct } from "./format";
+describe("format", () => {
+  it("n'affiche pas -0 %", () => {
+    expect(pct(-0.001, 0)).toBe("0 %");
+    expect(pct(0.054, 0)).toBe("+5 %");
+  });
+});

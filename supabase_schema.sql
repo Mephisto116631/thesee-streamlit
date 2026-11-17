@@ -228,3 +228,22 @@ end $$;
 alter view market_data_last set (security_invoker = true);
 alter view macro_data_last set (security_invoker = true);
 alter view price_history_1y set (security_invoker = true);
+
+-- ==============================================================================
+-- V3 — Portefeuille recommandé (1 ligne, id = 1), calculé par le cron
+-- ==============================================================================
+create table if not exists portefeuille_recommande (
+    id          integer primary key default 1,
+    date        date,
+    lignes      jsonb,      -- [{symbol, nom, secteur, poids, rendement_1y, volatilite}]
+    stats       jsonb,      -- {rendement_1y, volatilite, sharpe, perte_max, ...}
+    methode     text,
+    updated_at  timestamptz default now()
+);
+alter table portefeuille_recommande enable row level security;
+do $$ begin
+    if not exists (select 1 from pg_policies where schemaname = 'public'
+                   and tablename = 'portefeuille_recommande' and policyname = 'lecture publique') then
+        create policy "lecture publique" on portefeuille_recommande for select to anon, authenticated using (true);
+    end if;
+end $$;

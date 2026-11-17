@@ -34,6 +34,12 @@ export interface Overview {
   ig_spread_bp: number | null; ig_pct_10y: number | null; ig_min_10y: number | null; ig_med_10y: number | null; ig_max_10y: number | null;
   pct_above_ma50: number | null; pct_above_ma200: number | null; n_hausse_1d: number; n_baisse_1d: number;
 }
+export interface LigneReco { symbol: string; nom: string; secteur: string | null; poids: number; rendement_1y: number; volatilite: number }
+export interface PortefeuilleReco {
+  date: string; methode: string; updated_at: string;
+  lignes: LigneReco[];
+  stats: { rendement_1y: number; volatilite: number; sharpe: number | null; perte_max: number; poids_secteur_max: number; secteur_principal: string };
+}
 export interface SyncLog { started_at: string; finished_at: string | null; status: string; message: string | null }
 export interface PricePoint { symbol: string; date: string; close: number }
 export interface SpreadPoint { serie_id: string; date: string; valeur: number }
@@ -72,12 +78,13 @@ async function cached<T>(key: string, fetcher: () => Promise<T>, fallback: T): P
 /** Lit toutes les lignes (PostgREST renvoie 1000 lignes max par requête). */
 async function selectAll<T>(build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>): Promise<T[]> {
   const out: T[] = [];
-  for (let from = 0; ; from += 1000) {
+  for (let from = 0; from < 500_000; from += 1000) { // garde-fou : jamais de boucle infinie
     const { data, error } = await build(from, from + 999);
     if (error) throw new Error(error.message);
     out.push(...(data ?? []));
     if (!data || data.length < 1000) return out;
   }
+  return out;
 }
 
 export const api = {
@@ -103,6 +110,12 @@ export const api = {
     const { data, error } = await sb!.from("sync_log").select("*").order("started_at", { ascending: false }).limit(1).maybeSingle();
     if (error) throw new Error(error.message);
     return data as SyncLog | null;
+  }, null),
+
+  portefeuilleReco: () => cached<PortefeuilleReco | null>("reco", async () => {
+    const { data, error } = await sb!.from("portefeuille_recommande").select("*").eq("id", 1).maybeSingle();
+    if (error) throw new Error(error.message);
+    return data as PortefeuilleReco | null;
   }, null),
 
   signal: (symbol: string) => cached<Signal | null>(`signal:${symbol}`, async () => {
