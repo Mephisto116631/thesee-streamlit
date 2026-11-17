@@ -1,0 +1,168 @@
+{
+  "_doc": "Fourchettes d'interprétation — source unique partagée par le cron (publish.py) et l'appli mobile. 'bornes' = [b1, b2] : valeur < b1 -> zone[0], b1 <= valeur <= b2 -> zone[1], valeur > b2 -> zone[2]. 'ton' : good / neutral / bad / info (couleur affichée). 'unite' : pct = fraction affichée en %, x = multiple, pts = nombre brut.",
+  "rsi_14": {
+    "label": "RSI 14 jours",
+    "unite": "pts",
+    "bornes": [30, 70],
+    "zones": [
+      {"nom": "Survendu", "ton": "info", "aide": "Le titre a beaucoup baissé récemment ; un rebond technique est possible mais pas garanti."},
+      {"nom": "Neutre", "ton": "neutral", "aide": "Pas d'excès d'achat ou de vente."},
+      {"nom": "Suracheté", "ton": "info", "aide": "Le titre a beaucoup monté récemment ; risque de pause ou de correction."}
+    ],
+    "definition": "Indice de force relative : compare l'ampleur des hausses et des baisses sur 14 séances (0 à 100)."
+  },
+  "chg_20d": {
+    "label": "Momentum 1 mois",
+    "unite": "pct",
+    "bornes": [-0.05, 0.05],
+    "zones": [
+      {"nom": "Baissier", "ton": "bad", "aide": "Baisse de plus de 5 % sur 20 séances."},
+      {"nom": "Neutre", "ton": "neutral", "aide": "Variation comprise entre -5 % et +5 %."},
+      {"nom": "Haussier", "ton": "good", "aide": "Hausse de plus de 5 % sur 20 séances."}
+    ],
+    "definition": "Performance du cours sur les 20 dernières séances (~1 mois)."
+  },
+  "volatility": {
+    "label": "Volatilité annualisée",
+    "unite": "pct",
+    "bornes": [0.20, 0.35],
+    "zones": [
+      {"nom": "Faible", "ton": "good", "aide": "Titre calme (proche d'un indice large)."},
+      {"nom": "Moyenne", "ton": "neutral", "aide": "Fluctuations typiques d'une action."},
+      {"nom": "Élevée", "ton": "bad", "aide": "Fortes variations : taille de position à réduire."}
+    ],
+    "definition": "Écart-type des rendements quotidiens sur 20 séances, ramené à l'année (x √252). Le S&P 500 tourne autour de 15-20 %."
+  },
+  "pct_vs_ma50": {
+    "label": "Écart à la moyenne 50 j",
+    "unite": "pct",
+    "bornes": [-0.05, 0.05],
+    "zones": [
+      {"nom": "Sous la tendance", "ton": "bad", "aide": "Cours plus de 5 % sous sa moyenne mobile 50 jours."},
+      {"nom": "Sur la tendance", "ton": "neutral", "aide": "Cours proche de sa moyenne 50 jours."},
+      {"nom": "Au-dessus", "ton": "good", "aide": "Cours plus de 5 % au-dessus de sa moyenne 50 jours (tendance haussière)."}
+    ],
+    "definition": "(Cours - moyenne mobile 50 jours) / moyenne 50 jours."
+  },
+  "roe": {
+    "label": "ROE",
+    "unite": "pct",
+    "bornes": [0.08, 0.15],
+    "zones": [
+      {"nom": "Faible", "ton": "bad", "aide": "Rentabilité des fonds propres sous le coût du capital typique (~8 %)."},
+      {"nom": "Correct", "ton": "neutral", "aide": "Rentabilité dans la moyenne."},
+      {"nom": "Élevé", "ton": "good", "aide": "Forte création de valeur pour l'actionnaire (vérifier que ce n'est pas dû au levier)."}
+    ],
+    "definition": "Return on Equity = résultat net / capitaux propres (12 derniers mois)."
+  },
+  "margin": {
+    "label": "Marge opérationnelle",
+    "unite": "pct",
+    "bornes": [0.10, 0.20],
+    "zones": [
+      {"nom": "Faible", "ton": "bad", "aide": "Peu de marge de sécurité si les coûts montent."},
+      {"nom": "Correcte", "ton": "neutral", "aide": "Dans la moyenne des grandes entreprises US."},
+      {"nom": "Élevée", "ton": "good", "aide": "Pouvoir de fixation des prix / avantage concurrentiel probable."}
+    ],
+    "definition": "Résultat opérationnel (EBIT) / chiffre d'affaires, 12 derniers mois. À comparer au secteur."
+  },
+  "ev_ebitda": {
+    "label": "EV / EBITDA",
+    "unite": "x",
+    "bornes": [8, 15],
+    "zones": [
+      {"nom": "Décote", "ton": "good", "aide": "Valorisation basse : opportunité ou entreprise en difficulté."},
+      {"nom": "Normal", "ton": "neutral", "aide": "Valorisation dans la moyenne historique du marché."},
+      {"nom": "Cher", "ton": "bad", "aide": "Le marché paie une forte croissance future ; comparer à la médiane du secteur."}
+    ],
+    "definition": "Valeur d'entreprise (capitalisation + dette nette) / EBITDA. Multiple de valorisation indépendant de la structure financière."
+  },
+  "debt_eq": {
+    "label": "Dette / Capitaux propres",
+    "unite": "x",
+    "bornes": [0.5, 1.5],
+    "zones": [
+      {"nom": "Faible levier", "ton": "good", "aide": "Bilan solide, peu dépendant du crédit."},
+      {"nom": "Modéré", "ton": "neutral", "aide": "Endettement classique."},
+      {"nom": "Levier élevé", "ton": "bad", "aide": "Sensible à la hausse des taux et aux retournements (normal pour banques/utilities)."}
+    ],
+    "definition": "Dette financière / capitaux propres comptables."
+  },
+  "z_score": {
+    "label": "Z-Score Altman",
+    "unite": "pts",
+    "bornes": [1.81, 2.99],
+    "zones": [
+      {"nom": "Détresse", "ton": "bad", "aide": "Risque de défaillance élevé à 2 ans selon le modèle d'Altman."},
+      {"nom": "Zone grise", "ton": "neutral", "aide": "Situation à surveiller."},
+      {"nom": "Sain", "ton": "good", "aide": "Faible probabilité de défaillance."}
+    ],
+    "definition": "Z = 1,2·BFR/Actif + 1,4·Réserves/Actif + 3,3·EBIT/Actif + 0,6·Capitalisation/Passif + 1,0·CA/Actif. Peu adapté aux banques et assureurs."
+  },
+  "proba_hausse": {
+    "label": "Signal IA",
+    "unite": "pct",
+    "bornes": [0.45, 0.55],
+    "zones": [
+      {"nom": "Penche baisse", "ton": "bad", "aide": "Le modèle estime une baisse significative un peu plus probable demain."},
+      {"nom": "Indécis", "ton": "neutral", "aide": "Le modèle ne voit pas de direction claire."},
+      {"nom": "Penche hausse", "ton": "good", "aide": "Le modèle estime une hausse significative un peu plus probable demain."}
+    ],
+    "definition": "Probabilité, estimée par le modèle XGBoost, que le prochain mouvement significatif (> 0,3 %) soit une hausse. À lire avec le verdict de fiabilité du modèle."
+  },
+  "spread_pct": {
+    "label": "Spread vs 10 ans",
+    "unite": "pts",
+    "bornes": [25, 75],
+    "zones": [
+      {"nom": "Serré", "ton": "info", "aide": "Le crédit est bon marché : marché confiant (parfois complaisant)."},
+      {"nom": "Normal", "ton": "neutral", "aide": "Dans la moyenne des 10 dernières années."},
+      {"nom": "Tendu", "ton": "bad", "aide": "Les investisseurs exigent une prime de risque élevée : stress sur le crédit."}
+    ],
+    "definition": "Percentile du spread actuel par rapport aux 10 dernières années (0 = plus bas, 100 = plus haut)."
+  },
+  "vix": {
+    "label": "VIX",
+    "unite": "pts",
+    "bornes": [15, 25],
+    "zones": [
+      {"nom": "Calme", "ton": "good", "aide": "Volatilité implicite basse."},
+      {"nom": "Normal", "ton": "neutral", "aide": "Niveau habituel."},
+      {"nom": "Stress", "ton": "bad", "aide": "Le marché anticipe de fortes variations."}
+    ],
+    "definition": "Volatilité implicite à 30 jours du S&P 500 (« indice de la peur »)."
+  },
+  "gain_pts": {
+    "label": "Avantage du modèle",
+    "unite": "pts",
+    "bornes": [0, 2],
+    "zones": [
+      {"nom": "Aucun avantage", "ton": "bad", "aide": "Le modèle ne fait pas mieux qu'une règle naïve : ne pas utiliser ses signaux."},
+      {"nom": "Bruit", "ton": "neutral", "aide": "Gain trop faible pour être distingué du hasard."},
+      {"nom": "Signal", "ton": "good", "aide": "Le modèle bat la règle naïve de plus de 2 points sur la période de test."}
+    ],
+    "definition": "Précision du modèle moins celle d'une règle naïve qui prédit toujours la classe la plus fréquente (en points de %)."
+  },
+  "sharpe": {
+    "label": "Ratio de Sharpe",
+    "unite": "pts",
+    "bornes": [0.5, 1.0],
+    "zones": [
+      {"nom": "Faible", "ton": "bad", "aide": "Peu de rendement par unité de risque."},
+      {"nom": "Correct", "ton": "neutral", "aide": "Comparable à un indice actions sur longue période."},
+      {"nom": "Bon", "ton": "good", "aide": "Rendement élevé par unité de risque (sur données passées)."}
+    ],
+    "definition": "(Rendement annualisé - taux sans risque) / volatilité annualisée."
+  },
+  "max_drawdown": {
+    "label": "Perte maximale",
+    "unite": "pct",
+    "bornes": [-0.30, -0.15],
+    "zones": [
+      {"nom": "Sévère", "ton": "bad", "aide": "Chute de plus de 30 % depuis un sommet sur la période."},
+      {"nom": "Marquée", "ton": "neutral", "aide": "Chute de 15 à 30 %."},
+      {"nom": "Contenue", "ton": "good", "aide": "Chute de moins de 15 %."}
+    ],
+    "definition": "Plus forte baisse entre un sommet et le creux suivant sur la période."
+  }
+}

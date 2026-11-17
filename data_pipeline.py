@@ -19,94 +19,96 @@ CLE_ALPHA_VANTAGE = db._get_secret("ALPHA_VANTAGE_KEY")
 # ------------------------------------------------------------------------------
 # 1. DONNEES DE MARCHE (Yahoo Finance -> Supabase, cache 1h en session)
 # ------------------------------------------------------------------------------
-def _telecharger_yahoo(tickers: list[str]) -> pd.DataFrame:
-    data = yf.download(tickers, start="2020-01-01", progress=False)
-    if len(tickers) > 1:
+HISTORIQUE_DEBUT = "2020-01-01"
+MARGE_JOURS = 5          # on ré-écrit les derniers jours (corrections Yahoo, jours fériés)
+LECTURE_JOURS = 400      # historique lu depuis Supabase en mode lecture seule (app Streamlit)
+
+
+def _telecharger_yahoo(tickers: list[str], start: str = HISTORIQUE_DEBUT) -> pd.DataFrame:
+    data = yf.download(tickers, start=start, progress=False, auto_adjust=False, threads=True)
+    if data is None or data.empty:
+        return pd.DataFrame(columns=["symbol", "date", "open", "high", "low", "close", "volume"])
+    if isinstance(data.columns, pd.MultiIndex):
         data = data.stack(level=1, future_stack=True).rename_axis(["Date", "symbol"]).reset_index()
     else:
         data = data.reset_index()
         data["symbol"] = tickers[0]
-    data.columns = [c.lower() for c in data.columns]
-    data = data.rename(columns={"date": "date"})
+    data.columns = [str(c).lower() for c in data.columns]
     data = data[["symbol", "date", "open", "high", "low", "close", "volume"]]
+    data = data.dropna(subset=["close"])
 
     # Supabase: la colonne 'volume' est de type bigint -> aucune virgule tolérée.
     data["volume"] = pd.to_numeric(data["volume"], errors="coerce").fillna(0).astype("int64")
     for col in ["open", "high", "low", "close"]:
         data[col] = pd.to_numeric(data[col], errors="coerce")
-
+    data["date"] = pd.to_datetime(data["date"]).dt.date
     return data
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def sync_market_data(tickers: tuple[str, ...]) -> pd.DataFrame:
+def _sync_incremental(tickers: list[str], table: str) -> pd.DataFrame:
+    """Télécharge l'historique complet depuis Yahoo (rapide, en mémoire) mais
+    n'ÉCRIT dans Supabase que ce qui est nouveau :
+      - ticker absent de la base  -> tout l'historique
+      - ticker présent            -> lignes >= dernière date en base - MARGE_JOURS
+    Avant : ~800 000 lignes ré-upsertées à chaque run (~10 min). Après : quelques milliers.
+    Retourne l'historique complet téléchargé (utilisé pour les features / le modèle).
     """
-    On tente d'abord Supabase. Si les donnees du jour sont absentes pour au
-    moins un ticker, on retelecharge tout le lot Yahoo et on upsert.
-    Fonctionne aussi bien pour la liste 'core' que pour un univers élargi
-    (S&P 500 + Nasdaq 100 + ETFs) — c'est juste une liste de tickers en entrée.
-    """
-    tickers = list(tickers)
-    df_db = db.fetch_market_data(tickers)
+    try:
+        dernieres = db.last_dates_by_symbol(table)
+    except Exception as e:
+        st.warning(f"Vue {table}_last indisponible ({e}) — écriture complète.")
+        dernieres = {}
 
-    aujourdhui = pd.Timestamp.today().normalize()
-    tickers_en_db = set(df_db["symbol"].unique()) if not df_db.empty else set()
-    tickers_manquants = set(tickers) - tickers_en_db
-
-    a_jour = (
-        not df_db.empty
-        and not tickers_manquants
-        and df_db.groupby("symbol")["date"].max().min() >= aujourdhui - pd.Timedelta(days=3)
-    )
-
-    if a_jour:
-        return df_db
-
-    # Téléchargement par lots pour rester raisonnable sur les univers larges (~600 tickers)
+    frames, n_ecrites = [], 0
     batch_size = 100
-    frames = []
-    total_batches = (len(tickers) + batch_size - 1) // batch_size
-    progress = st.progress(0, text="Téléchargement des prix (Yahoo Finance)...") if total_batches > 1 else None
-
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i:i + batch_size]
         try:
-            frames.append(_telecharger_yahoo(batch))
+            df = _telecharger_yahoo(batch)
         except Exception as e:
             st.warning(f"Erreur Yahoo Finance sur le lot {batch[:3]}... : {e}")
-        if progress:
-            progress.progress(min(1.0, (i + batch_size) / len(tickers)),
-                               text=f"Téléchargement des prix : {min(i + batch_size, len(tickers))}/{len(tickers)} tickers")
+            continue
+        if df.empty:
+            continue
+        frames.append(df)
 
-    if progress:
-        progress.empty()
+        seuil = df["symbol"].map(
+            lambda s: dernieres[s] - pd.Timedelta(days=MARGE_JOURS) if s in dernieres else pd.Timestamp(HISTORIQUE_DEBUT).date()
+        )
+        a_ecrire = df[df["date"] >= seuil]
+        db.upsert_market_data(a_ecrire, table=table)
+        n_ecrites += len(a_ecrire)
+        st.info(f"{table} : {min(i + batch_size, len(tickers))}/{len(tickers)} tickers — {len(a_ecrire)} lignes écrites")
 
+    st.info(f"{table} : {n_ecrites} lignes écrites au total")
     if not frames:
-        return df_db  # rien de neuf, on retombe sur ce qu'on a
-
-    df_fresh = pd.concat(frames, ignore_index=True)
-    db.upsert_market_data(df_fresh)
-    df_fresh["date"] = pd.to_datetime(df_fresh["date"])
-    return df_fresh
+        return pd.DataFrame(columns=["symbol", "date", "open", "high", "low", "close", "volume"])
+    out = pd.concat(frames, ignore_index=True)
+    out["date"] = pd.to_datetime(out["date"])
+    return out.sort_values(["symbol", "date"]).reset_index(drop=True)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def sync_macro_data(tickers: tuple[str, ...]) -> pd.DataFrame:
+def sync_market_data(tickers: tuple[str, ...], telecharger: bool = True) -> pd.DataFrame:
+    """
+    Mode cron (telecharger=True) : Yahoo -> écriture incrémentale Supabase.
+    `telecharger=False` : lecture seule (utilisé par l'app Streamlit, pour qu'une
+    visite ne déclenche jamais de téléchargement — c'est le rôle du cron).
+    """
     tickers = list(tickers)
-    df_db = db.fetch_market_data(tickers, table="macro_data")
+    if telecharger:
+        return _sync_incremental(tickers, "market_data")
+    depuis = (pd.Timestamp.today() - pd.Timedelta(days=LECTURE_JOURS)).date()
+    return db.fetch_market_data(tickers, since=depuis)
 
-    aujourdhui = pd.Timestamp.today().normalize()
-    a_jour = (
-        not df_db.empty
-        and df_db.groupby("symbol")["date"].max().min() >= aujourdhui - pd.Timedelta(days=3)
-    )
-    if a_jour:
-        return df_db
 
-    df_fresh = _telecharger_yahoo(tickers)
-    db.upsert_market_data(df_fresh, table="macro_data")
-    df_fresh["date"] = pd.to_datetime(df_fresh["date"])
-    return df_fresh
+@st.cache_data(ttl=3600, show_spinner=False)
+def sync_macro_data(tickers: tuple[str, ...], telecharger: bool = True) -> pd.DataFrame:
+    tickers = list(tickers)
+    if telecharger:
+        return _sync_incremental(tickers, "macro_data")
+    depuis = (pd.Timestamp.today() - pd.Timedelta(days=LECTURE_JOURS)).date()
+    return db.fetch_market_data(tickers, table="macro_data", since=depuis)
 
 
 # ------------------------------------------------------------------------------
@@ -285,7 +287,7 @@ def _calc_vix_regime(vix_close: float) -> int:
 
 
 def build_features(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None, dict_secteurs: dict = None,
-                    fonda_df: pd.DataFrame = None) -> pd.DataFrame:
+                    fonda_df: pd.DataFrame = None, garder_dernier: bool = False) -> pd.DataFrame:
     """
     fonda_df : fondamentaux Alpha Vantage (roe, margin, ev_ebitda, debt_eq) par
                symbol. ATTENTION — ce sont des instantanés de la valeur ACTUELLE
@@ -358,10 +360,13 @@ def build_features(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None, dict_sec
         df["ev_ebitda"] = 0.0
         df["debt_eq"] = 0.0
 
-    return df.dropna(subset=["target_next_return"])
+    # garder_dernier=True : conserve la dernière séance (cible inconnue) pour
+    # calculer le signal du jour ; False : jeu d'entraînement uniquement.
+    return df if garder_dernier else df.dropna(subset=["target_next_return"])
 
 
-def build_features_etf(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None) -> pd.DataFrame:
+def build_features_etf(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None,
+                       garder_dernier: bool = False) -> pd.DataFrame:
     """
     Features spécifiques aux ETFs — modèle séparé de celui des actions.
     Pas de fondamentaux (roe/margin/ev_ebitda/debt_eq n'ont pas de sens pour
@@ -427,7 +432,9 @@ def build_features_etf(mkt_df: pd.DataFrame, macro_df: pd.DataFrame = None) -> p
     df["tracking_vs_ref"] = tracking_values
     df["tracking_vs_ref"] = df["tracking_vs_ref"].fillna(0.0)
 
-    return df.dropna(subset=["target_next_return"])
+    # garder_dernier=True : conserve la dernière séance (cible inconnue) pour
+    # calculer le signal du jour ; False : jeu d'entraînement uniquement.
+    return df if garder_dernier else df.dropna(subset=["target_next_return"])
 
 
 # ------------------------------------------------------------------------------
@@ -761,12 +768,14 @@ def comparer_seuils_neutres(df: pd.DataFrame, feat: list[str], seuils: list[floa
 # ------------------------------------------------------------------------------
 # 5. POINT D'ENTREE UNIQUE — a appeler depuis chaque page Streamlit
 # ------------------------------------------------------------------------------
-def get_all_data(univers_etendu: list[str] = None):
+def get_all_data(univers_etendu: list[str] = None, telecharger: bool = False):
     """
     Retourne un dict avec toutes les donnees necessaires aux pages.
     univers_etendu : si fourni, les PRIX (Yahoo) sont synchronisés pour cette
                       liste élargie. Les FONDAMENTAUX restent limités à
                       utils.actifs_sp500 (rate-limit Alpha Vantage).
+    telecharger : True uniquement dans le cron (Yahoo/Alpha Vantage -> Supabase).
+                  False (défaut, app Streamlit) : lecture Supabase uniquement.
     """
     tickers_core = tuple(utils.actifs_sp500)
     macro = tuple(utils.actifs_macro)
@@ -775,13 +784,13 @@ def get_all_data(univers_etendu: list[str] = None):
     etape = st.empty()
 
     etape.info("Étape 1/5 — Synchronisation des données de marché (Yahoo Finance)...")
-    market_data_raw = sync_market_data(tickers_prix)
+    market_data_raw = sync_market_data(tickers_prix, telecharger)
 
     etape.info("Étape 2/5 — Synchronisation des données macro (VIX, SPY)...")
-    macro_data_raw = sync_macro_data(macro)
+    macro_data_raw = sync_macro_data(macro, telecharger)
 
     etape.info("Étape 3/5 — Vérification des fondamentaux (Alpha Vantage)...")
-    fonda_data_clean = sync_fonda_data(tickers_core)
+    fonda_data_clean = sync_fonda_data(tickers_core) if telecharger else db.fetch_fonda_data(list(tickers_core))
 
     etape.info("Étape 4/5 — Calcul du Z-Score Altman...")
     market_core = market_data_raw[market_data_raw["symbol"].isin(tickers_core)] if not market_data_raw.empty else market_data_raw
@@ -789,7 +798,7 @@ def get_all_data(univers_etendu: list[str] = None):
     if not market_core.empty:
         derniers = market_core.sort_values("date").groupby("symbol").last()
         prix_actuels = derniers["close"].to_dict()
-    zscore_df = sync_altman_zscore(tickers_core, prix_actuels)
+    zscore_df = sync_altman_zscore(tickers_core, prix_actuels) if telecharger else db.fetch_zscore_data(list(tickers_core))
 
     etape.info("Étape 5/5 — Calcul des indicateurs et entraînement des modèles IA...")
 
