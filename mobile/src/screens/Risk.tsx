@@ -1,6 +1,6 @@
 import { useCallback, useState } from "preact/hooks";
 import { api, type ModelRun } from "../api";
-import { Card, ChartBox, cssVar, Details, HelpButton, Loading, OfflineNote, RangeBar, Stat, toneOf, useData, ZoneBadge } from "../components";
+import { Card, ChartBox, cssVar, Details, HelpButton, Loading, OfflineNote, RangeBar, Stat, toneOf, useData, ZoneBadge, RefreshButton } from "../components";
 import { dateFr, ilYA, num } from "../format";
 import { isIG } from "./Stock";
 
@@ -9,6 +9,7 @@ export function Risk({ tab, go }: { tab: "credit" | "ia"; go: (h: string) => voi
     <div class="screen">
       <header class="screen-head">
         <div><h1>Risque & IA</h1></div>
+        <RefreshButton />
         <HelpButton keys={tab === "credit" ? ["spread_pct", "z_score"] : ["gain_pts", "proba_hausse"]}
           intro={tab === "credit"
             ? <p>Le <b>spread</b> est la prime (en points de base, 100 pb = 1 %) exigée au-dessus des emprunts d'État pour prêter aux entreprises. HY = High Yield (notes ≤ BB+), IG = Investment Grade (notes ≥ BBB-).</p>

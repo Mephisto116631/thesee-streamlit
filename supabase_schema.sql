@@ -254,3 +254,6 @@ end $$;
 alter table portefeuille_recommande add column if not exists frontiere jsonb;  -- [{cible, rendement, volatilite, sharpe, lignes}]
 alter table portefeuille_recommande add column if not exists titres jsonb;     -- {symbol: {nom, secteur, prix, rendement_1y, volatilite}}
 alter table market_overview add column if not exists eurusd double precision; -- 1 EUR = x USD
+
+-- V5 — ingrédients de la frontière (l'appli la recalcule avec les hypothèses de l'utilisateur)
+alter table portefeuille_recommande add column if not exists univers jsonb;  -- {symbols, mu_hist, beta, cov, jours}

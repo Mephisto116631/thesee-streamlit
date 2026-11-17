@@ -66,6 +66,25 @@ def estimations(R: pd.DataFrame, marche: pd.Series | None = None) -> tuple[np.nd
     return mu, cov
 
 
+def ingredients(R: pd.DataFrame, marche: pd.Series | None = None) -> dict:
+    """Données brutes pour que l'appli recalcule la frontière avec SES hypothèses
+    (taux sans risque, prime de risque, part d'historique, plafonds...).
+
+    {symbols, mu_hist (annuel), beta, cov (annuelle, Ledoit-Wolf), jours}
+    """
+    from sklearn.covariance import LedoitWolf
+    cov = LedoitWolf().fit(R.values).covariance_ * JOURS
+    m = marche.reindex(R.index).fillna(0.0) if marche is not None else R.mean(axis=1)
+    var_m = float(m.var())
+    return {
+        "symbols": list(R.columns),
+        "mu_hist": [float(x) for x in R.mean().values * JOURS],
+        "beta": [float(R[c].cov(m)) / var_m if var_m > 0 else 1.0 for c in R.columns],
+        "cov": [[float(x) for x in row] for row in cov],
+        "jours": int(len(R)),
+    }
+
+
 def preselection(market_raw: pd.DataFrame, snapshot: pd.DataFrame, n: int = N_CANDIDATS) -> list[str]:
     """Top n par momentum 12-1 / volatilité, hors titres en détresse financière."""
     ok = snapshot.copy()
@@ -275,6 +294,7 @@ def portefeuille_recommande(market_raw: pd.DataFrame, snapshot: pd.DataFrame) ->
         },
         "frontiere": frontiere_efficiente(R, marche=marche),
         "titres": titres,
+        "univers": ingredients(R, marche),
         "methode": (f"Markowitz (Sharpe max), {len(candidats)} candidats présélectionnés par "
                     f"momentum 12-1 ajusté du risque, plafond {int(POIDS_MAX * 100)} % par ligne, "
                     f"au plus {N_MAX_LIGNES} lignes d'au moins {int(POIDS_MIN * 100)} %, "

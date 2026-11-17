@@ -73,3 +73,18 @@ def test_rendement_attendu_prudent():
     assert R["G"].mean() * 252 > 0.45
     assert mu[0] < 0.20
     assert 0.06 < mu[1] < 0.12   # le marché lui-même : ~ taux sans risque + prime
+
+
+def test_ingredients_coherents():
+    """Les ingrédients publiés redonnent exactement les rendements attendus du serveur."""
+    raw, snap = _marche(n_titres=21, jours=800)
+    reco = pf.portefeuille_recommande(raw, snap)
+    u = reco["univers"]
+    n = len(u["symbols"])
+    assert len(u["mu_hist"]) == n and len(u["beta"]) == n
+    assert len(u["cov"]) == n and all(len(r) == n for r in u["cov"])
+    mu = [(1 - pf.POIDS_HISTORIQUE) * (pf.RF + b * pf.PRIME_RISQUE) + pf.POIDS_HISTORIQUE * h
+          for b, h in zip(u["beta"], u["mu_hist"])]
+    R = pf._matrice_rendements(raw, u["symbols"], pf.JOURS_ESTIMATION)
+    mu_srv, _ = pf.estimations(R, None)
+    assert np.allclose(mu, mu_srv, atol=1e-9)

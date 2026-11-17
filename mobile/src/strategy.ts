@@ -25,7 +25,7 @@ export const HORIZON_DEFAUT = "3a";
 // la rentabilité visée (ou le plus rentable possible si elle est hors d'atteinte).
 // ---------------------------------------------------------------------------
 export interface PointFrontiere {
-  cible: number; rendement: number; volatilite: number; sharpe: number | null;
+  cible?: number; rendement: number; volatilite: number; sharpe: number | null;
   lignes: { symbol: string; poids: number }[];
 }
 
@@ -68,6 +68,7 @@ export interface Reglages {
   fractions: boolean;   // le courtier accepte les fractions d'actions
   tranches: number;     // 1 = tout de suite ; >1 = achat progressif
   frequence: "semaine" | "mois";
+  margeLimite?: number; // prix limite = dernier cours x (1 + marge) ; défaut MARGE_LIMITE
 }
 export const REGLAGES_DEFAUT: Reglages = { fraisOrdre: 0, fraisChange: 0.0025, fractions: true, tranches: 1, frequence: "mois" };
 
@@ -104,7 +105,7 @@ export function planAchat(
       const brut = p > 0 ? montantUsd / p : 0;
       const quantite = r.fractions ? Math.floor(brut * 10000) / 10000 : Math.floor(brut);
       const investiEur = p > 0 ? (quantite * p) / eurusd / (1 - r.fraisChange) : 0;
-      return { symbol: l.symbol, montantEur, montantUsd, prix: p, quantite, limite: Math.round(p * (1 + MARGE_LIMITE) * 100) / 100, investiEur };
+      return { symbol: l.symbol, montantEur, montantUsd, prix: p, quantite, limite: Math.round(p * (1 + (r.margeLimite ?? MARGE_LIMITE)) * 100) / 100, investiEur };
     }),
   }));
   const investi = tranches.reduce((a, t) => a + t.ordres.reduce((b, o) => b + o.investiEur, 0), 0);

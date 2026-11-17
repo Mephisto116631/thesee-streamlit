@@ -18,6 +18,8 @@ env:
   # Clé "anon" uniquement (publique, lecture seule via RLS). JAMAIS la service_role.
   VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
   VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+  # Numéro de build = numéro de la Release (apk-<n>) : sert à la mise à jour automatique
+  VITE_APP_BUILD: ${{ github.run_number }}
 
 jobs:
   web:

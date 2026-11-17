@@ -43,6 +43,7 @@ export interface PortefeuilleReco {
     rendement_attendu?: number; volatilite_attendue?: number };
   frontiere?: { cible: number; rendement: number; volatilite: number; sharpe: number | null; lignes: { symbol: string; poids: number }[] }[];
   titres?: Record<string, { nom: string; secteur: string | null; prix: number | null; rendement_1y: number; volatilite: number }>;
+  univers?: { symbols: string[]; mu_hist: number[]; beta: number[]; cov: number[][]; jours: number };
 }
 export interface SyncLog { started_at: string; finished_at: string | null; status: string; message: string | null }
 export interface PricePoint { symbol: string; date: string; close: number }

@@ -1,11 +1,13 @@
 import { useState } from "preact/hooks";
 import { Card, Details, Stat } from "../components";
 import { num, pct } from "../format";
-import { coutAnnualise, MARGE_LIMITE, planAchat, REGLAGES_DEFAUT, type Reglages } from "../strategy";
+import { useParametres } from "../settings";
+import { coutAnnualise, planAchat, type Reglages } from "../strategy";
 
-const KEY = "thesee:reglages-achat:v1";
-const charger = (): Reglages => {
-  try { return { ...REGLAGES_DEFAUT, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") }; } catch { return REGLAGES_DEFAUT; }
+// Frais, change, fractions et prix limite : page Paramètres. Ici : seulement l'étalement de l'achat.
+const KEY = "thesee:etalement:v1";
+const charger = (): Pick<Reglages, "tranches" | "frequence"> => {
+  try { return { tranches: 1, frequence: "mois", ...JSON.parse(localStorage.getItem(KEY) ?? "{}") }; } catch { return { tranches: 1, frequence: "mois" }; }
 };
 const EURUSD_SECOURS = 1.08;
 
@@ -14,12 +16,14 @@ export function PlanAchat({ capital, lignes, prix, eurusd, annees }: {
   capital: number; lignes: { symbol: string; poids: number }[];
   prix: Record<string, number | null | undefined>; eurusd: number | null; annees: number;
 }) {
-  const [r, setR] = useState<Reglages>(charger());
-  const maj = (p: Partial<Reglages>) => {
-    const n = { ...r, ...p };
-    setR(n);
+  const params = useParametres();
+  const [etal, setEtal] = useState(charger());
+  const maj = (p: Partial<Pick<Reglages, "tranches" | "frequence">>) => {
+    const n = { ...etal, ...p };
+    setEtal(n);
     try { localStorage.setItem(KEY, JSON.stringify(n)); } catch { /* ignore */ }
   };
+  const r: Reglages = { ...etal, fraisOrdre: params.fraisOrdre, fraisChange: params.fraisChange, fractions: params.fractions, margeLimite: params.margeLimite };
   const fx = eurusd ?? EURUSD_SECOURS;
   const plan = planAchat(capital, lignes, prix, fx, r);
   const coutAn = coutAnnualise(plan.partFrais, r.fraisChange, annees);
@@ -28,21 +32,10 @@ export function PlanAchat({ capital, lignes, prix, eurusd, annees }: {
   return (
     <>
       <Card title="Plan d'achat" class="tint-accent">
-        <div class="reglages">
-          <label class="field">Frais par ordre (€)
-            <input type="number" inputMode="decimal" min={0} step={0.5} value={r.fraisOrdre}
-              onChange={(e) => maj({ fraisOrdre: Math.max(0, Number((e.target as HTMLInputElement).value) || 0) })} />
-          </label>
-          <label class="field">Frais de change (%)
-            <input type="number" inputMode="decimal" min={0} step={0.05} value={Math.round(r.fraisChange * 10000) / 100}
-              onChange={(e) => maj({ fraisChange: Math.max(0, Number((e.target as HTMLInputElement).value) || 0) / 100 })} />
-          </label>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" checked={r.fractions} onChange={(e) => maj({ fractions: (e.target as HTMLInputElement).checked })} />
-          Mon courtier accepte les fractions d'actions
-        </label>
-
+        <p class="hint" style={{ marginTop: 0 }}>
+          Frais {num(r.fraisOrdre, 2)} € par ordre · change {pct(r.fraisChange, 2, false)} · {r.fractions ? "fractions d'actions" : "actions entières"} ·
+          prix limite + {pct(r.margeLimite ?? 0, 1, false)} — <a href="#/parametres">modifier dans Paramètres</a>
+        </p>
         <div class="field" style={{ marginTop: 10 }}>Achat en
           <div class="seg full" role="group" aria-label="Nombre de tranches">
             {[1, 2, 4, 6].map((n) => (
@@ -99,7 +92,7 @@ export function PlanAchat({ capital, lignes, prix, eurusd, annees }: {
 
       <Card title="Comment passer les ordres">
         <ol class="etapes">
-          <li><b>Type d'ordre : « à cours limité »</b>, au prix limite indiqué (dernier cours + {num(MARGE_LIMITE * 100, 1)} %).
+          <li><b>Type d'ordre : « à cours limité »</b>, au prix limite indiqué (dernier cours + {num((r.margeLimite ?? 0) * 100, 1)} %).
             Tu ne paieras jamais plus que ce prix. S'il n'est pas exécuté dans la journée, relève-le légèrement le lendemain.</li>
           <li><b>Quand : entre 16h00 et 21h30, heure de Paris.</b> Évite la première demi-heure après l'ouverture de Wall Street (15h30)
             et les dernières minutes avant la clôture (22h00) : les prix sautent et l'écart entre prix d'achat et de vente est plus large.
