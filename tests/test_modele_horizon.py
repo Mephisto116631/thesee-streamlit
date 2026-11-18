@@ -50,3 +50,34 @@ def test_score_multifacteurs_borne():
     X = pd.DataFrame({"mom_12_1": [0.0, 1.0], "vol_3m": [1.0, 0.0], "dist_plus_haut": [0.0, 1.0]})
     sc = mh.score_multifacteurs(X)
     assert sc.tolist() == [0.0, 1.0]   # pire et meilleur titre sur les trois facteurs
+
+
+def test_composition_historique():
+    """Seuls les membres de l'indice à chaque date sont évalués, rangs recalculés entre eux."""
+    raw, syms = _marche(n=80, persistance=True)
+    debut_tard = pd.Timestamp("2023-01-02")
+    compo = pd.DataFrame({
+        "symbol": syms,
+        "debut": [pd.Timestamp("2000-01-01") if i < 60 else debut_tard for i in range(len(syms))],
+        "fin": [pd.NaT] * len(syms),
+    })
+    px, X = mh.caracteristiques(raw, syms)
+    Y = mh.cible(px, pd.DatetimeIndex(X["date"].unique()), 126)
+    data = X.merge(Y, on=["date", "symbol"]).dropna(subset=mh.FEATURES + ["y"])
+    f = mh.membres_a_date(data, compo)
+    avant = f[f["date"] < debut_tard]
+    assert set(avant["symbol"]) <= set(syms[:60])                     # entrés en 2023 : absents avant
+    assert set(f[f["date"] >= debut_tard]["symbol"]) - set(syms[:60])  # puis présents
+    assert f.groupby("date")["y"].max().round(6).eq(1).all()          # rangs recalculés entre membres
+
+    ligne, scores = mh.entrainer_horizon(raw, syms, "6m", compo)
+    assert ligne["diagnostics"]["composition_historique"] is True
+    assert len(scores) == len(syms)                                   # scores du jour : tous les titres actuels
+
+
+def test_fichier_composition():
+    c = mh.charger_composition()
+    assert c is not None and {"symbol", "debut", "fin"} <= set(c.columns)
+    assert "BRK-B" in set(c["symbol"])                                 # format Yahoo
+    tsla = c[c["symbol"] == "TSLA"].iloc[0]
+    assert tsla["debut"] == pd.Timestamp("2020-12-21")

@@ -184,7 +184,9 @@ function HorizonView({ m }: { m: ModelRun }) {
           <p class="hint">Validation « walk-forward » : le modèle est entraîné sur le passé puis testé sur la période suivante,
             avec un écart de {d.horizon_jours} jours de bourse entre les deux pour qu'il ne voie jamais le futur. {d.n_dates_test} dates testées,
             soit environ {num(d.n_effectif, 0)} observations indépendantes (les périodes de {d.horizon_jours} jours de bourse se chevauchent).
-            Univers = composition actuelle de l'indice : les titres disparus depuis manquent (biais du survivant), les résultats sont donc un peu optimistes.</p>
+            {d.composition_historique
+              ? <> À chaque date, seuls les titres réellement dans le S&P 500 ce jour-là sont pris en compte (~{num(d.titres_par_date, 0)} par date). Les titres disparus depuis (faillites, rachats) n'ont plus de cours chez Yahoo : les résultats restent un peu optimistes.</>
+              : <> Univers = composition actuelle de l'indice : les titres disparus ou entrés depuis faussent le test (biais du survivant), les résultats sont donc optimistes.</>}</p>
         </Details>
       </Card>
     </>
