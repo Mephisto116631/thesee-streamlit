@@ -41,6 +41,12 @@ def test_publie_le_meilleur_classement():
     raw, syms = _marche(persistance=True)
     ligne, _ = mh.entrainer_horizon(raw, syms, "6m")
     d = ligne["diagnostics"]
-    attendu = "momentum" if d["ic_momentum"] > d["ic_moyen"] else "modele"
-    assert d["source"] == attendu
+    ics = {"modele": d["ic_moyen"], "momentum": d["ic_momentum"], "multifacteurs": d["ic_multifacteurs"]}
+    assert d["source"] == max(ics, key=ics.get)
     assert ligne["verdict"] in {"signal", "bruit", "aucun"}
+
+
+def test_score_multifacteurs_borne():
+    X = pd.DataFrame({"mom_12_1": [0.0, 1.0], "vol_3m": [1.0, 0.0], "dist_plus_haut": [0.0, 1.0]})
+    sc = mh.score_multifacteurs(X)
+    assert sc.tolist() == [0.0, 1.0]   # pire et meilleur titre sur les trois facteurs

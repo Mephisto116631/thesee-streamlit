@@ -46,10 +46,11 @@ export function CourtTerme({ capital, eurusd }: { capital: number; eurusd: numbe
               {m.verdict === "signal" ? "Le classement à 1 mois a montré un lien net avec les performances réelles."
                 : m.verdict === "bruit" ? "Le classement à 1 mois n'a montré qu'un lien faible avec la réalité : prudence."
                 : "Le classement à 1 mois n'a pas montré de lien avec la réalité : ce mode revient à choisir au hasard."}
-              {d.source === "momentum" && " (Classement par momentum : le modèle IA faisait moins bien.)"}
+              {d.source && d.source !== "modele" && ` (Classement par ${d.source === "momentum" ? "momentum" : "multi-facteurs"} : le modèle IA faisait moins bien.)`}
             </p>
             <div class="stats">
-              <Stat label={d.source === "momentum" ? "IC (momentum)" : "IC (modèle IA)"} value={num(d.source === "momentum" ? d.ic_momentum : d.ic_moyen, 3)} sub="> 0,03 = utile" tone={ton} />
+              <Stat label={`IC (${({ modele: "modèle IA", momentum: "momentum", multifacteurs: "multi-facteurs" } as Record<string, string>)[d.source] ?? "modèle IA"})`}
+                value={num(({ modele: d.ic_moyen, momentum: d.ic_momentum, multifacteurs: d.ic_multifacteurs } as Record<string, number>)[d.source] ?? d.ic_moyen, 3)} sub="> 0,03 = utile" tone={ton} />
               <Stat label="Top quintile" value={pct(d.rendement_par_quintile?.[4], 1)} sub="vs médiane, sur 1 mois (test)" />
             </div>
           </>

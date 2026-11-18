@@ -125,6 +125,12 @@ const VERDICT_H: Record<string, { ton: string; nom: string; txt: string }> = {
   aucun: { ton: "bad", nom: "Aucun avantage", txt: "Pas de lien mesurable entre le classement et les performances réelles : ne pas s'en servir." },
 };
 
+const SOURCES: Record<string, string> = {
+  modele: "modèle IA (XGBoost)",
+  momentum: "momentum 12-1 mois (ce qui a le plus monté sur un an, hors dernier mois)",
+  multifacteurs: "score multi-facteurs (momentum + faible volatilité + proximité du plus haut 1 an)",
+};
+
 /** Modèle « horizon » : classement relatif des titres, évalué par l'IC. */
 function HorizonView({ m }: { m: ModelRun }) {
   const d = m.diagnostics ?? {};
@@ -138,14 +144,12 @@ function HorizonView({ m }: { m: ModelRun }) {
     <>
       <Card title="Verdict" class={`edge-${v.ton}`} right={<small class="muted">entraîné {ilYA(m.trained_at)}</small>}>
         <p class="verdict"><span class={`badge ${v.ton}`}>{v.nom}</span> {v.txt}</p>
-        {d.source === "momentum" ? (
-          <div class="note">Classement utilisé : <b>momentum 12-1 mois</b> (les titres qui ont le plus monté sur un an, hors dernier mois).
-            Le modèle IA a fait moins bien que cette règle simple en test : l'appli s'en passe.</div>
-        ) : d.source === "modele" ? <div class="note">Classement utilisé : <b>modèle IA</b> (meilleur que le momentum seul en test).</div> : null}
+        <div class="note">Classement utilisé : <b>{SOURCES[d.source as string] ?? "modèle IA"}</b>.
+          {d.source !== "modele" && " Le modèle IA (XGBoost) a fait moins bien en test : il reste entraîné à chaque calcul et reprendra la main s'il devient meilleur."}</div>
         <div class="stats">
-          <Stat label="IC modèle IA" value={num(d.ic_moyen, 3)} sub="0 = hasard · > 0,03 = utile" tone={d.source === "modele" ? v.ton : "neutral"} />
+          <Stat label="IC modèle IA" value={num(d.ic_moyen, 3)} sub={`t = ${num(d.t_stat, 1)}`} tone={d.source === "modele" ? v.ton : "neutral"} />
           <Stat label="IC momentum" value={num(d.ic_momentum, 3)} sub={`t = ${num(d.t_momentum, 1)}`} tone={d.source === "momentum" ? v.ton : "neutral"} />
-          <Stat label="Fiabilité IA (t)" value={num(d.t_stat, 1)} sub="> 2 = net" tone={(d.t_stat ?? 0) > 2 ? "good" : "neutral"} />
+          <Stat label="IC multi-facteurs" value={num(d.ic_multifacteurs, 3)} sub={`t = ${num(d.t_multifacteurs, 1)}`} tone={d.source === "multifacteurs" ? v.ton : "neutral"} />
         </div>
         <p class="hint">L'<b>IC</b> (coefficient d'information) mesure, date par date, si les titres classés en tête ont réellement fait mieux
           que les autres sur les {d.horizon_jours} jours de bourse suivants (corrélation de rang, de −1 à +1). En gestion, un IC de 0,05 stable est déjà bon.</p>
