@@ -255,11 +255,26 @@ def evaluer(data: pd.DataFrame, h: int) -> dict:
     }
 
 
-def verdict(ic: float | None, t: float | None) -> str:
-    """signal : IC > 0,03 et statistiquement net (t > 2) ; bruit : IC > 0,01 ; sinon aucun."""
+N_CANDIDATS = 3              # classements comparés (modèle, momentum, multi-facteurs) : on publie le meilleur
+MIN_PERIODES_SIGNAL = 8      # en dessous, aucune conclusion possible, quel que soit le t
+
+
+def seuil_t(n_effectif: float | None, n_candidats: int = N_CANDIDATS) -> float:
+    """Valeur de t à dépasser pour parler de signal : loi de Student (peu de périodes
+    indépendantes -> seuil plus haut) au risque de 5 % bilatéral, corrigé de Bonferroni
+    car on retient le meilleur de `n_candidats` classements (sinon le hasard en fait gagner un)."""
+    from scipy.stats import t as student
+    ddl = max(1.0, (n_effectif or 1.0) - 1.0)
+    return float(student.ppf(1 - 0.025 / n_candidats, ddl))
+
+
+def verdict(ic: float | None, t: float | None, n_effectif: float | None = None) -> str:
+    """signal : IC > 0,03, assez de périodes indépendantes et t au-delà du seuil corrigé ;
+    bruit : IC > 0,01 ; sinon aucun."""
     if ic is None:
         return "aucun"
-    if ic > 0.03 and (t or 0) > 2:
+    if (ic > 0.03 and (n_effectif or 0) >= MIN_PERIODES_SIGNAL
+            and (t or 0) > seuil_t(n_effectif)):
         return "signal"
     if ic > 0.01:
         return "bruit"
@@ -346,13 +361,14 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
     ic, t = ev.get(cle_ic[0]), ev.get(cle_ic[1])
     if ev:
         ev["source"] = source
+        ev["seuil_t"] = seuil_t(ev.get("n_effectif"))
     ligne = {
         "kind": f"horizon_{nom}",
         "trained_at": pd.Timestamp.now(tz="UTC").isoformat(),
         "accuracy": ev.get("taux_reussite_top", 0) * 100 if ev.get("taux_reussite_top") is not None else None,
         "baseline": 50.0,
         "gain_pts": ic * 100 if ic is not None else None,   # IC en points (ex. 3,5 = IC 0,035)
-        "verdict": verdict(ic, t),
+        "verdict": verdict(ic, t, ev.get("n_effectif")),
         "importance": imp,
         "diagnostics": ev,
     }

@@ -8,4 +8,4 @@ xgboost
 scikit-learn
 shap
 supabase
-lxml
+lxmlscipy

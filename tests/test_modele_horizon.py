@@ -87,3 +87,11 @@ def test_fichier_composition():
     assert "BRK-B" in set(c["symbol"])                                 # format Yahoo
     tsla = c[c["symbol"] == "TSLA"].iloc[0]
     assert tsla["debut"] == pd.Timestamp("2020-12-21")
+
+
+def test_seuil_t_corrige():
+    """Peu de périodes indépendantes ou plusieurs classements comparés : seuil plus exigeant."""
+    assert mh.seuil_t(3) > mh.seuil_t(13) > mh.seuil_t(166) > 2.3      # Bonferroni sur 3 classements
+    assert mh.verdict(0.14, 2.4, 2.9) == "bruit"                        # 3 périodes : jamais « signal »
+    assert mh.verdict(0.09, 2.2, 13) == "bruit"                         # sous le seuil corrigé (~2,8)
+    assert mh.verdict(0.09, 3.5, 13) == "signal"
