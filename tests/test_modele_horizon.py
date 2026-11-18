@@ -143,3 +143,23 @@ def test_exclure_un_facteur():
     ligne, _ = mh.entrainer_horizon(raw, syms, "6m", exclure=["liquidite"])
     assert "liquidite" not in {x["feature"] for x in ligne["importance"]}
     assert ligne["diagnostics"]["facteurs_exclus"] == ["liquidite"]
+
+
+def test_entrainement_avec_fondamentaux():
+    """Les fondamentaux s'ajoutent aux facteurs ; seuls, ils remplacent ceux de cours."""
+    import fondamentaux_sec as fsec
+    raw, syms = _marche(persistance=True)
+    faits = pd.DataFrame([
+        {"symbol": s, "variable": v, "end": pd.Timestamp(f"{y}-12-31"), "filed": pd.Timestamp(f"{y + 1}-02-15"),
+         "val": val}
+        for i, s in enumerate(syms) for y in range(2020, 2025)
+        for v, val in (("actifs", 100 + i + y), ("fonds_propres", 50 + i), ("resultat_net", 5 + i % 7),
+                       ("marge_brute", 30 + i % 11), ("flux_exploitation", 6 + i % 5), ("actions", 10.0))
+    ])
+    ligne, scores = mh.entrainer_horizon(raw, syms, "6m", faits_sec=faits)
+    d = ligne["diagnostics"]
+    assert set(fsec.FEATURES_FD) <= set(d["facteurs_utilises"])
+    assert d["couverture_fondamentaux"]["fd_rentabilite"] > 0.5
+    seuls, _ = mh.entrainer_horizon(raw, syms, "6m", exclure=list(mh.FEATURES), faits_sec=faits)
+    assert seuls["diagnostics"]["facteurs_utilises"] == fsec.FEATURES_FD
+    assert len(scores) == len(syms)

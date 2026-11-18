@@ -37,6 +37,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import fondamentaux_sec as fsec
+
 HORIZONS = {"court": 21, "6m": 126, "1a": 252}
 FICHIER_COMPOSITION = Path(__file__).resolve().parent / "data" / "sp500_historique.csv"
 MIN_MEMBRES = 50             # en dessous, la date est ignorée (classement peu représentatif)
@@ -65,6 +67,8 @@ LABELS = {
     "liquidite": "Montants échangés (taille)",
     "mom_secteur": "Momentum 12 mois vs son secteur",
 }
+
+LABELS.update(fsec.LABELS_FD)
 
 # Réglages candidats. À chaque période de test, le réglage est choisi sur le PASSÉ seulement
 # (validation interne), jamais sur la période testée : l'IC affiché reste honnête.
@@ -243,7 +247,7 @@ def _corr_par_date(df: pd.DataFrame, a: str, b: str) -> pd.Series:
 FACTEURS_SURVEILLES = ["vol_3m", "vol_idio", "liquidite", "beta_1a", "max_1m"]
 
 
-def sens_facteurs(t: pd.DataFrame) -> dict:
+def sens_facteurs(t: pd.DataFrame, feats: list[str] | None = None) -> dict:
     """Contrôles anti-biais sur les périodes de test.
     - modele : corrélation entre le score du modèle et chaque facteur (> 0 = le modèle
       favorise les titres où ce facteur est élevé : plus volatils, plus grands...).
@@ -253,7 +257,7 @@ def sens_facteurs(t: pd.DataFrame) -> dict:
       rarement disparues par faillite) et parmi l'autre moitié. Si le modèle ne marche que
       chez les petites, le biais du survivant restant est suspect."""
     out = {"facteurs": {}}
-    for f in FEATURES:
+    for f in sorted(set(FEATURES) | set(feats or [])):
         out["facteurs"][f] = {
             "modele": float(_corr_par_date(t, "pred", f).mean()),
             "realite": float(_ic_par_date(t, f).mean()),
@@ -332,7 +336,7 @@ def evaluer(data: pd.DataFrame, h: int, feats: list[str] | None = None) -> dict:
         "debut_donnees": str(pd.Timestamp(dates[0]).date()),
         "debut_test": str(pd.Timestamp(t["date"].min()).date()),
         "fenetres": fenetres,
-        "controles": sens_facteurs(t),
+        "controles": sens_facteurs(t, feats),
         "regimes": ic_par_regime(t),
     }
 
@@ -372,7 +376,8 @@ def charger_composition(fichier: Path = FICHIER_COMPOSITION) -> pd.DataFrame | N
     return c if not c.empty else None
 
 
-def membres_a_date(data: pd.DataFrame, composition: pd.DataFrame, par_secteur: bool = False) -> pd.DataFrame:
+def membres_a_date(data: pd.DataFrame, composition: pd.DataFrame, par_secteur: bool = False,
+                   feats: list[str] | None = None) -> pd.DataFrame:
     """Ne garde, à chaque date, que les titres membres de l'indice ce jour-là, puis
     recalcule les rangs du jour (caractéristiques et cible) parmi ces seuls membres."""
     m = data.merge(composition, on="symbol", how="inner")
@@ -381,8 +386,10 @@ def membres_a_date(data: pd.DataFrame, composition: pd.DataFrame, par_secteur: b
     m = m.drop_duplicates(["date", "symbol"])
     m = m[m.groupby("date")["symbol"].transform("size") >= MIN_MEMBRES].copy()
     g = m.groupby("date")
-    for f in FEATURES:
+    for f in set(FEATURES) | set(feats or []):
         m[f] = g[f].rank(pct=True)
+        if f in fsec.FEATURES_FD:
+            m[f] = m[f].fillna(0.5)
     return _relatif(m, par_secteur).reset_index(drop=True)
 
 
@@ -390,7 +397,9 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
                       composition: pd.DataFrame | None = None,
                       secteurs: dict[str, str] | None = None,
                       cible_mode: str = "relatif",
-                      exclure: list[str] | None = None) -> tuple[dict, pd.DataFrame]:
+                      exclure: list[str] | None = None,
+                      faits_sec: pd.DataFrame | None = None,
+                      splits: pd.DataFrame | None = None) -> tuple[dict, pd.DataFrame]:
     """Évalue puis entraîne le modèle final ; retourne (ligne model_runs, scores du jour).
     `composition` (charger_composition()) : évaluation sur les seuls membres de l'indice à chaque date."""
     h = HORIZONS[nom]
@@ -398,19 +407,32 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
     px, X = caracteristiques(market_raw, symboles, secteurs)
     if X.empty:
         return {}, pd.DataFrame()
+    couverture = None
+    if faits_sec is not None:
+        # Fondamentaux SEC publiés avant chaque date, classés du jour (0,5 si inconnus)
+        fd = fsec.caracteristiques_fondamentales(faits_sec, px, splits, pd.DatetimeIndex(X["date"].unique()))
+        couverture = {f: float(fd[f].notna().mean()) for f in fsec.FEATURES_FD}
+        for f in fsec.FEATURES_FD:
+            fd[f] = fd.groupby("date")[f].rank(pct=True).fillna(0.5)
+        X = X.merge(fd, on=["date", "symbol"], how="left")
+        X[fsec.FEATURES_FD] = X[fsec.FEATURES_FD].fillna(0.5)
+        feats += [f for f in fsec.FEATURES_FD if f not in (exclure or [])]
     serie_m = market_raw[market_raw["symbol"] == INDICE].set_index("date")["close"].sort_index()
     Y = cible(px, pd.DatetimeIndex(X["date"].unique()), h, cible_mode,
               serie_m if not serie_m.empty else None, secteurs)
     data = X.merge(Y, on=["date", "symbol"]).dropna(subset=FEATURES + ["y"])
     point_in_time = False
     if composition is not None:
-        filtre = membres_a_date(data, composition, cible_mode == "alpha_secteur")
+        filtre = membres_a_date(data, composition, cible_mode == "alpha_secteur", feats)
         if not filtre.empty:
             data, point_in_time = filtre, True
     ev = evaluer(data, h, feats)
     if ev:
         ev["cible"] = cible_mode
         ev["facteurs_exclus"] = list(exclure or [])
+        ev["facteurs_utilises"] = feats
+        if couverture is not None:
+            ev["couverture_fondamentaux"] = couverture
         ev["composition_historique"] = point_in_time
         ev["titres_par_date"] = float(data.groupby("date")["symbol"].size().mean())
     if data.empty:
