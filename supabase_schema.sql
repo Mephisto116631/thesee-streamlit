@@ -298,3 +298,26 @@ do $$ begin
             using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
     end if;
 end $$;
+
+-- V9 — Laboratoire : essais de variantes du modèle (experiences.py), lecture publique
+create table if not exists experiences (
+    id              bigint generated always as identity primary key,
+    lot             text not null,          -- date et heure du lancement
+    nom             text not null,          -- 'reference' | 'alpha' | 'alpha_secteur' | ...
+    horizon         text not null,          -- '6m' | '1a'
+    description     text,
+    ic              double precision,
+    t_stat          double precision,
+    seuil_t_global  double precision,       -- seuil corrigé du nombre total d'essais
+    n_essais        integer,
+    verdict         text,                   -- 'probant' | 'non probant'
+    diagnostics     jsonb,
+    cree_le         timestamptz not null default now()
+);
+alter table experiences enable row level security;
+do $$ begin
+    if not exists (select 1 from pg_policies where schemaname = 'public'
+                   and tablename = 'experiences' and policyname = 'lecture publique') then
+        create policy "lecture publique" on experiences for select to anon, authenticated using (true);
+    end if;
+end $$;

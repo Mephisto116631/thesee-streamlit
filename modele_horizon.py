@@ -148,14 +148,47 @@ def score_multifacteurs(X: pd.DataFrame) -> pd.Series:
     return (X["mom_12_1"] + (1 - X["vol_3m"]) + X["dist_plus_haut"]) / 3
 
 
-def cible(px: pd.DataFrame, dates: pd.Index, h: int) -> pd.DataFrame:
-    """Rendement futur sur h jours, relatif à la médiane du jour, et son rang."""
+# Ce que le modèle cherche à prédire (le modèle publié utilise « relatif »)
+MODES_CIBLE = {
+    "relatif": "rendement futur, comparé à la médiane des titres",
+    "alpha": "alpha de Jensen : rendement futur − bêta × rendement du marché (retire l'effet du risque de marché)",
+    "alpha_secteur": "alpha de Jensen comparé aux titres du même secteur (retire aussi les paris sectoriels)",
+}
+
+
+def _relatif(df: pd.DataFrame, par_secteur: bool) -> pd.DataFrame:
+    """rel = brut − médiane du jour (ou du jour et du secteur) ; y = rang du jour de rel."""
+    cles = ["date", "secteur"] if par_secteur and "secteur" in df else ["date"]
+    df["rel"] = df["brut"] - df.groupby(cles)["brut"].transform("median")
+    df["y"] = df.groupby("date")["rel"].rank(pct=True)
+    return df
+
+
+def cible(px: pd.DataFrame, dates: pd.Index, h: int, mode: str = "relatif",
+          marche: pd.Series | None = None, secteurs: dict[str, str] | None = None) -> pd.DataFrame:
+    """Rendement futur sur h jours (ou alpha), relatif aux autres titres du jour, et son rang.
+    Colonnes : brut (rendement ou alpha), marche_fut (rendement futur du marché), rel, y."""
     fut = (px.shift(-h) / px - 1).reindex(dates)
-    rel = fut.sub(fut.median(axis=1), axis=0)
-    out = pd.concat([rel.stack(future_stack=True).rename("rel"),
-                     rel.rank(axis=1, pct=True).stack(future_stack=True).rename("y")], axis=1)
+    brut = fut
+    fut_m = None
+    if marche is not None:
+        m = marche.reindex(px.index).ffill(limit=5)
+        fut_m = (m.shift(-h) / m - 1).reindex(dates)
+        if mode.startswith("alpha"):
+            # Bêta mesuré sur l'année PASSÉE (aucune information future), ajusté selon Blume
+            # (0,67 × bêta + 0,33) : les bêtas extrêmes reviennent vers 1 avec le temps.
+            ret, rm = px.pct_change(), m.pct_change()
+            beta = ret.rolling(252).cov(rm).div(rm.rolling(252).var(), axis=0).reindex(dates)
+            beta = 0.67 * beta + 0.33
+            brut = fut - beta.mul(fut_m, axis=0)
+    out = brut.stack(future_stack=True).rename("brut").to_frame()
     out.index.names = ["date", "symbol"]
-    return out.reset_index()
+    out = out.reset_index()
+    if fut_m is not None:
+        out["marche_fut"] = out["date"].map(fut_m)
+    if secteurs:
+        out["secteur"] = out["symbol"].map(secteurs).fillna("?")
+    return _relatif(out, mode == "alpha_secteur")
 
 
 def _modele(config: str = CONFIG_DEFAUT):
@@ -233,6 +266,18 @@ def sens_facteurs(t: pd.DataFrame) -> dict:
     return out
 
 
+def ic_par_regime(t: pd.DataFrame) -> dict:
+    """IC du modèle selon que le marché a monté ou baissé sur l'horizon. Si le modèle ne
+    marche qu'en marché haussier, il prend surtout du risque de marché (bêta)."""
+    if "marche_fut" not in t:
+        return {}
+    out = {}
+    for nom, masque in (("hausse", t["marche_fut"] > 0), ("baisse", t["marche_fut"] <= 0)):
+        ic = _ic_par_date(t[masque], "pred")
+        out[nom] = {"ic": float(ic.mean()) if len(ic) else None, "n_dates": int(len(ic))}
+    return out
+
+
 def evaluer(data: pd.DataFrame, h: int) -> dict:
     """Walk-forward avec embargo de h jours entre entraînement et test."""
     dates = np.sort(data["date"].unique())
@@ -286,6 +331,7 @@ def evaluer(data: pd.DataFrame, h: int) -> dict:
         "debut_test": str(pd.Timestamp(t["date"].min()).date()),
         "fenetres": fenetres,
         "controles": sens_facteurs(t),
+        "regimes": ic_par_regime(t),
     }
 
 
@@ -324,7 +370,7 @@ def charger_composition(fichier: Path = FICHIER_COMPOSITION) -> pd.DataFrame | N
     return c if not c.empty else None
 
 
-def membres_a_date(data: pd.DataFrame, composition: pd.DataFrame) -> pd.DataFrame:
+def membres_a_date(data: pd.DataFrame, composition: pd.DataFrame, par_secteur: bool = False) -> pd.DataFrame:
     """Ne garde, à chaque date, que les titres membres de l'indice ce jour-là, puis
     recalcule les rangs du jour (caractéristiques et cible) parmi ces seuls membres."""
     m = data.merge(composition, on="symbol", how="inner")
@@ -335,29 +381,31 @@ def membres_a_date(data: pd.DataFrame, composition: pd.DataFrame) -> pd.DataFram
     g = m.groupby("date")
     for f in FEATURES:
         m[f] = g[f].rank(pct=True)
-    m["rel"] = m["rel"] - g["rel"].transform("median")
-    m["y"] = m.groupby("date")["rel"].rank(pct=True)
-    return m.reset_index(drop=True)
+    return _relatif(m, par_secteur).reset_index(drop=True)
 
 
 def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
                       composition: pd.DataFrame | None = None,
-                      secteurs: dict[str, str] | None = None) -> tuple[dict, pd.DataFrame]:
+                      secteurs: dict[str, str] | None = None,
+                      cible_mode: str = "relatif") -> tuple[dict, pd.DataFrame]:
     """Évalue puis entraîne le modèle final ; retourne (ligne model_runs, scores du jour).
     `composition` (charger_composition()) : évaluation sur les seuls membres de l'indice à chaque date."""
     h = HORIZONS[nom]
     px, X = caracteristiques(market_raw, symboles, secteurs)
     if X.empty:
         return {}, pd.DataFrame()
-    Y = cible(px, pd.DatetimeIndex(X["date"].unique()), h)
+    serie_m = market_raw[market_raw["symbol"] == INDICE].set_index("date")["close"].sort_index()
+    Y = cible(px, pd.DatetimeIndex(X["date"].unique()), h, cible_mode,
+              serie_m if not serie_m.empty else None, secteurs)
     data = X.merge(Y, on=["date", "symbol"]).dropna(subset=FEATURES + ["y"])
     point_in_time = False
     if composition is not None:
-        filtre = membres_a_date(data, composition)
+        filtre = membres_a_date(data, composition, cible_mode == "alpha_secteur")
         if not filtre.empty:
             data, point_in_time = filtre, True
     ev = evaluer(data, h)
     if ev:
+        ev["cible"] = cible_mode
         ev["composition_historique"] = point_in_time
         ev["titres_par_date"] = float(data.groupby("date")["symbol"].size().mean())
     if data.empty:

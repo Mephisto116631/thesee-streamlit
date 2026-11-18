@@ -107,3 +107,32 @@ def test_controles_sens_facteurs():
     # Tendance pure : le modèle doit suivre le momentum, et marcher chez les grandes comme les petites
     assert c["facteurs"]["mom_12_1"]["modele"] > 0.3
     assert c["ic_grandes"] > 0 and c["ic_petites"] > 0
+
+
+def _marche_betas(n=80, jours=1300, seed=5):
+    """Marché très haussier, titres de bêtas différents, aucun talent de sélection possible."""
+    rng = np.random.default_rng(seed)
+    dates = pd.bdate_range("2019-01-01", periods=jours)
+    marche = rng.normal(0.0012, 0.01, jours)
+    betas = np.linspace(0.4, 1.6, n)
+    rows = []
+    for i in range(n):
+        px = 100 * np.cumprod(1 + betas[i] * marche + rng.normal(0, 0.012, jours))
+        rows += [{"symbol": f"T{i:02d}", "date": d, "close": p, "volume": 1e6} for d, p in zip(dates, px)]
+    rows += [{"symbol": "SPY", "date": d, "close": p, "volume": 1e7}
+             for d, p in zip(dates, 100 * np.cumprod(1 + marche))]
+    return pd.DataFrame(rows), [f"T{i:02d}" for i in range(n)]
+
+
+def test_cible_alpha_retire_le_beta():
+    """Avec la cible « relatif », les bêtas élevés gagnent mécaniquement en marché haussier ;
+    avec l'alpha de Jensen, cet avantage disparaît."""
+    raw, syms = _marche_betas()
+    rel, _ = mh.entrainer_horizon(raw, syms, "6m", cible_mode="relatif")
+    alp, _ = mh.entrainer_horizon(raw, syms, "6m", cible_mode="alpha")
+    beta_rel = rel["diagnostics"]["controles"]["facteurs"]["beta_1a"]["realite"]
+    beta_alp = alp["diagnostics"]["controles"]["facteurs"]["beta_1a"]["realite"]
+    assert beta_rel > 0.15
+    assert abs(beta_alp) < beta_rel / 2
+    assert alp["diagnostics"]["cible"] == "alpha"
+    assert set(alp["diagnostics"]["regimes"]) == {"hausse", "baisse"}
