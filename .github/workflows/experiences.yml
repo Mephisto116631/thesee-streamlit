@@ -5,7 +5,7 @@ name: Laboratoire — essais du modèle
 # Lancé à la main (onglet Actions) ou automatiquement sur une PR qui modifie le modèle.
 on:
   pull_request:
-    paths: ["experiences.py", "modele_horizon.py", "fondamentaux_sec.py", ".github/workflows/experiences.yml"]
+    paths: ["experiences.py", "modele_horizon.py", "modele_risque.py", "fondamentaux_sec.py", ".github/workflows/experiences.yml"]
   workflow_dispatch:
     inputs:
       experiences:
@@ -32,6 +32,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          EXPERIENCES: ${{ inputs.experiences }}
+          # Sur une PR : seulement les essais de risque (les autres sont déjà dans la table)
+          EXPERIENCES: ${{ inputs.experiences || 'risque_volatilite,risque_perte_max' }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: python experiences.py
