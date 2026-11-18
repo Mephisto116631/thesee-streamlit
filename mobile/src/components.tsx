@@ -17,6 +17,23 @@ Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryS
 const EVT_REFRESH = "thesee:refresh";
 export const rafraichir = () => window.dispatchEvent(new CustomEvent(EVT_REFRESH));
 
+// Compteur global des chargements en cours (barre fine en haut de l'écran)
+let chargements = 0;
+const EVT_CHARGEMENT = "thesee:chargement";
+function signalerChargement(delta: number) {
+  chargements = Math.max(0, chargements + delta);
+  window.dispatchEvent(new CustomEvent(EVT_CHARGEMENT, { detail: chargements }));
+}
+export function useChargementsEnCours(): number {
+  const [n, setN] = useState(chargements);
+  useEffect(() => {
+    const on = (e: Event) => setN((e as CustomEvent).detail);
+    window.addEventListener(EVT_CHARGEMENT, on);
+    return () => window.removeEventListener(EVT_CHARGEMENT, on);
+  }, []);
+  return n;
+}
+
 export function useData<T>(loader: () => Promise<Result<T>>, deps: unknown[] = []) {
   const [res, setRes] = useState<Result<T> | null>(null);
   const [loading, setLoading] = useState(true);
@@ -29,7 +46,9 @@ export function useData<T>(loader: () => Promise<Result<T>>, deps: unknown[] = [
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    loader().then((r) => { if (alive) { setRes(r); setLoading(false); } });
+    signalerChargement(+1);
+    loader().then((r) => { if (alive) { setRes(r); setLoading(false); } })
+      .finally(() => signalerChargement(-1));
     return () => { alive = false; };
   }, [...deps, tick]);
   return { data: res?.data, res, loading };

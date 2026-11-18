@@ -47,7 +47,8 @@ export interface PortefeuilleReco {
   univers?: { symbols: string[]; mu_hist: number[]; beta: number[]; cov: number[][]; jours: number };
 }
 export interface ScoreHorizon { symbol: string; horizon: "court" | "6m" | "1a"; score: number; date: string }
-export interface SyncLog { started_at: string; finished_at: string | null; status: string; message: string | null }
+export interface SyncLog { started_at: string; finished_at: string | null; status: string; message: string | null;
+  progression?: number | null; etape?: string | null }
 export interface PricePoint { symbol: string; date: string; close: number }
 export interface SpreadPoint { serie_id: string; date: string; valeur: number }
 

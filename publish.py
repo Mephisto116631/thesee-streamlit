@@ -292,7 +292,8 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
 
     # Modèles « horizon » (1 mois, 6 mois, 1 an) : classement relatif des titres
     n_scores = 0
-    for nom in modele_horizon.HORIZONS:
+    for k, nom in enumerate(modele_horizon.HORIZONS):
+        db.progression(65 + 10 * k, f"Modèle IA {dict(court='1 mois', **{'6m': '6 mois', '1a': '1 an'})[nom]}")
         try:
             ligne, scores = modele_horizon.entrainer_horizon(raw, snap["symbol"].tolist(), nom)
             if ligne:
@@ -308,6 +309,7 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
     # Portefeuille recommandé : bonus, ne doit jamais faire échouer la publication
     n_lignes = 0
     try:
+        db.progression(95, "Portefeuille recommandé")
         reco = portefeuille.portefeuille_recommande(raw, snap)
         if reco:
             db.upsert_rows("portefeuille_recommande", [_clean({

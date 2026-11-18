@@ -273,3 +273,7 @@ do $$ begin
         create policy "lecture publique" on scores_horizon for select to anon, authenticated using (true);
     end if;
 end $$;
+
+-- V7 — Progression du passage en cours (barre de progression de l'appli)
+alter table sync_log add column if not exists progression integer default 0;
+alter table sync_log add column if not exists etape text;

@@ -7,6 +7,7 @@ import { Stock } from "./screens/Stock";
 import { Portfolio } from "./screens/Portfolio";
 import { Risk } from "./screens/Risk";
 import { Calculs } from "./screens/Calculs";
+import { Progression } from "./screens/Progression";
 import { Settings } from "./screens/Settings";
 import { estNatif, installer, type MiseAJour, verifierMiseAJour } from "./update";
 
@@ -69,6 +70,7 @@ export function App() {
   return (
     <div class="app">
       {!configured && <div class="note warn top">Build sans configuration Supabase : définir VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY.</div>}
+      <Progression />
       {maj && (
         <div class="banniere-maj" role="status">
           <span>Nouvelle version <b>{maj.version}</b> disponible</span>

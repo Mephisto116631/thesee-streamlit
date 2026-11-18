@@ -34,3 +34,13 @@ def test_n_invente_pas_de_signal():
     ligne, _ = mh.entrainer_horizon(raw, syms, "6m")
     assert ligne["verdict"] != "signal"
     assert abs(ligne["diagnostics"]["ic_moyen"]) < 0.06
+
+
+def test_publie_le_meilleur_classement():
+    """Données à tendance pure : le momentum suffit ; la source publiée doit être cohérente avec les IC."""
+    raw, syms = _marche(persistance=True)
+    ligne, _ = mh.entrainer_horizon(raw, syms, "6m")
+    d = ligne["diagnostics"]
+    attendu = "momentum" if d["ic_momentum"] > d["ic_moyen"] else "modele"
+    assert d["source"] == attendu
+    assert ligne["verdict"] in {"signal", "bruit", "aucun"}

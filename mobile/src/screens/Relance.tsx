@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { api, relancerCalcul } from "../api";
 import { rafraichir } from "../components";
 import { ilYA } from "../format";
+import { EVT_SYNC_LANCE } from "./Progression";
 
 /** Bouton « Relancer le calcul » : synchro + ré-entraînement des modèles côté serveur. */
 export function Relance() {
@@ -26,6 +27,7 @@ export function Relance() {
     setEtat({ phase: "envoi" });
     const r = await relancerCalcul();
     setEtat(r.ok ? { phase: "attente", msg: r.message, depuis: Date.now() } : { phase: "erreur", msg: r.message });
+    if (r.ok) window.dispatchEvent(new CustomEvent(EVT_SYNC_LANCE)); // la barre de progression prend le relais
   };
 
   return (

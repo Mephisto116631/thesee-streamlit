@@ -26,11 +26,13 @@ def main(log_id):
     print("[CRON] Démarrage de la synchronisation Thésée...")
 
     # --- 1. Univers élargi ---
+    db.progression(2, "Liste des titres")
     univers_df = universe.get_univers_complet()
     tickers_univers = univers_df["symbol"].tolist()
     print(f"[CRON] {len(tickers_univers)} tickers dans l'univers élargi.")
 
     # --- 2. Pipeline complet en mode écriture (prix incrémentaux, fondamentaux, Z-Score, modèles) ---
+    db.progression(5, "Cours de bourse")
     data = dp.get_all_data(univers_etendu=tickers_univers, telecharger=True)
     n_prix = data["market_data_raw"]["symbol"].nunique() if not data["market_data_raw"].empty else 0
     print(
@@ -40,6 +42,7 @@ def main(log_id):
     )
 
     # --- 3. Spreads de crédit FRED ---
+    db.progression(55, "Spreads de crédit")
     spreads = fred.get_spreads_hy_ig()
     if spreads["hy_actuel"] is not None:
         print(f"[CRON] Spread HY : {spreads['hy_actuel']:.0f} pb, IG : {spreads['ig_actuel']:.0f} pb")
@@ -47,6 +50,7 @@ def main(log_id):
         print("[CRON] Spreads FRED indisponibles (clé manquante ou erreur réseau).")
 
     # --- 4. Tables prêtes à afficher (APK / PWA) ---
+    db.progression(60, "Publication des indicateurs")
     resume = publish.publier(data, univers_df, spreads)
     print(f"[CRON] Publication : {resume}")
 

@@ -247,10 +247,26 @@ def delete_where_not_in(table: str, column: str, keep: list[str]):
         client.table(table).delete().in_(column, obsolete[i:i + TICKER_BATCH]).execute()
 
 
-def sync_log_start() -> int | None:
+_LOG_ID: int | None = None  # passage en cours (pour progression())
+
+
+def progression(pct: int, etape: str):
+    """Note l'avancement du passage en cours (barre de progression de l'appli). Ne bloque jamais."""
+    if _LOG_ID is None:
+        return
     try:
-        res = get_client().table("sync_log").insert({"status": "running"}).execute()
-        return res.data[0]["id"] if res.data else None
+        get_client().table("sync_log").update({"progression": int(max(0, min(100, pct))), "etape": etape[:120]}) \
+            .eq("id", _LOG_ID).execute()
+    except Exception as e:
+        print(f"[DB][WARN] progression non enregistrée : {e}")
+
+
+def sync_log_start() -> int | None:
+    global _LOG_ID
+    try:
+        res = get_client().table("sync_log").insert({"status": "running", "progression": 0, "etape": "Démarrage"}).execute()
+        _LOG_ID = res.data[0]["id"] if res.data else None
+        return _LOG_ID
     except Exception as e:  # la table peut ne pas encore exister : ne bloque pas la sync
         print(f"[DB][WARN] sync_log indisponible : {e}")
         return None
@@ -262,6 +278,8 @@ def sync_log_end(log_id: int | None, status: str, message: str = "", n_tickers: 
     try:
         get_client().table("sync_log").update({
             "status": status,
+            "progression": 100 if status == "success" else None,
+            "etape": "Terminé" if status == "success" else "Erreur",
             "message": message[:2000],
             "n_tickers": n_tickers,
             "finished_at": pd.Timestamp.now(tz="UTC").isoformat(),

@@ -68,8 +68,10 @@ export function Home({ go }: { go: (h: string) => void }) {
           <p class="verdict">
             <span class={`badge ${m6.verdict === "signal" ? "good" : m6.verdict === "bruit" ? "neutral" : "bad"}`}>
               {m6.verdict === "signal" ? "Signal" : m6.verdict === "bruit" ? "Faible" : "Aucun avantage"}</span>{" "}
-            Classement des titres à 6 mois : IC {num(m6.diagnostics?.ic_moyen, 3)} (momentum seul : {num(m6.diagnostics?.ic_momentum, 3)}).
-            {m6.verdict === "signal" ? " Le classement a été utile en test." : " À prendre comme un indice, pas comme une décision."}
+            Classement à 6 mois : {m6.diagnostics?.source === "momentum"
+              ? <>règle <b>momentum</b> utilisée (IC {num(m6.diagnostics?.ic_momentum, 3)}), le modèle IA faisant moins bien (IC {num(m6.diagnostics?.ic_moyen, 3)}).</>
+              : <>modèle IA, IC {num(m6.diagnostics?.ic_moyen, 3)} (momentum seul : {num(m6.diagnostics?.ic_momentum, 3)}).</>}
+            {m6.verdict === "signal" ? " Utile en test." : " À prendre comme un indice, pas comme une décision."}
           </p>
         </Card>
       ) : mActions && (

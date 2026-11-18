@@ -21,7 +21,7 @@
 #   - Mesures : IC (corrélation de rang entre prédiction et réalité, par date),
 #     écart de rendement entre le 1er et le dernier quintile, et comparaison
 #     avec la règle simple « momentum 12-1 » : si le modèle ne fait pas mieux,
-#     il n'apporte rien.
+#     c'est le classement par momentum qui est publié (diagnostics.source).
 # ==============================================================================
 import numpy as np
 import pandas as pd
@@ -137,6 +137,7 @@ def evaluer(data: pd.DataFrame, h: int) -> dict:
     # nombre effectif d'observations indépendantes ≈ n_dates / (h / 5).
     n_eff = max(1.0, len(ic) / max(1.0, h / PAS_ECHANTILLON))
     t_stat = float(ic.mean() / ic.std() * np.sqrt(n_eff)) if ic.std() > 0 else 0.0
+    t_mom = float(ic_mom.mean() / ic_mom.std() * np.sqrt(n_eff)) if len(ic_mom) and ic_mom.std() > 0 else 0.0
     t["quintile"] = t.groupby("date")["pred"].transform(lambda s: pd.qcut(s.rank(method="first"), 5, labels=False))
     q = t.groupby("quintile")["rel"].mean()
     haut_bat_mediane = t[t["quintile"] == 4].groupby("date")["rel"].mean()
@@ -144,6 +145,7 @@ def evaluer(data: pd.DataFrame, h: int) -> dict:
         "horizon_jours": h,
         "ic_moyen": float(ic.mean()), "ic_ecart_type": float(ic.std()), "t_stat": t_stat,
         "ic_momentum": float(ic_mom.mean()) if len(ic_mom) else None,
+        "t_momentum": t_mom,
         "spread_quintiles": float(q.get(4, np.nan) - q.get(0, np.nan)),   # rendement relatif Q5 - Q1 sur h jours
         "rendement_par_quintile": [float(q.get(i, np.nan)) for i in range(5)],
         "taux_reussite_top": float((haut_bat_mediane > 0).mean()) if len(haut_bat_mediane) else None,
@@ -152,12 +154,11 @@ def evaluer(data: pd.DataFrame, h: int) -> dict:
     }
 
 
-def verdict(ev: dict) -> str:
-    """signal : IC > 0,03, statistiquement net (t > 2) et meilleur que le momentum seul."""
-    if not ev:
+def verdict(ic: float | None, t: float | None) -> str:
+    """signal : IC > 0,03 et statistiquement net (t > 2) ; bruit : IC > 0,01 ; sinon aucun."""
+    if ic is None:
         return "aucun"
-    ic, t, mom = ev["ic_moyen"], ev["t_stat"], ev.get("ic_momentum") or 0.0
-    if ic > 0.03 and t > 2 and ic > mom:
+    if ic > 0.03 and (t or 0) > 2:
         return "signal"
     if ic > 0.01:
         return "bruit"
@@ -177,22 +178,31 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str) -
         return {}, pd.DataFrame()
     m = _modele().fit(data[FEATURES], data["y"])
 
+    # Classement publié : celui qui a le mieux marché en test. Si le modèle ne bat
+    # pas la règle simple « momentum 12-1 », c'est le momentum qui est utilisé
+    # (et l'appli l'indique) : mieux vaut une règle simple qui marche qu'un modèle qui ne marche pas.
+    source = "modele"
+    if ev and (ev.get("ic_momentum") or -1) > ev.get("ic_moyen", 0):
+        source = "momentum"
     derniere = X["date"].max()
     aujourd_hui = X[X["date"] == derniere].dropna(subset=FEATURES).copy()
-    aujourd_hui["pred"] = m.predict(aujourd_hui[FEATURES])
+    aujourd_hui["pred"] = m.predict(aujourd_hui[FEATURES]) if source == "modele" else aujourd_hui["mom_12_1"]
     aujourd_hui["score"] = aujourd_hui["pred"].rank(pct=True)
     scores = aujourd_hui[["symbol", "score"]].assign(horizon=nom, date=str(pd.Timestamp(derniere).date()))
 
     imp = sorted([{"feature": f, "label": LABELS[f], "importance": float(v)}
                   for f, v in zip(FEATURES, m.feature_importances_)], key=lambda d: -d["importance"])
-    ic = ev.get("ic_moyen")
+    ic = ev.get("ic_momentum") if source == "momentum" else ev.get("ic_moyen")
+    t = ev.get("t_momentum") if source == "momentum" else ev.get("t_stat")
+    if ev:
+        ev["source"] = source
     ligne = {
         "kind": f"horizon_{nom}",
         "trained_at": pd.Timestamp.now(tz="UTC").isoformat(),
         "accuracy": ev.get("taux_reussite_top", 0) * 100 if ev.get("taux_reussite_top") is not None else None,
         "baseline": 50.0,
         "gain_pts": ic * 100 if ic is not None else None,   # IC en points (ex. 3,5 = IC 0,035)
-        "verdict": verdict(ev),
+        "verdict": verdict(ic, t),
         "importance": imp,
         "diagnostics": ev,
     }

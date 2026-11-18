@@ -120,8 +120,8 @@ function Models() {
 }
 
 const VERDICT_H: Record<string, { ton: string; nom: string; txt: string }> = {
-  signal: { ton: "good", nom: "Signal", txt: "Le classement du modèle a été nettement et régulièrement lié aux performances réelles, et mieux que le simple momentum." },
-  bruit: { ton: "neutral", nom: "Faible", txt: "Léger lien avec la réalité, mais pas assez net ou pas meilleur que le momentum seul : à prendre comme un indice, pas une décision." },
+  signal: { ton: "good", nom: "Signal", txt: "Le classement utilisé a été nettement et régulièrement lié aux performances réelles en test." },
+  bruit: { ton: "neutral", nom: "Faible", txt: "Léger lien avec la réalité, pas assez net pour être fiable : à prendre comme un indice, pas une décision." },
   aucun: { ton: "bad", nom: "Aucun avantage", txt: "Pas de lien mesurable entre le classement et les performances réelles : ne pas s'en servir." },
 };
 
@@ -137,17 +137,21 @@ function HorizonView({ m }: { m: ModelRun }) {
     <>
       <Card title="Verdict" class={`edge-${v.ton}`} right={<small class="muted">entraîné {ilYA(m.trained_at)}</small>}>
         <p class="verdict"><span class={`badge ${v.ton}`}>{v.nom}</span> {v.txt}</p>
+        {d.source === "momentum" ? (
+          <div class="note">Classement utilisé : <b>momentum 12-1 mois</b> (les titres qui ont le plus monté sur un an, hors dernier mois).
+            Le modèle IA a fait moins bien que cette règle simple en test : l'appli s'en passe.</div>
+        ) : d.source === "modele" ? <div class="note">Classement utilisé : <b>modèle IA</b> (meilleur que le momentum seul en test).</div> : null}
         <div class="stats">
-          <Stat label="IC moyen" value={num(d.ic_moyen, 3)} sub="0 = hasard · > 0,03 = utile" tone={v.ton} />
-          <Stat label="Fiabilité (t)" value={num(d.t_stat, 1)} sub="> 2 = net" tone={(d.t_stat ?? 0) > 2 ? "good" : "neutral"} />
-          <Stat label="Momentum seul" value={num(d.ic_momentum, 3)} sub="règle simple à battre" tone="neutral" />
+          <Stat label="IC modèle IA" value={num(d.ic_moyen, 3)} sub="0 = hasard · > 0,03 = utile" tone={d.source === "modele" ? v.ton : "neutral"} />
+          <Stat label="IC momentum" value={num(d.ic_momentum, 3)} sub={`t = ${num(d.t_momentum, 1)}`} tone={d.source === "momentum" ? v.ton : "neutral"} />
+          <Stat label="Fiabilité IA (t)" value={num(d.t_stat, 1)} sub="> 2 = net" tone={(d.t_stat ?? 0) > 2 ? "good" : "neutral"} />
         </div>
         <p class="hint">L'<b>IC</b> (coefficient d'information) mesure, date par date, si les titres classés en tête ont réellement fait mieux
           que les autres sur les {d.horizon_jours} séances suivantes (corrélation de rang, de −1 à +1). En gestion, un IC de 0,05 stable est déjà bon.</p>
       </Card>
 
       {q.length === 5 && (
-        <Card title="Performance relative par quintile">
+        <Card title="Performance relative par quintile (modèle IA)">
           <ul class="imp">{q.map((x, i) => (
             <li><span>{["Q1 (les moins bien classés)", "Q2", "Q3", "Q4", "Q5 (les mieux classés)"][i]}</span>
               <div class="qbar"><div class={x >= 0 ? "pos" : "neg"} style={{ width: `${(Math.abs(x) / maxQ) * 50}%`, [x >= 0 ? "left" : "right"]: "50%" }} /></div>
