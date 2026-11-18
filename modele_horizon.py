@@ -24,11 +24,22 @@
 #     c'est le meilleur classement simple qui est publié : momentum seul ou
 #     score multi-facteurs (diagnostics.source). Le code XGBoost reste en place
 #     et reprend la main automatiquement s'il fait mieux un jour.
+#   - Historique : depuis 2005 (téléchargé à chaque passage, non stocké).
+#   - Biais du survivant : à chaque date, l'évaluation et l'entraînement ne gardent
+#     que les titres qui étaient VRAIMENT dans le S&P 500 ce jour-là
+#     (data/sp500_historique.csv, outils/composition_sp500.py). Sinon un titre
+#     entré dans l'indice après avoir flambé compterait comme « gagnant » dès 2012.
+#     Limite restante : Yahoo n'a plus les cours des titres disparus (faillites,
+#     rachats), ils manquent encore — les résultats restent un peu optimistes.
 # ==============================================================================
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
 HORIZONS = {"court": 21, "6m": 126, "1a": 252}
+FICHIER_COMPOSITION = Path(__file__).resolve().parent / "data" / "sp500_historique.csv"
+MIN_MEMBRES = 50             # en dessous, la date est ignorée (classement peu représentatif)
 PAS_ECHANTILLON = 5          # une observation par titre et par semaine
 N_FENETRES = 4               # nombre de périodes de test (walk-forward)
 INDICE = "SPY"
@@ -168,6 +179,8 @@ def evaluer(data: pd.DataFrame, h: int) -> dict:
         "rendement_par_quintile": [float(q.get(i, np.nan)) for i in range(5)],
         "taux_reussite_top": float((haut_bat_mediane > 0).mean()) if len(haut_bat_mediane) else None,
         "n_dates_test": int(len(ic)), "n_effectif": float(n_eff),
+        "debut_donnees": str(pd.Timestamp(dates[0]).date()),
+        "debut_test": str(pd.Timestamp(t["date"].min()).date()),
         "fenetres": fenetres,
     }
 
@@ -183,15 +196,50 @@ def verdict(ic: float | None, t: float | None) -> str:
     return "aucun"
 
 
-def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str) -> tuple[dict, pd.DataFrame]:
-    """Évalue puis entraîne le modèle final ; retourne (ligne model_runs, scores du jour)."""
+def charger_composition(fichier: Path = FICHIER_COMPOSITION) -> pd.DataFrame | None:
+    """Périodes d'appartenance au S&P 500 (symbol, debut, fin) ; None si le fichier manque."""
+    try:
+        c = pd.read_csv(fichier, parse_dates=["debut", "fin"])
+    except (FileNotFoundError, ValueError):
+        return None
+    return c if not c.empty else None
+
+
+def membres_a_date(data: pd.DataFrame, composition: pd.DataFrame) -> pd.DataFrame:
+    """Ne garde, à chaque date, que les titres membres de l'indice ce jour-là, puis
+    recalcule les rangs du jour (caractéristiques et cible) parmi ces seuls membres."""
+    m = data.merge(composition, on="symbol", how="inner")
+    fin = m["fin"].fillna(pd.Timestamp.max)
+    m = m[(m["date"] >= m["debut"]) & (m["date"] < fin)].drop(columns=["debut", "fin"])
+    m = m.drop_duplicates(["date", "symbol"])
+    m = m[m.groupby("date")["symbol"].transform("size") >= MIN_MEMBRES].copy()
+    g = m.groupby("date")
+    for f in FEATURES:
+        m[f] = g[f].rank(pct=True)
+    m["rel"] = m["rel"] - g["rel"].transform("median")
+    m["y"] = m.groupby("date")["rel"].rank(pct=True)
+    return m.reset_index(drop=True)
+
+
+def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
+                      composition: pd.DataFrame | None = None) -> tuple[dict, pd.DataFrame]:
+    """Évalue puis entraîne le modèle final ; retourne (ligne model_runs, scores du jour).
+    `composition` (charger_composition()) : évaluation sur les seuls membres de l'indice à chaque date."""
     h = HORIZONS[nom]
     px, X = caracteristiques(market_raw, symboles)
     if X.empty:
         return {}, pd.DataFrame()
     Y = cible(px, pd.DatetimeIndex(X["date"].unique()), h)
     data = X.merge(Y, on=["date", "symbol"]).dropna(subset=FEATURES + ["y"])
+    point_in_time = False
+    if composition is not None:
+        filtre = membres_a_date(data, composition)
+        if not filtre.empty:
+            data, point_in_time = filtre, True
     ev = evaluer(data, h)
+    if ev:
+        ev["composition_historique"] = point_in_time
+        ev["titres_par_date"] = float(data.groupby("date")["symbol"].size().mean())
     if data.empty:
         return {}, pd.DataFrame()
     m = _modele().fit(data[FEATURES], data["y"])

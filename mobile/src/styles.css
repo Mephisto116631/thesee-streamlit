@@ -349,14 +349,25 @@ input[type="range"] { width: 100%; margin: 10px 0 2px; accent-color: var(--accen
 .refresh { font-size: 19px; }
 .refresh.spin { animation: spin 0.8s linear infinite; }
 
-/* Bannière de mise à jour */
-.banniere-maj {
-  position: sticky; top: 0; z-index: 15; display: flex; align-items: center; gap: 10px;
-  padding: calc(8px + env(safe-area-inset-top)) 12px 8px; background: var(--accent); color: var(--bg); font-size: 14px;
+/* Fenêtre de mise à jour */
+.modal-fond {
+  position: fixed; inset: 0; z-index: 50; background: rgba(4, 8, 20, 0.6);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
 }
-.banniere-maj span { flex: 1; }
-.banniere-maj button { background: var(--bg); color: var(--accent); border: 0; border-radius: 8px; padding: 6px 12px; font-weight: 700; }
-.banniere-maj .fermer { background: transparent; color: var(--bg); padding: 6px; }
+.modal {
+  width: 100%; max-width: 420px; background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 18px 18px 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.modal h2 { margin: 0 0 10px; font-size: 18px; }
+.modal p { margin: 0 0 10px; line-height: 1.45; }
+.modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 8px; margin-top: 8px; }
+.modal-actions button { border: 0; border-radius: 10px; padding: 10px 12px; font-weight: 700; font-size: 14px; }
+.modal-actions .lien { background: none; color: var(--accent); }
+.modal-actions .principal { background: var(--accent); color: var(--bg); }
+.modal-piste { height: 6px; background: var(--card2); border-radius: 3px; overflow: hidden; margin: 6px 0 8px; }
+.modal-rempli { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.2s linear; }
+.modal-rempli.indetermine { animation: glisse 1.2s ease-in-out infinite; }
+@keyframes glisse { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
 .tabbar a span { white-space: nowrap; }
 
 /* ---- Fiche de calculs, bornes, menu avancé -------------------------------- */

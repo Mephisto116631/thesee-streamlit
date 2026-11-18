@@ -19,7 +19,10 @@ CLE_ALPHA_VANTAGE = db._get_secret("ALPHA_VANTAGE_KEY")
 # ------------------------------------------------------------------------------
 # 1. DONNEES DE MARCHE (Yahoo Finance -> Supabase, cache 1h en session)
 # ------------------------------------------------------------------------------
-HISTORIQUE_DEBUT = "2020-01-01"
+HISTORIQUE_DEBUT = "2020-01-01"       # stocké dans Supabase (appli, indicateurs, portefeuille, modèles 1 jour)
+HISTORIQUE_LONG_DEBUT = "2005-01-01"  # téléchargé à chaque passage mais NON stocké : sert seulement à
+                                      # évaluer les modèles « horizon » (6 mois / 1 an) sur assez d'années
+_HISTORIQUE_LONG: dict[str, pd.DataFrame] = {}
 MARGE_JOURS = 5          # on ré-écrit les derniers jours (corrections Yahoo, jours fériés)
 LECTURE_JOURS = 400      # historique lu depuis Supabase en mode lecture seule (app Streamlit)
 
@@ -64,7 +67,7 @@ def _sync_incremental(tickers: list[str], table: str) -> pd.DataFrame:
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i:i + batch_size]
         try:
-            df = _telecharger_yahoo(batch)
+            df = _telecharger_yahoo(batch, start=HISTORIQUE_LONG_DEBUT if table == "market_data" else HISTORIQUE_DEBUT)
         except Exception as e:
             st.warning(f"Erreur Yahoo Finance sur le lot {batch[:3]}... : {e}")
             continue
@@ -75,7 +78,7 @@ def _sync_incremental(tickers: list[str], table: str) -> pd.DataFrame:
         seuil = df["symbol"].map(
             lambda s: dernieres[s] - pd.Timedelta(days=MARGE_JOURS) if s in dernieres else pd.Timestamp(HISTORIQUE_DEBUT).date()
         )
-        a_ecrire = df[df["date"] >= seuil]
+        a_ecrire = df[(df["date"] >= seuil) & (df["date"] >= pd.Timestamp(HISTORIQUE_DEBUT).date())]
         db.upsert_market_data(a_ecrire, table=table)
         n_ecrites += len(a_ecrire)
         st.info(f"{table} : {min(i + batch_size, len(tickers))}/{len(tickers)} tickers — {len(a_ecrire)} lignes écrites")
@@ -88,7 +91,15 @@ def _sync_incremental(tickers: list[str], table: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["symbol", "date", "open", "high", "low", "close", "volume"])
     out = pd.concat(frames, ignore_index=True)
     out["date"] = pd.to_datetime(out["date"])
-    return out.sort_values(["symbol", "date"]).reset_index(drop=True)
+    out = out.sort_values(["symbol", "date"]).reset_index(drop=True)
+    # Le reste du calcul garde l'historique habituel ; le long historique est mis de côté pour les modèles horizon.
+    _HISTORIQUE_LONG[table] = out
+    return out[out["date"] >= pd.Timestamp(HISTORIQUE_DEBUT)].reset_index(drop=True)
+
+
+def historique_long(table: str = "market_data") -> pd.DataFrame | None:
+    """Historique depuis HISTORIQUE_LONG_DEBUT téléchargé pendant ce passage du cron (None sinon)."""
+    return _HISTORIQUE_LONG.get(table)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
