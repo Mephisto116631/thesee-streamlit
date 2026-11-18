@@ -7,6 +7,7 @@ import { ilYA, num, pct } from "../format";
 import { choisirPoint, HORIZON_DEFAUT, HORIZONS, projection } from "../strategy";
 import { CourtTerme } from "./CourtTerme";
 import { MesTitres } from "./MesTitres";
+import { MonteCarlo } from "./MonteCarlo";
 import { PlanAchat } from "./PlanAchat";
 
 const KEY = "thesee:objectif:v1";
@@ -162,6 +163,12 @@ export function Portfolio() {
                   <p>{reco.data?.methode}</p>
                   <p class="hint">Mis à jour {ilYA(reco.data?.updated_at)}. Les titres changent quand le marché change :
                     en buy and hold, garde ton portefeuille et ne suis pas chaque mise à jour.</p>
+                </Details>
+              </Card>
+
+              <Card>
+                <Details paresseux summary={`Simulation Monte-Carlo sur ${h.label} (option)`}>
+                  <MonteCarlo lignes={lignes} capital={e.capital} annees={h.annees} />
                 </Details>
               </Card>
 

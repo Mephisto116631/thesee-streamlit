@@ -191,8 +191,15 @@ export function Stat({ label, value, sub, cls = "", tone = "" }:
   );
 }
 
-export function Details({ summary, children }: { summary: string; children: ComponentChildren }) {
-  return <details class="details"><summary>{summary}</summary><div class="details-body">{children}</div></details>;
+/** Section repliable. `paresseux` : le contenu n'est créé (et ses données chargées) qu'à la première ouverture. */
+export function Details({ summary, children, paresseux = false }: { summary: string; children: ComponentChildren; paresseux?: boolean }) {
+  const [ouvert, setOuvert] = useState(false);
+  return (
+    <details class="details" onToggle={(e) => { if ((e.currentTarget as HTMLDetailsElement).open) setOuvert(true); }}>
+      <summary>{summary}</summary>
+      <div class="details-body">{!paresseux || ouvert ? children : null}</div>
+    </details>
+  );
 }
 
 // ---------------------------------------------------------------------------
