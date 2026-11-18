@@ -395,3 +395,7 @@ input[type="range"] { width: 100%; margin: 10px 0 2px; accent-color: var(--accen
 .barre-serveur-piste { height: 4px; background: var(--card2); border-radius: 2px; overflow: hidden; }
 .barre-serveur-rempli { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.8s ease; }
 .barre-serveur-texte { display: block; font-size: 11.5px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Étiquettes de données sur les barres d'importance */
+.imp li { grid-template-columns: minmax(0, 1.2fr) 1fr auto; }
+.imp-val { font-size: 12px; min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }

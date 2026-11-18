@@ -131,6 +131,7 @@ function HorizonView({ m }: { m: ModelRun }) {
   const v = VERDICT_H[m.verdict] ?? VERDICT_H.aucun;
   const imp = m.importance ?? [];
   const maxImp = Math.max(1e-9, ...imp.map((x) => x.importance));
+  const totImp = Math.max(1e-9, imp.reduce((a, x) => a + x.importance, 0));
   const q: number[] = d.rendement_par_quintile ?? [];
   const maxQ = Math.max(1e-9, ...q.map((x) => Math.abs(x ?? 0)));
   return (
@@ -147,7 +148,7 @@ function HorizonView({ m }: { m: ModelRun }) {
           <Stat label="Fiabilité IA (t)" value={num(d.t_stat, 1)} sub="> 2 = net" tone={(d.t_stat ?? 0) > 2 ? "good" : "neutral"} />
         </div>
         <p class="hint">L'<b>IC</b> (coefficient d'information) mesure, date par date, si les titres classés en tête ont réellement fait mieux
-          que les autres sur les {d.horizon_jours} séances suivantes (corrélation de rang, de −1 à +1). En gestion, un IC de 0,05 stable est déjà bon.</p>
+          que les autres sur les {d.horizon_jours} jours de bourse suivants (corrélation de rang, de −1 à +1). En gestion, un IC de 0,05 stable est déjà bon.</p>
       </Card>
 
       {q.length === 5 && (
@@ -157,7 +158,7 @@ function HorizonView({ m }: { m: ModelRun }) {
               <div class="qbar"><div class={x >= 0 ? "pos" : "neg"} style={{ width: `${(Math.abs(x) / maxQ) * 50}%`, [x >= 0 ? "left" : "right"]: "50%" }} /></div>
               <b class={signClass(x)}>{pct(x, 1)}</b></li>
           ))}</ul>
-          <p class="hint">Rendement moyen par rapport à la médiane, sur {d.horizon_jours} séances, en période de test.
+          <p class="hint">Rendement moyen par rapport à la médiane, sur {d.horizon_jours} jours de bourse, en période de test.
             Écart Q5 − Q1 : <b>{pct(d.spread_quintiles, 1)}</b>. Les titres du top quintile ont battu la médiane
             {d.taux_reussite_top != null && <> dans <b>{pct(d.taux_reussite_top, 0, false)}</b> des cas</>}.</p>
         </Card>
@@ -165,7 +166,7 @@ function HorizonView({ m }: { m: ModelRun }) {
 
       <Card title="Ce qui compte pour le modèle">
         <ul class="imp">{imp.map((x) => (
-          <li><span>{x.label}</span><div class="wbar"><div style={{ width: `${(x.importance / maxImp) * 100}%` }} /></div></li>
+          <li><span>{x.label}</span><div class="wbar"><div style={{ width: `${(x.importance / maxImp) * 100}%` }} /></div><b class="imp-val">{pct(x.importance / totImp, 0, false)}</b></li>
         ))}</ul>
       </Card>
 
@@ -176,8 +177,8 @@ function HorizonView({ m }: { m: ModelRun }) {
             <tbody>{(d.fenetres ?? []).map((f: any) => <tr><td>{dateFr(f.debut)} → {dateFr(f.fin)}</td><td class={signClass(f.ic)}>{num(f.ic, 3)}</td><td>{f.n_dates}</td></tr>)}</tbody>
           </table>
           <p class="hint">Validation « walk-forward » : le modèle est entraîné sur le passé puis testé sur la période suivante,
-            avec un écart de {d.horizon_jours} séances entre les deux pour qu'il ne voie jamais le futur. {d.n_dates_test} dates testées,
-            soit environ {num(d.n_effectif, 0)} observations indépendantes (les périodes de {d.horizon_jours} séances se chevauchent).</p>
+            avec un écart de {d.horizon_jours} jours de bourse entre les deux pour qu'il ne voie jamais le futur. {d.n_dates_test} dates testées,
+            soit environ {num(d.n_effectif, 0)} observations indépendantes (les périodes de {d.horizon_jours} jours de bourse se chevauchent).</p>
         </Details>
       </Card>
     </>
@@ -188,6 +189,7 @@ function ModelView({ m }: { m: ModelRun }) {
   const d = m.diagnostics ?? {};
   const imp = m.importance ?? [];
   const maxImp = Math.max(1e-9, ...imp.map((x) => x.importance));
+  const totImp = Math.max(1e-9, imp.reduce((a, x) => a + x.importance, 0));
   const wf = d.walk_forward;
   return (
     <>
@@ -203,7 +205,7 @@ function ModelView({ m }: { m: ModelRun }) {
 
       <Card title="Facteurs les plus utilisés">
         <ul class="imp">{imp.slice(0, 10).map((x) => (
-          <li><span>{x.label}</span><div class="wbar"><div style={{ width: `${(x.importance / maxImp) * 100}%` }} /></div></li>
+          <li><span>{x.label}</span><div class="wbar"><div style={{ width: `${(x.importance / maxImp) * 100}%` }} /></div><b class="imp-val">{pct(x.importance / totImp, 0, false)}</b></li>
         ))}</ul>
       </Card>
 

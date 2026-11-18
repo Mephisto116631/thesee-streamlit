@@ -9,18 +9,18 @@
       {"nom": "Neutre", "ton": "neutral", "aide": "Pas d'excès d'achat ou de vente."},
       {"nom": "Suracheté", "ton": "info", "aide": "Le titre a beaucoup monté récemment ; risque de pause ou de correction."}
     ],
-    "definition": "Indice de force relative : compare l'ampleur des hausses et des baisses sur 14 séances (0 à 100)."
+    "definition": "Indice de force relative : compare l'ampleur des hausses et des baisses sur 14 jours de bourse (0 à 100)."
   },
   "chg_20d": {
     "label": "Momentum 1 mois",
     "unite": "pct",
     "bornes": [-0.05, 0.05],
     "zones": [
-      {"nom": "Baissier", "ton": "bad", "aide": "Baisse de plus de 5 % sur 20 séances."},
+      {"nom": "Baissier", "ton": "bad", "aide": "Baisse de plus de 5 % sur 20 jours de bourse."},
       {"nom": "Neutre", "ton": "neutral", "aide": "Variation comprise entre -5 % et +5 %."},
-      {"nom": "Haussier", "ton": "good", "aide": "Hausse de plus de 5 % sur 20 séances."}
+      {"nom": "Haussier", "ton": "good", "aide": "Hausse de plus de 5 % sur 20 jours de bourse."}
     ],
-    "definition": "Performance du cours sur les 20 dernières séances (~1 mois)."
+    "definition": "Performance du cours sur les 20 dernières jours de bourse (~1 mois)."
   },
   "volatility": {
     "label": "Volatilité annualisée",
@@ -31,7 +31,7 @@
       {"nom": "Moyenne", "ton": "neutral", "aide": "Fluctuations typiques d'une action."},
       {"nom": "Élevée", "ton": "bad", "aide": "Fortes variations : taille de position à réduire."}
     ],
-    "definition": "Écart-type des rendements quotidiens sur 20 séances, ramené à l'année (x √252). Le S&P 500 tourne autour de 15-20 %."
+    "definition": "Écart-type des rendements quotidiens sur 20 jours de bourse, ramené à l'année (x √252). Le S&P 500 tourne autour de 15-20 %."
   },
   "pct_vs_ma50": {
     "label": "Écart à la moyenne 50 j",

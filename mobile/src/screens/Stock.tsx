@@ -57,7 +57,7 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
       <div class="price-head">
         <span class="big">{prix(s.close)}</span>
         <span class={`chg ${signClass(s.chg_1d)}`}>{pct(s.chg_1d)}</span>
-        <span class="muted">séance du {dateFr(s.date)}</span>
+        <span class="muted">clôture du {dateFr(s.date)}</span>
       </div>
 
       <Card title="Cours sur 1 an">
@@ -97,7 +97,7 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
         </Card>
       )}
 
-      <Card title="Signal IA (prochaine séance)">
+      <Card title="Signal IA (jour suivant)">
         {model && model.verdict !== "signal" && (
           <div class="note warn">Fiabilité du modèle : <ZoneBadge k="gain_pts" v={model.gain_pts} /> — à lire comme une indication, pas comme une recommandation.</div>
         )}
