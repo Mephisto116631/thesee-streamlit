@@ -18,7 +18,7 @@ export const HORIZONS: Horizon[] = [
   { k: "5a", label: "5 ans", annees: 5,
     conseil: "Buy and hold long terme : la meilleure configuration pour des actions. Rééquilibre une fois par an et réinvestis les dividendes." },
 ];
-export const HORIZON_DEFAUT = "3a";
+export const HORIZON_DEFAUT = "1a";
 
 // ---------------------------------------------------------------------------
 // Frontière efficiente : choisir le portefeuille le moins risqué qui atteint
@@ -47,12 +47,22 @@ function erf(x: number) { // Abramowitz-Stegun 7.1.26, précision ~1e-7
 }
 export const normCdf = (z: number) => 0.5 * (1 + erf(z / Math.SQRT2));
 
-export function projection(capital: number, rendement: number, volatilite: number, annees: number, cible: number) {
+/** Quantile de la loi normale pour une fourchette bilatérale (0,8 → 1,2816 ; 0,9 → 1,6449 ; 0,95 → 1,96). */
+export function zConfiance(confiance: number): number {
+  // Inversion de normCdf par dichotomie (précision 1e-6, largement suffisante)
+  const p = 1 - (1 - confiance) / 2;
+  let lo = 0, hi = 6;
+  for (let k = 0; k < 60; k++) { const m = (lo + hi) / 2; if (normCdf(m) < p) lo = m; else hi = m; }
+  return (lo + hi) / 2;
+}
+
+export function projection(capital: number, rendement: number, volatilite: number, annees: number, cible: number, confiance = 0.9) {
   const m = (Math.log(1 + rendement) - (volatilite * volatilite) / 2) * annees; // moyenne du log-rendement
   const s = Math.max(1e-9, volatilite * Math.sqrt(annees));
   const q = (z: number) => capital * Math.exp(m + z * s);
+  const z = zConfiance(confiance);
   return {
-    bas: q(-1.645), median: q(0), haut: q(1.645),               // 90 % des scénarios entre bas et haut
+    bas: q(-z), median: q(0), haut: q(z), m, s, z,              // `confiance` des scénarios entre bas et haut
     probPerte: normCdf(-m / s),
     probObjectif: normCdf((m - annees * Math.log(1 + cible)) / s),
     valeurObjectif: capital * Math.pow(1 + cible, annees),

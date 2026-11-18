@@ -18,6 +18,8 @@ export function Home({ go }: { go: (h: string) => void }) {
   const actions = (snap.data ?? []).filter((s) => !s.is_etf && s.chg_1d !== null);
   const top = [...actions].sort((a, b) => (b.chg_1d ?? 0) - (a.chg_1d ?? 0));
   const gagnants = top.slice(0, 5), perdants = top.slice(-5).reverse();
+  // Modèle de référence : le classement à 6 mois (repli : ancien modèle 1 jour)
+  const m6 = models.data?.find((m) => m.kind === "horizon_6m");
   const mActions = models.data?.find((m) => m.kind === "actions");
   const s = sync.data;
 
@@ -61,7 +63,16 @@ export function Home({ go }: { go: (h: string) => void }) {
         </>
       )}
 
-      {mActions && (
+      {m6 ? (
+        <Card class={`edge-${m6.verdict === "signal" ? "good" : m6.verdict === "bruit" ? "neutral" : "bad"}`} title="Modèle IA (6 mois)" right={<button class="link" onClick={() => go("#/risque/ia")}>Détails ›</button>}>
+          <p class="verdict">
+            <span class={`badge ${m6.verdict === "signal" ? "good" : m6.verdict === "bruit" ? "neutral" : "bad"}`}>
+              {m6.verdict === "signal" ? "Signal" : m6.verdict === "bruit" ? "Faible" : "Aucun avantage"}</span>{" "}
+            Classement des titres à 6 mois : IC {num(m6.diagnostics?.ic_moyen, 3)} (momentum seul : {num(m6.diagnostics?.ic_momentum, 3)}).
+            {m6.verdict === "signal" ? " Le classement a été utile en test." : " À prendre comme un indice, pas comme une décision."}
+          </p>
+        </Card>
+      ) : mActions && (
         <Card class={`edge-${mActions.verdict === "signal" ? "good" : mActions.verdict === "bruit" ? "neutral" : "bad"}`} title="Modèle IA" right={<button class="link" onClick={() => go("#/risque/ia")}>Détails ›</button>}>
           <p class="verdict">
             <ZoneBadge k="gain_pts" v={mActions.gain_pts} /> Le modèle ({num(mActions.accuracy, 1)} % de bonnes directions vs {num(mActions.baseline, 1)} % pour la règle naïve) {VERDICT_TXT[mActions.verdict]}

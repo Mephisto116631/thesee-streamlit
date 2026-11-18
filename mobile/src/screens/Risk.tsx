@@ -1,7 +1,8 @@
 import { useCallback, useState } from "preact/hooks";
 import { api, type ModelRun } from "../api";
 import { Card, ChartBox, cssVar, Details, HelpButton, Loading, OfflineNote, RangeBar, Stat, toneOf, useData, ZoneBadge, RefreshButton } from "../components";
-import { dateFr, ilYA, num } from "../format";
+import { dateFr, ilYA, num, pct, signClass } from "../format";
+import { Relance } from "./Relance";
 import { isIG } from "./Stock";
 
 export function Risk({ tab, go }: { tab: "credit" | "ia"; go: (h: string) => void }) {
@@ -82,18 +83,99 @@ function Credit({ go }: { go: (h: string) => void }) {
   );
 }
 
+type Choix = "court" | "6m" | "1a" | "jour";
+const CHOIX: { k: Choix; label: string }[] = [
+  { k: "6m", label: "6 mois" }, { k: "1a", label: "1 an" }, { k: "court", label: "1 mois" }, { k: "jour", label: "1 jour (ancien)" },
+];
+
 function Models() {
   const models = useData(api.models);
+  const [choix, setChoix] = useState<Choix>("6m");
   const [kind, setKind] = useState<"actions" | "etf">("actions");
+  const mh = models.data?.find((x) => x.kind === `horizon_${choix}`);
   const m = models.data?.find((x) => x.kind === kind);
   return (
     <>
       <OfflineNote res={models.res} />
-      <div class="seg" role="group" aria-label="Modèle">
-        <button class={kind === "actions" ? "on" : ""} onClick={() => setKind("actions")}>Actions</button>
-        <button class={kind === "etf" ? "on" : ""} onClick={() => setKind("etf")}>ETF</button>
+      <div class="chips wrap" role="group" aria-label="Horizon du modèle">
+        {CHOIX.map((c) => <button class={`chip ${choix === c.k ? "on" : ""}`} onClick={() => setChoix(c.k)}>{c.label}</button>)}
       </div>
-      {models.loading && !m ? <Loading /> : !m ? <div class="note">Modèle non publié.</div> : <ModelView m={m} />}
+      {choix === "jour" ? (
+        <>
+          <div class="note">Ancien modèle : devine la direction du lendemain. À 1 jour, les marchés sont proches du hasard ; gardé pour comparaison.</div>
+          <div class="seg" role="group" aria-label="Modèle">
+            <button class={kind === "actions" ? "on" : ""} onClick={() => setKind("actions")}>Actions</button>
+            <button class={kind === "etf" ? "on" : ""} onClick={() => setKind("etf")}>ETF</button>
+          </div>
+          {models.loading && !m ? <Loading /> : !m ? <div class="note">Modèle non publié.</div> : <ModelView m={m} />}
+        </>
+      ) : models.loading && !mh ? <Loading /> : !mh ? (
+        <div class="note">Modèle {CHOIX.find((c) => c.k === choix)?.label} pas encore entraîné : relance le calcul ci-dessous.</div>
+      ) : <HorizonView m={mh} />}
+      <Card title="Relancer">
+        <Relance />
+      </Card>
+    </>
+  );
+}
+
+const VERDICT_H: Record<string, { ton: string; nom: string; txt: string }> = {
+  signal: { ton: "good", nom: "Signal", txt: "Le classement du modèle a été nettement et régulièrement lié aux performances réelles, et mieux que le simple momentum." },
+  bruit: { ton: "neutral", nom: "Faible", txt: "Léger lien avec la réalité, mais pas assez net ou pas meilleur que le momentum seul : à prendre comme un indice, pas une décision." },
+  aucun: { ton: "bad", nom: "Aucun avantage", txt: "Pas de lien mesurable entre le classement et les performances réelles : ne pas s'en servir." },
+};
+
+/** Modèle « horizon » : classement relatif des titres, évalué par l'IC. */
+function HorizonView({ m }: { m: ModelRun }) {
+  const d = m.diagnostics ?? {};
+  const v = VERDICT_H[m.verdict] ?? VERDICT_H.aucun;
+  const imp = m.importance ?? [];
+  const maxImp = Math.max(1e-9, ...imp.map((x) => x.importance));
+  const q: number[] = d.rendement_par_quintile ?? [];
+  const maxQ = Math.max(1e-9, ...q.map((x) => Math.abs(x ?? 0)));
+  return (
+    <>
+      <Card title="Verdict" class={`edge-${v.ton}`} right={<small class="muted">entraîné {ilYA(m.trained_at)}</small>}>
+        <p class="verdict"><span class={`badge ${v.ton}`}>{v.nom}</span> {v.txt}</p>
+        <div class="stats">
+          <Stat label="IC moyen" value={num(d.ic_moyen, 3)} sub="0 = hasard · > 0,03 = utile" tone={v.ton} />
+          <Stat label="Fiabilité (t)" value={num(d.t_stat, 1)} sub="> 2 = net" tone={(d.t_stat ?? 0) > 2 ? "good" : "neutral"} />
+          <Stat label="Momentum seul" value={num(d.ic_momentum, 3)} sub="règle simple à battre" tone="neutral" />
+        </div>
+        <p class="hint">L'<b>IC</b> (coefficient d'information) mesure, date par date, si les titres classés en tête ont réellement fait mieux
+          que les autres sur les {d.horizon_jours} séances suivantes (corrélation de rang, de −1 à +1). En gestion, un IC de 0,05 stable est déjà bon.</p>
+      </Card>
+
+      {q.length === 5 && (
+        <Card title="Performance relative par quintile">
+          <ul class="imp">{q.map((x, i) => (
+            <li><span>{["Q1 (les moins bien classés)", "Q2", "Q3", "Q4", "Q5 (les mieux classés)"][i]}</span>
+              <div class="qbar"><div class={x >= 0 ? "pos" : "neg"} style={{ width: `${(Math.abs(x) / maxQ) * 50}%`, [x >= 0 ? "left" : "right"]: "50%" }} /></div>
+              <b class={signClass(x)}>{pct(x, 1)}</b></li>
+          ))}</ul>
+          <p class="hint">Rendement moyen par rapport à la médiane, sur {d.horizon_jours} séances, en période de test.
+            Écart Q5 − Q1 : <b>{pct(d.spread_quintiles, 1)}</b>. Les titres du top quintile ont battu la médiane
+            {d.taux_reussite_top != null && <> dans <b>{pct(d.taux_reussite_top, 0, false)}</b> des cas</>}.</p>
+        </Card>
+      )}
+
+      <Card title="Ce qui compte pour le modèle">
+        <ul class="imp">{imp.map((x) => (
+          <li><span>{x.label}</span><div class="wbar"><div style={{ width: `${(x.importance / maxImp) * 100}%` }} /></div></li>
+        ))}</ul>
+      </Card>
+
+      <Card>
+        <Details summary="Détails de l'évaluation">
+          <table class="table small">
+            <thead><tr><th>Période de test</th><th>IC</th><th>Dates</th></tr></thead>
+            <tbody>{(d.fenetres ?? []).map((f: any) => <tr><td>{dateFr(f.debut)} → {dateFr(f.fin)}</td><td class={signClass(f.ic)}>{num(f.ic, 3)}</td><td>{f.n_dates}</td></tr>)}</tbody>
+          </table>
+          <p class="hint">Validation « walk-forward » : le modèle est entraîné sur le passé puis testé sur la période suivante,
+            avec un écart de {d.horizon_jours} séances entre les deux pour qu'il ne voie jamais le futur. {d.n_dates_test} dates testées,
+            soit environ {num(d.n_effectif, 0)} observations indépendantes (les périodes de {d.horizon_jours} séances se chevauchent).</p>
+        </Details>
+      </Card>
     </>
   );
 }

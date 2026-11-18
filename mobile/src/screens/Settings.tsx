@@ -3,7 +3,8 @@ import { api } from "../api";
 import { Card, Details, RefreshButton, Stat, useData } from "../components";
 import { dateFr, ilYA, num, pct } from "../format";
 import { frontiere, type Univers } from "../optim";
-import { RANGES, bornesTexte } from "../ranges";
+import { bornesDefaut, definirBornes, type Range, RANGES } from "../ranges";
+import { Relance } from "./Relance";
 import { ecrireParametres, nbModifies, PARAMETRES_DEFAUT, type Parametres, useParametres } from "../settings";
 import { BUILD, estNatif, installer, type MiseAJour, VERSION, verifierMiseAJour } from "../update";
 
@@ -105,6 +106,39 @@ export function Settings() {
         </label>
       </Card>
 
+      <Card title="Projection et suivi">
+        <div class="param">
+          <span class="param-tete"><span>Niveau de la fourchette</span></span>
+          <div class="seg full" role="group" aria-label="Niveau de confiance">
+            {[0.8, 0.9, 0.95].map((c) => <button class={p.confiance === c ? "on" : ""} onClick={() => ecrireParametres({ confiance: c })}>{pct(c, 0, false)}</button>)}
+          </div>
+          <small>Part des scénarios simulés comprise entre « scénario bas » et « scénario haut » dans l'onglet Portefeuille.
+            95 % = fourchette plus large, plus prudente.</small>
+        </div>
+        <Champ p={p} k="seuilReequilibrage" label="Seuil de rééquilibrage" min={10} max={60} pas={1} decimales={0}
+          aide="En hold, rééquilibrer (une fois par an) dès qu'une ligne dépasse ce poids à cause de sa hausse." />
+      </Card>
+
+      <Card title="Mode court terme">
+        <Champ p={p} k="ctNbTitres" label="Nombre de titres" pctAff={false} min={1} max={30} pas={1}
+          aide="Les N titres les mieux classés par le modèle 1 mois." />
+        <Champ p={p} k="ctScoreMin" label="Score IA minimal" min={50} max={99} pas={1} decimales={0}
+          aide="Rang minimal dans le classement du modèle (80 % = parmi les 20 % premiers)." />
+        <div class="param">
+          <span class="param-tete"><span>Rotation</span></span>
+          <div class="seg full" role="group" aria-label="Fréquence de rotation">
+            <button class={p.ctRotation === "semaine" ? "on" : ""} onClick={() => ecrireParametres({ ctRotation: "semaine" })}>Chaque semaine</button>
+            <button class={p.ctRotation === "mois" ? "on" : ""} onClick={() => ecrireParametres({ ctRotation: "mois" })}>Chaque mois</button>
+          </div>
+          <small>À quelle fréquence on renouvelle la sélection. Plus souvent = plus de frais et de change.</small>
+        </div>
+      </Card>
+
+      <Card title="Fourchettes de lecture des indicateurs">
+        <p class="hint" style={{ marginTop: 0 }}>Seuils qui colorent les indicateurs (rouge / gris / vert). Valeurs en %, sauf multiples (x) et points.</p>
+        {Object.entries(RANGES).map(([k, r]) => <LigneBornes k={k} r={r} />)}
+      </Card>
+
       <Card title="Hypothèses du serveur (fixes)">
         <ul class="liste-fixe">
           <li><b>Candidats</b> : les 40 meilleurs titres par momentum 12-1 mois divisé par la volatilité (S&P 500, Nasdaq-100, ETF).</li>
@@ -114,14 +148,6 @@ export function Settings() {
           <li><b>Données</b> : synchronisation {sync.data ? ilYA(sync.data.finished_at ?? sync.data.started_at) : "—"}
             {reco.data?.updated_at && <> · candidats du {dateFr(reco.data.updated_at)}</>}.</li>
         </ul>
-        <Details summary="Fourchettes de lecture des indicateurs">
-          <table class="table small">
-            <tbody>{Object.entries(RANGES).map(([k, r]) => {
-              const t = bornesTexte(k);
-              return <tr><td>{r.label}</td><td class="muted">{r.zones.map((z, i) => `${z.nom} ${t[i]}`).join(" · ")}</td></tr>;
-            })}</tbody>
-          </table>
-        </Details>
       </Card>
 
       <Card title="Application">
@@ -141,6 +167,45 @@ export function Settings() {
         <button class="link" onClick={() => { if (confirm("Remettre toutes les hypothèses par défaut ?")) ecrireParametres(null); }}>
           Remettre toutes les hypothèses par défaut</button>
       </Card>
+
+      <Card title="Calculs du serveur">
+        <Relance />
+      </Card>
+
+      <nav class="menu-avance" aria-label="Avancé">
+        <a href="#/parametres/calculs">Fiche de calculs détaillée ›</a>
+      </nav>
+    </div>
+  );
+}
+
+/** Une ligne de bornes éditables (affichées en % pour les indicateurs en pourcentage). */
+function LigneBornes({ k, r }: { k: string; r: Range }) {
+  useParametres(); // se redessine quand les bornes changent
+  const f = r.unite === "pct" ? 100 : 1;
+  const [b1, b2] = r.bornes;
+  const def = bornesDefaut(k);
+  const modifie = b1 !== def[0] || b2 !== def[1];
+  const maj = (i: 0 | 1, v: number) => {
+    if (!Number.isFinite(v)) return;
+    const nb: [number, number] = [...r.bornes] as [number, number];
+    nb[i] = v / f;
+    if (nb[0] <= nb[1]) definirBornes(k, nb);
+  };
+  const u = r.unite === "pct" ? "%" : r.unite === "x" ? "x" : "";
+  return (
+    <div class={`bornes ${modifie ? "modifie" : ""}`}>
+      <span class="bornes-nom">{r.label}</span>
+      <span class="bornes-zones">
+        <span class={`badge ${r.zones[0].ton}`}>{r.zones[0].nom}</span>
+        <input type="number" inputMode="decimal" step="any" value={Math.round(b1 * f * 100) / 100} aria-label={`${r.label} : borne basse`}
+          onChange={(e) => maj(0, Number((e.target as HTMLInputElement).value))} />{u}
+        <span class={`badge ${r.zones[1].ton}`}>{r.zones[1].nom}</span>
+        <input type="number" inputMode="decimal" step="any" value={Math.round(b2 * f * 100) / 100} aria-label={`${r.label} : borne haute`}
+          onChange={(e) => maj(1, Number((e.target as HTMLInputElement).value))} />{u}
+        <span class={`badge ${r.zones[2].ton}`}>{r.zones[2].nom}</span>
+      </span>
+      {modifie && <button class="link petit" onClick={() => definirBornes(k, null)}>défaut</button>}
     </div>
   );
 }

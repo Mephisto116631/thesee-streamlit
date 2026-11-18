@@ -19,6 +19,29 @@ export const RANGES = Object.fromEntries(
 
 export type RangeKey = keyof typeof RANGES & string;
 
+// Bornes personnalisées par l'utilisateur (page Paramètres), appliquées par-dessus ranges.json.
+const CLE_BORNES = "thesee:bornes:v1";
+const BORNES_DEFAUT: Record<string, [number, number]> = Object.fromEntries(
+  Object.entries(RANGES).map(([k, r]) => [k, [...r.bornes] as [number, number]]));
+try {
+  const perso = JSON.parse(localStorage.getItem(CLE_BORNES) ?? "{}") as Record<string, [number, number]>;
+  for (const [k, b] of Object.entries(perso)) if (RANGES[k] && b?.length === 2 && b[0] <= b[1]) RANGES[k].bornes = b;
+} catch { /* ignore */ }
+
+export function bornesDefaut(k: string): [number, number] { return BORNES_DEFAUT[k]; }
+
+/** Modifie les bornes d'un indicateur (null = revenir au défaut) ; effet immédiat. */
+export function definirBornes(k: string, b: [number, number] | null) {
+  if (!RANGES[k]) return;
+  RANGES[k].bornes = b && b[0] <= b[1] ? b : [...BORNES_DEFAUT[k]] as [number, number];
+  try {
+    const perso = JSON.parse(localStorage.getItem(CLE_BORNES) ?? "{}");
+    if (b) perso[k] = RANGES[k].bornes; else delete perso[k];
+    localStorage.setItem(CLE_BORNES, JSON.stringify(perso));
+  } catch { /* ignore */ }
+  window.dispatchEvent(new CustomEvent("thesee:parametres")); // rafraîchit les écrans abonnés
+}
+
 /** Zone d'une valeur : < b1 -> 0, [b1, b2] -> 1, > b2 -> 2. null si valeur absente. */
 export function zoneIndex(key: string, v: number | null | undefined): 0 | 1 | 2 | null {
   const r = RANGES[key];

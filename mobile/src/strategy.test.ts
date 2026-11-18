@@ -54,3 +54,12 @@ describe("plan d'achat", () => {
     for (const d of datesTranches(8, "semaine", new Date("2026-11-21"))) expect([0, 6]).not.toContain(d.getDay());
   });
 });
+
+import { zConfiance } from "./strategy";
+describe("niveau de confiance", () => {
+  it("quantiles classiques de la loi normale", () => {
+    expect(zConfiance(0.9)).toBeCloseTo(1.6449, 3);
+    expect(zConfiance(0.95)).toBeCloseTo(1.96, 3);
+    expect(zConfiance(0.8)).toBeCloseTo(1.2816, 3);
+  });
+});

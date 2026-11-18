@@ -6,6 +6,7 @@ import { Market } from "./screens/Market";
 import { Stock } from "./screens/Stock";
 import { Portfolio } from "./screens/Portfolio";
 import { Risk } from "./screens/Risk";
+import { Calculs } from "./screens/Calculs";
 import { Settings } from "./screens/Settings";
 import { estNatif, installer, type MiseAJour, verifierMiseAJour } from "./update";
 
@@ -60,7 +61,7 @@ export function App() {
     case "titre": screen = <Stock symbol={decodeURIComponent(arg)} go={go} />; break;
     case "portefeuille": screen = <Portfolio />; break;
     case "risque": screen = <Risk tab={arg === "ia" ? "ia" : "credit"} go={go} />; break;
-    case "parametres": screen = <Settings />; break;
+    case "parametres": screen = arg === "calculs" ? <Calculs /> : <Settings />; break;
     default: screen = <Home go={go} />;
   }
   const active = route === "titre" ? "#/marche" : `#/${route ?? ""}`;

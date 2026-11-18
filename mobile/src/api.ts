@@ -23,7 +23,8 @@ export interface SectorMedian {
 export interface Facteur { feature: string; label: string; valeur: number | null; impact: number }
 export interface Signal { symbol: string; kind: string; date: string; proba_hausse: number; facteurs: Facteur[] }
 export interface ModelRun {
-  kind: "actions" | "etf"; trained_at: string; accuracy: number | null; baseline: number | null;
+  kind: string; // "actions" | "etf" | "horizon_court" | "horizon_6m" | "horizon_1a"
+  trained_at: string; accuracy: number | null; baseline: number | null;
   gain_pts: number | null; verdict: "aucun" | "bruit" | "signal";
   importance: { feature: string; label: string; importance: number }[];
   diagnostics: any;
@@ -45,6 +46,7 @@ export interface PortefeuilleReco {
   titres?: Record<string, { nom: string; secteur: string | null; prix: number | null; rendement_1y: number; volatilite: number }>;
   univers?: { symbols: string[]; mu_hist: number[]; beta: number[]; cov: number[][]; jours: number };
 }
+export interface ScoreHorizon { symbol: string; horizon: "court" | "6m" | "1a"; score: number; date: string }
 export interface SyncLog { started_at: string; finished_at: string | null; status: string; message: string | null }
 export interface PricePoint { symbol: string; date: string; close: number }
 export interface SpreadPoint { serie_id: string; date: string; valeur: number }
@@ -123,6 +125,9 @@ export const api = {
     return data as PortefeuilleReco | null;
   }, null),
 
+  scores: (horizon: "court" | "6m" | "1a") => cached<ScoreHorizon[]>(`scores:${horizon}`,
+    () => selectAll((a, b) => sb!.from("scores_horizon").select("*").eq("horizon", horizon).order("symbol").range(a, b)), []),
+
   signal: (symbol: string) => cached<Signal | null>(`signal:${symbol}`, async () => {
     const { data, error } = await sb!.from("signals").select("*").eq("symbol", symbol).maybeSingle();
     if (error) throw new Error(error.message);
@@ -149,4 +154,19 @@ export function toggleFavori(s: string): string[] {
   const next = f.includes(s) ? f.filter((x) => x !== s) : [...f, s];
   try { localStorage.setItem(FAV_KEY, JSON.stringify(next)); } catch { /* ignore */ }
   return next;
+}
+
+/** Demande un nouveau calcul (synchro + ré-entraînement des modèles) via la fonction Supabase. */
+export async function relancerCalcul(): Promise<{ ok: boolean; message: string }> {
+  if (!sb) return { ok: false, message: "Appli non configurée." };
+  const { data, error } = await sb.functions.invoke("relancer-calcul", { method: "POST" });
+  if (error) {
+    // Les réponses 4xx/5xx de la fonction contiennent un message lisible
+    try {
+      const corps = await (error as any).context?.json?.();
+      if (corps?.message) return { ok: false, message: corps.message };
+    } catch { /* ignore */ }
+    return { ok: false, message: error.message };
+  }
+  return data as { ok: boolean; message: string };
 }
