@@ -9,7 +9,7 @@ import { Risk } from "./screens/Risk";
 import { Calculs } from "./screens/Calculs";
 import { Progression } from "./screens/Progression";
 import { Settings } from "./screens/Settings";
-import { estNatif, installer, type MiseAJour, verifierMiseAJour } from "./update";
+import { MiseAJourDialogue, verifierAuLancement } from "./screens/MiseAJourDialogue";
 
 // Routage par hash (#/marche, #/titre/AAPL...) : marche à l'identique dans
 // l'APK, sur GitHub Pages et en local, sans configuration serveur.
@@ -35,17 +35,8 @@ const TABS = [
 
 export function App() {
   const hash = useHash();
-  const [maj, setMaj] = useState<MiseAJour | null>(null);
-
-  // Mise à jour automatique : vérification au démarrage et au retour dans l'appli
-  // (au plus toutes les 6 h), uniquement dans l'APK.
-  useEffect(() => {
-    if (!estNatif()) return;
-    const verifier = () => verifierMiseAJour().then((m) => m && setMaj(m)).catch(() => {});
-    verifier();
-    const sub = CapApp.addListener("resume", verifier).catch(() => null);
-    return () => { sub.then((x) => x?.remove()); };
-  }, []);
+  // Mise à jour (APK uniquement) : vérifiée une fois par lancement, proposée dans une fenêtre
+  useEffect(() => { verifierAuLancement(); }, []);
 
   // Bouton retour Android : remonte l'historique, quitte l'appli depuis l'accueil
   useEffect(() => {
@@ -71,13 +62,7 @@ export function App() {
     <div class="app">
       {!configured && <div class="note warn top">Build sans configuration Supabase : définir VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY.</div>}
       <Progression />
-      {maj && (
-        <div class="banniere-maj" role="status">
-          <span>Nouvelle version <b>{maj.version}</b> disponible</span>
-          <button onClick={() => installer(maj)}>Installer</button>
-          <button class="fermer" aria-label="Plus tard" onClick={() => setMaj(null)}>✕</button>
-        </div>
-      )}
+      <MiseAJourDialogue />
       <main>{screen}</main>
       <nav class="tabbar" aria-label="Navigation principale">
         {TABS.map((t) => {

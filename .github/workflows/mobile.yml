@@ -73,6 +73,11 @@ jobs:
           # Android 11+ : déclarer l'appli Trade Republic pour pouvoir l'ouvrir depuis Thésée
           sed -i 's#</manifest>#    <queries><package android:name="de.traderepublic.app" /></queries>\n</manifest>#' android/app/src/main/AndroidManifest.xml
           grep -q "de.traderepublic.app" android/app/src/main/AndroidManifest.xml
+          # Mise à jour intégrée (comme Sisyphe) : plugin natif + droit d'ouvrir l'installeur
+          cp native/MiseAJourPlugin.java native/MainActivity.java android/app/src/main/java/com/thesee/app/
+          sed -i 's#<uses-permission android:name="android.permission.INTERNET" />#&\n    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />#' android/app/src/main/AndroidManifest.xml
+          grep -q "REQUEST_INSTALL_PACKAGES" android/app/src/main/AndroidManifest.xml
+          grep -q "cache-path" android/app/src/main/res/xml/file_paths.xml
           # Numéro de version croissant = numéro du run -> Android accepte la mise à jour
           sed -i "s/versionCode 1$/versionCode ${{ github.run_number }}/; s/versionName \"1.0\"/versionName \"1.${{ github.run_number }}\"/" android/app/build.gradle
 

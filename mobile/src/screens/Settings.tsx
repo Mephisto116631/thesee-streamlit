@@ -6,7 +6,8 @@ import { frontiere, type Univers } from "../optim";
 import { bornesDefaut, definirBornes, type Range, RANGES } from "../ranges";
 import { Relance } from "./Relance";
 import { ecrireParametres, nbModifies, PARAMETRES_DEFAUT, type Parametres, PRESET_TRADE_REPUBLIC, useParametres } from "../settings";
-import { BUILD, estNatif, installer, type MiseAJour, VERSION, verifierMiseAJour } from "../update";
+import { BUILD, definirTelechargementAuto, estNatif, mo, tailleCache, telechargementAuto, VERSION, verifierMiseAJour, viderCache } from "../update";
+import { proposerMiseAJour } from "./MiseAJourDialogue";
 
 /** Champ numérique : la valeur stockée est une fraction, affichée en % si `pctAff`. */
 function Champ({ label, aide, k, p, pctAff = true, min, max, pas, decimales = 2 }: {
@@ -45,16 +46,18 @@ export function Settings() {
   const u = reco.data?.univers as Univers | undefined;
   const apercu = useMemo(() => (u ? frontiere(u, p, 10) : []), [u, p.tauxSansRisque, p.primeRisque, p.poidsHistorique, p.poidsMax, p.nMaxLignes, p.poidsMin]);
   const impossible = p.poidsMax * p.nMaxLignes < 1 - 1e-9;
-  const [maj, setMaj] = useState<{ etat: "idle" | "cherche" | "ok" | "dispo" | "erreur"; info?: MiseAJour; msg?: string }>({ etat: "idle" });
+  const [maj, setMaj] = useState<{ etat: "idle" | "cherche" | "ok" | "erreur"; msg?: string }>({ etat: "idle" });
+  const [auto, setAuto] = useState(telechargementAuto());
+  const [cache, setCache] = useState(0);
+  useEffect(() => { tailleCache().then(setCache); }, [maj.etat]);
 
   const verifier = async () => {
     setMaj({ etat: "cherche" });
     try {
-      const m = await verifierMiseAJour(true);
-      setMaj(m ? { etat: "dispo", info: m } : { etat: "ok" });
+      const m = await verifierMiseAJour();
+      if (m) { setMaj({ etat: "idle" }); proposerMiseAJour(m); } else setMaj({ etat: "ok" });
     } catch (e: any) { setMaj({ etat: "erreur", msg: e?.message ?? String(e) }); }
   };
-  useEffect(() => { /* rien au montage : la vérification auto est faite par l'appli */ }, []);
 
   return (
     <div class="screen">
@@ -166,13 +169,19 @@ export function Settings() {
         <button class="more" onClick={verifier} disabled={maj.etat === "cherche"}>
           {maj.etat === "cherche" ? "Recherche…" : "Vérifier les mises à jour"}
         </button>
-        {maj.etat === "ok" && <p class="hint">Tu as la dernière version.</p>}
+        {maj.etat === "ok" && <p class="hint">{BUILD === "dev" ? "Build de développement : mise à jour désactivée." : `Thésée est à jour (${VERSION}).`}</p>}
         {maj.etat === "erreur" && <div class="note warn">Vérification impossible : {maj.msg}</div>}
-        {maj.etat === "dispo" && maj.info && (
-          <div class="note">Version {maj.info.version} disponible ({dateFr(maj.info.date)}).
-            <button class="more" onClick={() => installer(maj.info!)}>Télécharger et installer</button></div>
-        )}
-        <p class="hint">L'appli vérifie seule au démarrage (toutes les 6 h au plus). Build {BUILD}.</p>
+        {estNatif() ? (
+          <>
+            <label class="toggle">
+              <input type="checkbox" checked={auto} onChange={(e) => { const v = (e.target as HTMLInputElement).checked; setAuto(v); definirTelechargementAuto(v); }} />
+              Télécharger automatiquement les mises à jour au lancement (installation ensuite en un appui)
+            </label>
+            <p class="hint">Fichiers de mise à jour : {cache ? mo(cache) : "0 Mo"}
+              {cache > 0 && <> — <button class="link" onClick={async () => { await viderCache(); setCache(await tailleCache()); }}>libérer</button></>}</p>
+            <p class="hint">L'appli vérifie à chaque lancement et propose la nouvelle version dans une fenêtre. Build {BUILD}.</p>
+          </>
+        ) : <p class="hint">Version web : elle se met à jour toute seule au rechargement de la page. Build {BUILD}.</p>}
         <button class="link" onClick={() => { if (confirm("Remettre toutes les hypothèses par défaut ?")) ecrireParametres(null); }}>
           Remettre toutes les hypothèses par défaut</button>
       </Card>
