@@ -128,8 +128,19 @@ const VERDICT_H: Record<string, { ton: string; nom: string; txt: string }> = {
 const LIBELLES_CONFIG: Record<string, string> = {
   xgb_prudent: "XGB prudent", xgb_standard: "XGB standard", xgb_riche: "XGB riche", lineaire: "Linéaire",
 };
+// Sens de lecture des facteurs surveillés : [valeur élevée, valeur faible]
+const SENS: Record<string, [string, string, string]> = {
+  vol_3m: ["Volatilité 3 mois", "les plus volatils", "les plus calmes"],
+  vol_idio: ["Volatilité propre (hors marché)", "les plus agités", "les plus réguliers"],
+  liquidite: ["Taille (montants échangés)", "les plus grandes valeurs", "les plus petites valeurs"],
+  beta_1a: ["Bêta (sensibilité au marché)", "les plus sensibles au marché", "les moins sensibles"],
+  max_1m: ["Effet « loterie »", "ceux qui ont fait un gros bond d'un jour", "ceux sans gros bond"],
+};
+const sens = (f: string, x: number | null | undefined, seuil: number) =>
+  x == null || Math.abs(x) < seuil ? "ni l'un ni l'autre" : x > 0 ? SENS[f][1] : SENS[f][2];
+
 const SOURCES: Record<string, string> = {
-  modele: "modèle IA (XGBoost)",
+  modele: "modèle IA (XGBoost, « eXtreme Gradient Boosting » : une suite d'arbres de décision qui corrigent chacun les erreurs des précédents)",
   momentum: "momentum 12-1 mois (ce qui a le plus monté sur un an, hors dernier mois)",
   multifacteurs: "score multi-facteurs (momentum + faible volatilité + proximité du plus haut 1 an)",
 };
@@ -157,8 +168,10 @@ function HorizonView({ m }: { m: ModelRun }) {
           <Stat label="IC momentum" value={num(d.ic_momentum, 3)} sub={`t = ${num(d.t_momentum, 1)}`} tone={d.source === "momentum" ? v.ton : "neutral"} />
           <Stat label="IC multi-facteurs" value={num(d.ic_multifacteurs, 3)} sub={`t = ${num(d.t_multifacteurs, 1)}`} tone={d.source === "multifacteurs" ? v.ton : "neutral"} />
         </div>
-        <p class="hint">L'<b>IC</b> (coefficient d'information) mesure, date par date, si les titres classés en tête ont réellement fait mieux
-          que les autres sur les {d.horizon_jours} jours de bourse suivants (corrélation de rang, de −1 à +1). En gestion, un IC de 0,05 stable est déjà bon.</p>
+        <p class="hint">L'<b>IC</b> (« Information Coefficient », coefficient d'information) mesure, date par date, si les titres classés en tête ont réellement fait mieux
+          que les autres sur les {d.horizon_jours} jours de bourse suivants (corrélation de rang, de −1 à +1). En gestion, un IC de 0,05 stable est déjà bon.
+          Le <b>t</b> (statistique de Student) dit si l'IC moyen se distingue du hasard : plus il est grand, moins le résultat
+          peut être un coup de chance.</p>
       </Card>
 
       {q.length === 5 && (
@@ -180,6 +193,28 @@ function HorizonView({ m }: { m: ModelRun }) {
         ))}</ul>
       </Card>
 
+      {d.controles && (
+        <Card title="Contrôles anti-biais">
+          <table class="table small">
+            <thead><tr><th>Facteur</th><th>Le modèle favorise</th><th>En réalité, ont fait mieux</th></tr></thead>
+            <tbody>{Object.keys(SENS).filter((f) => d.controles.facteurs?.[f]).map((f) => {
+              const c = d.controles.facteurs[f];
+              return <tr><td>{SENS[f][0]}</td>
+                <td>{sens(f, c.modele, 0.05)} <small class="muted">({num(c.modele, 2)})</small></td>
+                <td>{sens(f, c.realite, 0.01)} <small class="muted">(IC {num(c.realite, 3)})</small></td></tr>;
+            })}</tbody>
+          </table>
+          <div class="stats">
+            <Stat label="IC chez les grandes valeurs" value={num(d.controles.ic_grandes, 3)} tone={(d.controles.ic_grandes ?? 0) > 0.02 ? "good" : "neutral"} />
+            <Stat label="IC chez les petites valeurs" value={num(d.controles.ic_petites, 3)} tone="neutral" />
+          </div>
+          <p class="hint">Les cours des entreprises disparues (faillites) manquent : ce sont surtout des petites valeurs très volatiles.
+            Si le modèle favorise les titres <b>petits et volatils</b> et ne marche que chez les petites valeurs, son résultat est suspect.
+            S'il marche aussi chez les <b>grandes valeurs</b> (moitié la plus échangée, rarement disparue par faillite), il est plus crédible.
+            Colonne « modèle » : corrélation entre le score et le facteur (de −1 à +1).</p>
+        </Card>
+      )}
+
       <Card>
         <Details summary="Détails de l'évaluation">
           <table class="table small">
@@ -190,7 +225,7 @@ function HorizonView({ m }: { m: ModelRun }) {
             avec un écart de {d.horizon_jours} jours de bourse entre les deux pour qu'il ne voie jamais le futur. {d.n_dates_test} dates testées,
             soit environ {num(d.n_effectif, 0)} observations indépendantes (les périodes de {d.horizon_jours} jours de bourse se chevauchent).
             {d.composition_historique
-              ? <> À chaque date, seuls les titres réellement dans le S&P 500 ce jour-là sont pris en compte (~{num(d.titres_par_date, 0)} par date). Les titres disparus depuis (faillites, rachats) n'ont plus de cours chez Yahoo : les résultats restent un peu optimistes.</>
+              ? <> À chaque date, seuls les titres réellement dans le S&P 500 (« Standard & Poor's 500 », les 500 grandes entreprises américaines) ce jour-là sont pris en compte (~{num(d.titres_par_date, 0)} par date). Les titres disparus depuis (faillites, rachats) n'ont plus de cours chez Yahoo : les résultats restent un peu optimistes.</>
               : <> Univers = composition actuelle de l'indice : les titres disparus ou entrés depuis faussent le test (biais du survivant), les résultats sont donc optimistes.</>}</p>
         </Details>
       </Card>

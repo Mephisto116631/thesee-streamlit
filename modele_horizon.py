@@ -55,7 +55,7 @@ LABELS = {
     "rev_1m": "Performance du dernier mois",
     "vol_3m": "Volatilité 3 mois",
     "ecart_mm200": "Écart à la moyenne 200 j",
-    "rsi_14": "RSI 14 j",
+    "rsi_14": "RSI 14 j (Relative Strength Index, force relative)",
     "dist_plus_haut": "Distance au plus haut 1 an",
     "beta_1a": "Bêta 1 an (sensibilité au marché)",
     "tendance_volume": "Volume récent vs habituel",
@@ -200,6 +200,39 @@ def _ic_par_date(df: pd.DataFrame, col: str) -> pd.Series:
                                     include_groups=False).dropna()
 
 
+def _corr_par_date(df: pd.DataFrame, a: str, b: str) -> pd.Series:
+    """Corrélation de rang (Spearman) entre deux colonnes, date par date."""
+    return df.groupby("date").apply(lambda g: g[a].rank().corr(g[b].rank()) if len(g) > 10 else np.nan,
+                                    include_groups=False).dropna()
+
+
+FACTEURS_SURVEILLES = ["vol_3m", "vol_idio", "liquidite", "beta_1a", "max_1m"]
+
+
+def sens_facteurs(t: pd.DataFrame) -> dict:
+    """Contrôles anti-biais sur les périodes de test.
+    - modele : corrélation entre le score du modèle et chaque facteur (> 0 = le modèle
+      favorise les titres où ce facteur est élevé : plus volatils, plus grands...).
+    - realite : IC du facteur seul (> 0 = ces titres ont réellement fait mieux).
+    - quintiles : rendement relatif moyen par quintile du facteur (1 = plus faible).
+    - ic_grandes / ic_petites : IC du modèle parmi la moitié la plus liquide (grandes valeurs,
+      rarement disparues par faillite) et parmi l'autre moitié. Si le modèle ne marche que
+      chez les petites, le biais du survivant restant est suspect."""
+    out = {"facteurs": {}}
+    for f in FEATURES:
+        out["facteurs"][f] = {
+            "modele": float(_corr_par_date(t, "pred", f).mean()),
+            "realite": float(_ic_par_date(t, f).mean()),
+        }
+    for f in FACTEURS_SURVEILLES:
+        q = t.groupby("date")[f].transform(lambda x: pd.qcut(x.rank(method="first"), 5, labels=False))
+        out["facteurs"][f]["quintiles"] = [float(t.loc[q == i, "rel"].mean()) for i in range(5)]
+    grande = t.groupby("date")["liquidite"].transform(lambda x: x >= x.median())
+    out["ic_grandes"] = float(_ic_par_date(t[grande], "pred").mean())
+    out["ic_petites"] = float(_ic_par_date(t[~grande], "pred").mean())
+    return out
+
+
 def evaluer(data: pd.DataFrame, h: int) -> dict:
     """Walk-forward avec embargo de h jours entre entraînement et test."""
     dates = np.sort(data["date"].unique())
@@ -252,6 +285,7 @@ def evaluer(data: pd.DataFrame, h: int) -> dict:
         "debut_donnees": str(pd.Timestamp(dates[0]).date()),
         "debut_test": str(pd.Timestamp(t["date"].min()).date()),
         "fenetres": fenetres,
+        "controles": sens_facteurs(t),
     }
 
 
