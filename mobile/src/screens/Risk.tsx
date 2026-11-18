@@ -125,6 +125,9 @@ const VERDICT_H: Record<string, { ton: string; nom: string; txt: string }> = {
   aucun: { ton: "bad", nom: "Aucun avantage", txt: "Pas de lien mesurable entre le classement et les performances réelles : ne pas s'en servir." },
 };
 
+const LIBELLES_CONFIG: Record<string, string> = {
+  xgb_prudent: "XGB prudent", xgb_standard: "XGB standard", xgb_riche: "XGB riche", lineaire: "Linéaire",
+};
 const SOURCES: Record<string, string> = {
   modele: "modèle IA (XGBoost)",
   momentum: "momentum 12-1 mois (ce qui a le plus monté sur un an, hors dernier mois)",
@@ -146,7 +149,9 @@ function HorizonView({ m }: { m: ModelRun }) {
         <p class="verdict"><span class={`badge ${v.ton}`}>{v.nom}</span> {v.txt}</p>
         <div class="note">Classement utilisé : <b>{SOURCES[d.source as string] ?? "modèle IA"}</b>.
           {d.source !== "modele" && " Le modèle IA (XGBoost) a fait moins bien en test : il reste entraîné à chaque calcul et reprendra la main s'il devient meilleur."}
-          {d.debut_test && <> Testé depuis {dateFr(d.debut_test)} (données depuis {dateFr(d.debut_donnees)}) : environ {num(d.n_effectif, 0)} périodes indépendantes.</>}</div>
+          {d.debut_test && <> Testé depuis {dateFr(d.debut_test)} (données depuis {dateFr(d.debut_donnees)}) : environ {num(d.n_effectif, 0)} périodes indépendantes.</>}
+          {d.seuil_t != null && <> « Signal » exige t &gt; {num(d.seuil_t, 1)} (seuil relevé : peu de périodes et meilleur de 3 classements).</>}
+          {d.config_libelle && <> Réglage du modèle IA : {d.config_libelle}, choisi sur le passé uniquement.</>}</div>
         <div class="stats">
           <Stat label="IC modèle IA" value={num(d.ic_moyen, 3)} sub={`t = ${num(d.t_stat, 1)}`} tone={d.source === "modele" ? v.ton : "neutral"} />
           <Stat label="IC momentum" value={num(d.ic_momentum, 3)} sub={`t = ${num(d.t_momentum, 1)}`} tone={d.source === "momentum" ? v.ton : "neutral"} />
@@ -178,8 +183,8 @@ function HorizonView({ m }: { m: ModelRun }) {
       <Card>
         <Details summary="Détails de l'évaluation">
           <table class="table small">
-            <thead><tr><th>Période de test</th><th>IC</th><th>Dates</th></tr></thead>
-            <tbody>{(d.fenetres ?? []).map((f: any) => <tr><td>{dateFr(f.debut)} → {dateFr(f.fin)}</td><td class={signClass(f.ic)}>{num(f.ic, 3)}</td><td>{f.n_dates}</td></tr>)}</tbody>
+            <thead><tr><th>Période de test</th><th>IC</th><th>Dates</th><th>Réglage</th></tr></thead>
+            <tbody>{(d.fenetres ?? []).map((f: any) => <tr><td>{dateFr(f.debut)} → {dateFr(f.fin)}</td><td class={signClass(f.ic)}>{num(f.ic, 3)}</td><td>{f.n_dates}</td><td class="muted">{LIBELLES_CONFIG[f.config] ?? "—"}</td></tr>)}</tbody>
           </table>
           <p class="hint">Validation « walk-forward » : le modèle est entraîné sur le passé puis testé sur la période suivante,
             avec un écart de {d.horizon_jours} jours de bourse entre les deux pour qu'il ne voie jamais le futur. {d.n_dates_test} dates testées,

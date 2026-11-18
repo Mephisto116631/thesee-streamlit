@@ -299,7 +299,8 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
     for k, nom in enumerate(modele_horizon.HORIZONS):
         db.progression(65 + 10 * k, f"Modèle IA {dict(court='1 mois', **{'6m': '6 mois', '1a': '1 an'})[nom]}")
         try:
-            ligne, scores = modele_horizon.entrainer_horizon(raw_horizon, snap["symbol"].tolist(), nom, composition)
+            ligne, scores = modele_horizon.entrainer_horizon(
+                raw_horizon, snap["symbol"].tolist(), nom, composition, dict(zip(snap["symbol"], snap["secteur"])))
             if ligne:
                 db.upsert_rows("model_runs", [_clean(ligne)], on_conflict="kind")
                 db.upsert_rows("scores_horizon", _records(scores), on_conflict="symbol,horizon")

@@ -9,3 +9,4 @@ scikit-learn
 shap
 supabase
 lxml
+scipy

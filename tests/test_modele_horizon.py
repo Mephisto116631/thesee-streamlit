@@ -30,10 +30,16 @@ def test_trouve_un_signal_persistant():
 
 
 def test_n_invente_pas_de_signal():
-    raw, syms = _marche(persistance=False, seed=3)
-    ligne, _ = mh.entrainer_horizon(raw, syms, "6m")
-    assert ligne["verdict"] != "signal"
-    assert abs(ligne["diagnostics"]["ic_moyen"]) < 0.06
+    """Sur du bruit pur, le réglage choisi sur le passé ne doit pas fabriquer de signal en moyenne.
+    (Un seul tirage peut donner un IC de ±0,07 sur ce petit échantillon : on teste la moyenne.)"""
+    ics = []
+    for seed in range(5):
+        raw, syms = _marche(persistance=False, seed=seed)
+        ligne, _ = mh.entrainer_horizon(raw, syms, "6m")
+        assert ligne["verdict"] != "signal"
+        assert ligne["diagnostics"]["config"] in mh.CONFIGS
+        ics.append(ligne["diagnostics"]["ic_moyen"])
+    assert abs(np.mean(ics)) < 0.04
 
 
 def test_publie_le_meilleur_classement():
@@ -81,3 +87,11 @@ def test_fichier_composition():
     assert "BRK-B" in set(c["symbol"])                                 # format Yahoo
     tsla = c[c["symbol"] == "TSLA"].iloc[0]
     assert tsla["debut"] == pd.Timestamp("2020-12-21")
+
+
+def test_seuil_t_corrige():
+    """Peu de périodes indépendantes ou plusieurs classements comparés : seuil plus exigeant."""
+    assert mh.seuil_t(3) > mh.seuil_t(13) > mh.seuil_t(166) > 2.3      # Bonferroni sur 3 classements
+    assert mh.verdict(0.14, 2.4, 2.9) == "bruit"                        # 3 périodes : jamais « signal »
+    assert mh.verdict(0.09, 2.2, 13) == "bruit"                         # sous le seuil corrigé (~2,8)
+    assert mh.verdict(0.09, 3.5, 13) == "signal"
