@@ -95,3 +95,15 @@ def test_seuil_t_corrige():
     assert mh.verdict(0.14, 2.4, 2.9) == "bruit"                        # 3 périodes : jamais « signal »
     assert mh.verdict(0.09, 2.2, 13) == "bruit"                         # sous le seuil corrigé (~2,8)
     assert mh.verdict(0.09, 3.5, 13) == "signal"
+
+
+def test_controles_sens_facteurs():
+    raw, syms = _marche(persistance=True)
+    ligne, _ = mh.entrainer_horizon(raw, syms, "6m")
+    c = ligne["diagnostics"]["controles"]
+    assert set(c["facteurs"]) == set(mh.FEATURES)
+    for f in mh.FACTEURS_SURVEILLES:
+        assert -1 <= c["facteurs"][f]["modele"] <= 1 and len(c["facteurs"][f]["quintiles"]) == 5
+    # Tendance pure : le modèle doit suivre le momentum, et marcher chez les grandes comme les petites
+    assert c["facteurs"]["mom_12_1"]["modele"] > 0.3
+    assert c["ic_grandes"] > 0 and c["ic_petites"] > 0
