@@ -26,6 +26,11 @@ export interface SectorMedian {
 }
 export interface Facteur { feature: string; label: string; valeur: number | null; impact: number }
 export interface Signal { symbol: string; kind: string; date: string; proba_hausse: number; facteurs: Facteur[] }
+export interface Experience {
+  id: number; lot: string; nom: string; horizon: string; description: string | null;
+  ic: number | null; t_stat: number | null; seuil_t_global: number | null; n_essais: number | null;
+  verdict: string; regimes: { hausse?: { ic: number | null }; baisse?: { ic: number | null } } | null; cree_le: string;
+}
 export interface ModelRun {
   kind: string; // "actions" | "etf" | "horizon_court" | "horizon_6m" | "horizon_1a"
   trained_at: string; accuracy: number | null; baseline: number | null;
@@ -116,6 +121,14 @@ export const api = {
     const { data, error } = await sb!.from("model_runs").select("*");
     if (error) throw new Error(error.message);
     return (data ?? []) as ModelRun[];
+  }, []),
+
+  experiences: () => cached<Experience[]>("experiences", async () => {
+    const { data, error } = await sb!.from("experiences")
+      .select("id,lot,nom,horizon,description,ic,t_stat,seuil_t_global,n_essais,verdict,regimes:diagnostics->regimes,cree_le")
+      .order("id", { ascending: false }).limit(60);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Experience[];
   }, []),
 
   lastSync: () => cached<SyncLog | null>("sync", async () => {

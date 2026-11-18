@@ -112,6 +112,7 @@ function Models() {
       ) : models.loading && !mh ? <Loading /> : !mh ? (
         <div class="note">Modèle {CHOIX.find((c) => c.k === choix)?.label} pas encore entraîné : relance le calcul ci-dessous.</div>
       ) : <HorizonView m={mh} />}
+      <Laboratoire />
       <Card title="Relancer">
         <Relance />
       </Card>
@@ -303,5 +304,37 @@ function ModelView({ m }: { m: ModelRun }) {
         </Details>
       </Card>
     </>
+  );
+}
+
+/** Laboratoire : variantes du modèle essayées sans toucher aux scores publiés (experiences.py). */
+function Laboratoire() {
+  const ex = useData(api.experiences);
+  const lignes = ex.data ?? [];
+  if (!lignes.length) return null;
+  const dernier = lignes[0].lot;
+  const lot = lignes.filter((e) => e.lot === dernier).reverse();
+  const n = lot[0]?.n_essais ?? lignes.length;
+  return (
+    <Card title="Laboratoire" right={<small class="muted">essais du {dernier}</small>}>
+      <table class="table small">
+        <thead><tr><th>Variante</th><th>Horizon</th><th>IC</th><th>t / seuil</th><th>Hausse · baisse</th></tr></thead>
+        <tbody>{lot.map((e) => (
+          <tr>
+            <td><b>{e.nom}</b>{e.verdict === "probant" && <span class="badge good"> probant</span>}</td>
+            <td>{e.horizon === "1a" ? "1 an" : e.horizon === "6m" ? "6 mois" : e.horizon}</td>
+            <td class={signClass(e.ic)}>{num(e.ic, 3)}</td>
+            <td>{num(e.t_stat, 1)} / {num(e.seuil_t_global, 1)}</td>
+            <td><span class={signClass(e.regimes?.hausse?.ic)}>{num(e.regimes?.hausse?.ic, 3)}</span> · <span class={signClass(e.regimes?.baisse?.ic)}>{num(e.regimes?.baisse?.ic, 3)}</span></td>
+          </tr>
+        ))}</tbody>
+      </table>
+      <p class="hint">Variantes du modèle testées à part : les scores publiés ne changent pas.
+        <b> reference</b> = modèle publié ; <b>alpha</b> = cible ajustée du bêta (alpha de Jensen : rendement − bêta × marché,
+        ce qui reste une fois le risque de marché retiré) ; <b>alpha_secteur</b> = idem, comparé aux titres du même secteur.
+        « Hausse · baisse » : IC (Information Coefficient) quand le marché a monté ou baissé sur l'horizon.
+        Une variante n'est « probante » que si son t dépasse un seuil corrigé des {n} essais faits jusqu'ici :
+        plus on essaie, plus le hasard finit par en faire gagner une.</p>
+    </Card>
   );
 }

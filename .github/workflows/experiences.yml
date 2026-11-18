@@ -1,0 +1,36 @@
+name: Laboratoire — essais du modèle
+
+# Essaie des variantes du modèle « horizon » et enregistre les résultats dans la
+# table `experiences`, sans toucher aux scores publiés dans l'appli.
+# Lancé à la main (onglet Actions) ou automatiquement sur une PR qui modifie le modèle.
+on:
+  pull_request:
+    paths: ["experiences.py", "modele_horizon.py", ".github/workflows/experiences.yml"]
+  workflow_dispatch:
+    inputs:
+      experiences:
+        description: "Expériences à lancer (ex. alpha,alpha_secteur), ou « toutes »"
+        default: "toutes"
+        required: false
+
+concurrency:
+  group: experiences
+  cancel-in-progress: false
+
+jobs:
+  labo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - name: Essais
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          EXPERIENCES: ${{ inputs.experiences }}
+        run: python experiences.py
