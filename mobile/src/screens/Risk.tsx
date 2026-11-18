@@ -120,9 +120,15 @@ function Models() {
 }
 
 const VERDICT_H: Record<string, { ton: string; nom: string; txt: string }> = {
-  signal: { ton: "good", nom: "Signal", txt: "Le classement du modèle a été nettement et régulièrement lié aux performances réelles, et mieux que le simple momentum." },
-  bruit: { ton: "neutral", nom: "Faible", txt: "Léger lien avec la réalité, mais pas assez net ou pas meilleur que le momentum seul : à prendre comme un indice, pas une décision." },
+  signal: { ton: "good", nom: "Signal", txt: "Le classement utilisé a été nettement et régulièrement lié aux performances réelles en test." },
+  bruit: { ton: "neutral", nom: "Faible", txt: "Léger lien avec la réalité, pas assez net pour être fiable : à prendre comme un indice, pas une décision." },
   aucun: { ton: "bad", nom: "Aucun avantage", txt: "Pas de lien mesurable entre le classement et les performances réelles : ne pas s'en servir." },
+};
+
+const SOURCES: Record<string, string> = {
+  modele: "modèle IA (XGBoost)",
+  momentum: "momentum 12-1 mois (ce qui a le plus monté sur un an, hors dernier mois)",
+  multifacteurs: "score multi-facteurs (momentum + faible volatilité + proximité du plus haut 1 an)",
 };
 
 /** Modèle « horizon » : classement relatif des titres, évalué par l'IC. */
@@ -131,29 +137,32 @@ function HorizonView({ m }: { m: ModelRun }) {
   const v = VERDICT_H[m.verdict] ?? VERDICT_H.aucun;
   const imp = m.importance ?? [];
   const maxImp = Math.max(1e-9, ...imp.map((x) => x.importance));
+  const totImp = Math.max(1e-9, imp.reduce((a, x) => a + x.importance, 0));
   const q: number[] = d.rendement_par_quintile ?? [];
   const maxQ = Math.max(1e-9, ...q.map((x) => Math.abs(x ?? 0)));
   return (
     <>
       <Card title="Verdict" class={`edge-${v.ton}`} right={<small class="muted">entraîné {ilYA(m.trained_at)}</small>}>
         <p class="verdict"><span class={`badge ${v.ton}`}>{v.nom}</span> {v.txt}</p>
+        <div class="note">Classement utilisé : <b>{SOURCES[d.source as string] ?? "modèle IA"}</b>.
+          {d.source !== "modele" && " Le modèle IA (XGBoost) a fait moins bien en test : il reste entraîné à chaque calcul et reprendra la main s'il devient meilleur."}</div>
         <div class="stats">
-          <Stat label="IC moyen" value={num(d.ic_moyen, 3)} sub="0 = hasard · > 0,03 = utile" tone={v.ton} />
-          <Stat label="Fiabilité (t)" value={num(d.t_stat, 1)} sub="> 2 = net" tone={(d.t_stat ?? 0) > 2 ? "good" : "neutral"} />
-          <Stat label="Momentum seul" value={num(d.ic_momentum, 3)} sub="règle simple à battre" tone="neutral" />
+          <Stat label="IC modèle IA" value={num(d.ic_moyen, 3)} sub={`t = ${num(d.t_stat, 1)}`} tone={d.source === "modele" ? v.ton : "neutral"} />
+          <Stat label="IC momentum" value={num(d.ic_momentum, 3)} sub={`t = ${num(d.t_momentum, 1)}`} tone={d.source === "momentum" ? v.ton : "neutral"} />
+          <Stat label="IC multi-facteurs" value={num(d.ic_multifacteurs, 3)} sub={`t = ${num(d.t_multifacteurs, 1)}`} tone={d.source === "multifacteurs" ? v.ton : "neutral"} />
         </div>
         <p class="hint">L'<b>IC</b> (coefficient d'information) mesure, date par date, si les titres classés en tête ont réellement fait mieux
-          que les autres sur les {d.horizon_jours} séances suivantes (corrélation de rang, de −1 à +1). En gestion, un IC de 0,05 stable est déjà bon.</p>
+          que les autres sur les {d.horizon_jours} jours de bourse suivants (corrélation de rang, de −1 à +1). En gestion, un IC de 0,05 stable est déjà bon.</p>
       </Card>
 
       {q.length === 5 && (
-        <Card title="Performance relative par quintile">
+        <Card title="Performance relative par quintile (modèle IA)">
           <ul class="imp">{q.map((x, i) => (
             <li><span>{["Q1 (les moins bien classés)", "Q2", "Q3", "Q4", "Q5 (les mieux classés)"][i]}</span>
               <div class="qbar"><div class={x >= 0 ? "pos" : "neg"} style={{ width: `${(Math.abs(x) / maxQ) * 50}%`, [x >= 0 ? "left" : "right"]: "50%" }} /></div>
               <b class={signClass(x)}>{pct(x, 1)}</b></li>
           ))}</ul>
-          <p class="hint">Rendement moyen par rapport à la médiane, sur {d.horizon_jours} séances, en période de test.
+          <p class="hint">Rendement moyen par rapport à la médiane, sur {d.horizon_jours} jours de bourse, en période de test.
             Écart Q5 − Q1 : <b>{pct(d.spread_quintiles, 1)}</b>. Les titres du top quintile ont battu la médiane
             {d.taux_reussite_top != null && <> dans <b>{pct(d.taux_reussite_top, 0, false)}</b> des cas</>}.</p>
         </Card>
@@ -161,7 +170,7 @@ function HorizonView({ m }: { m: ModelRun }) {
 
       <Card title="Ce qui compte pour le modèle">
         <ul class="imp">{imp.map((x) => (
-          <li><span>{x.label}</span><div class="wbar"><div style={{ width: `${(x.importance / maxImp) * 100}%` }} /></div></li>
+          <li><span>{x.label}</span><div class="wbar"><div style={{ width: `${(x.importance / maxImp) * 100}%` }} /></div><b class="imp-val">{pct(x.importance / totImp, 0, false)}</b></li>
         ))}</ul>
       </Card>
 
@@ -172,8 +181,8 @@ function HorizonView({ m }: { m: ModelRun }) {
             <tbody>{(d.fenetres ?? []).map((f: any) => <tr><td>{dateFr(f.debut)} → {dateFr(f.fin)}</td><td class={signClass(f.ic)}>{num(f.ic, 3)}</td><td>{f.n_dates}</td></tr>)}</tbody>
           </table>
           <p class="hint">Validation « walk-forward » : le modèle est entraîné sur le passé puis testé sur la période suivante,
-            avec un écart de {d.horizon_jours} séances entre les deux pour qu'il ne voie jamais le futur. {d.n_dates_test} dates testées,
-            soit environ {num(d.n_effectif, 0)} observations indépendantes (les périodes de {d.horizon_jours} séances se chevauchent).</p>
+            avec un écart de {d.horizon_jours} jours de bourse entre les deux pour qu'il ne voie jamais le futur. {d.n_dates_test} dates testées,
+            soit environ {num(d.n_effectif, 0)} observations indépendantes (les périodes de {d.horizon_jours} jours de bourse se chevauchent).</p>
         </Details>
       </Card>
     </>
@@ -184,6 +193,7 @@ function ModelView({ m }: { m: ModelRun }) {
   const d = m.diagnostics ?? {};
   const imp = m.importance ?? [];
   const maxImp = Math.max(1e-9, ...imp.map((x) => x.importance));
+  const totImp = Math.max(1e-9, imp.reduce((a, x) => a + x.importance, 0));
   const wf = d.walk_forward;
   return (
     <>
@@ -199,7 +209,7 @@ function ModelView({ m }: { m: ModelRun }) {
 
       <Card title="Facteurs les plus utilisés">
         <ul class="imp">{imp.slice(0, 10).map((x) => (
-          <li><span>{x.label}</span><div class="wbar"><div style={{ width: `${(x.importance / maxImp) * 100}%` }} /></div></li>
+          <li><span>{x.label}</span><div class="wbar"><div style={{ width: `${(x.importance / maxImp) * 100}%` }} /></div><b class="imp-val">{pct(x.importance / totImp, 0, false)}</b></li>
         ))}</ul>
       </Card>
 

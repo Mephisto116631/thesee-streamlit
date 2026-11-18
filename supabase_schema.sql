@@ -273,3 +273,28 @@ do $$ begin
         create policy "lecture publique" on scores_horizon for select to anon, authenticated using (true);
     end if;
 end $$;
+
+-- V7 — Progression du passage en cours (barre de progression de l'appli)
+alter table sync_log add column if not exists progression integer default 0;
+alter table sync_log add column if not exists etape text;
+
+-- V8 — Positions de l'utilisateur (connexion e-mail + mot de passe). Chacun ne voit que les siennes.
+create table if not exists positions (
+    id              uuid primary key default gen_random_uuid(),
+    user_id         uuid not null default auth.uid() references auth.users (id) on delete cascade,
+    symbol          text not null,
+    quantite        double precision not null check (quantite > 0),
+    prix_achat_eur  double precision check (prix_achat_eur >= 0),
+    frais_eur       double precision not null default 0 check (frais_eur >= 0),
+    date_achat      date not null default current_date,
+    note            text,
+    created_at      timestamptz not null default now()
+);
+create index if not exists idx_positions_user on positions (user_id);
+alter table positions enable row level security;
+do $$ begin
+    if not exists (select 1 from pg_policies where schemaname='public' and tablename='positions' and policyname='positions du proprietaire') then
+        create policy "positions du proprietaire" on positions for all to authenticated
+            using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
+    end if;
+end $$;

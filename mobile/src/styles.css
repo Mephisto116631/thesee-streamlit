@@ -380,3 +380,34 @@ input[type="range"] { width: 100%; margin: 10px 0 2px; accent-color: var(--accen
 .qbar > .pos { background: var(--up); }
 .qbar > .neg { background: var(--down); }
 .imp li:has(.qbar) { grid-template-columns: minmax(0, 1.3fr) 1fr auto; }
+
+/* ---- Barres de progression ----------------------------------------------- */
+.barre-chargement {
+  position: fixed; top: env(safe-area-inset-top); left: 0; right: 0; height: 3px; z-index: 30; overflow: hidden;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent); background-size: 40% 100%;
+  background-repeat: no-repeat; animation: glisse 1.1s ease-in-out infinite;
+}
+@keyframes glisse { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+.barre-serveur {
+  position: sticky; top: 0; z-index: 14; background: var(--card); border-bottom: 1px solid var(--border);
+  padding: calc(4px + env(safe-area-inset-top)) 12px 5px;
+}
+.barre-serveur-piste { height: 4px; background: var(--card2); border-radius: 2px; overflow: hidden; }
+.barre-serveur-rempli { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.8s ease; }
+.barre-serveur-texte { display: block; font-size: 11.5px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Étiquettes de données sur les barres d'importance */
+.imp li { grid-template-columns: minmax(0, 1.2fr) 1fr auto; }
+.imp-val { font-size: 12px; min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- Ordres, positions ---------------------------------------------------- */
+.actions-ordres { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.actions-ordres .more { flex: 1 1 140px; margin: 0; }
+.copier { background: var(--card2); border: 1px solid var(--border); border-radius: 8px; width: 34px; height: 30px; color: var(--accent); }
+.liste-achats { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.liste-achats li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.liste-achats .edition { display: flex; gap: 6px; align-items: center; }
+.liste-achats .edition input { width: 84px; min-height: 34px; padding: 4px 6px; }
+.form-position .reglages { margin-top: 8px; }
+.form-position .more { margin-top: 10px; }
+.link.down { color: var(--down); }

@@ -79,6 +79,9 @@ def _sync_incremental(tickers: list[str], table: str) -> pd.DataFrame:
         db.upsert_market_data(a_ecrire, table=table)
         n_ecrites += len(a_ecrire)
         st.info(f"{table} : {min(i + batch_size, len(tickers))}/{len(tickers)} tickers — {len(a_ecrire)} lignes écrites")
+        if table == "market_data":  # 5 % -> 30 % de la barre de progression
+            db.progression(5 + int(25 * min(i + batch_size, len(tickers)) / len(tickers)),
+                           f"Cours : {min(i + batch_size, len(tickers))}/{len(tickers)} titres")
 
     st.info(f"{table} : {n_ecrites} lignes écrites au total")
     if not frames:
@@ -774,6 +777,7 @@ def get_all_data(univers_etendu: list[str] = None, telecharger: bool = False):
     etape.info("Étape 2/4 — Synchronisation des données macro (VIX, SPY)...")
     macro_data_raw = sync_macro_data(macro, telecharger)
 
+    db.progression(32, "Bilans (Alpha Vantage)")
     etape.info("Étape 3/4 — Bilans : fondamentaux et Z-Score Altman (Alpha Vantage)...")
     market_core = market_data_raw[market_data_raw["symbol"].isin(tickers_core)] if not market_data_raw.empty else market_data_raw
     prix_actuels = {}
@@ -786,6 +790,7 @@ def get_all_data(univers_etendu: list[str] = None, telecharger: bool = False):
         fonda_data_clean = db.fetch_fonda_data(list(tickers_core))
         zscore_df = db.fetch_zscore_data(list(tickers_core))
 
+    db.progression(40, "Entraînement modèles 1 jour")
     etape.info("Étape 4/4 — Calcul des indicateurs et entraînement des modèles IA...")
 
     # Séparation actions / ETFs — les fondamentaux (roe, margin...) n'ont pas de

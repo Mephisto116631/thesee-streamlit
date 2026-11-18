@@ -30,7 +30,7 @@ export function Home({ go }: { go: (h: string) => void }) {
           <h1>Thésée</h1>
           <p class="sub">
             {s ? <>Données {s.status === "error" ? "⚠️ dernière synchro en erreur" : "à jour"} · {ilYA(s.finished_at ?? s.started_at)}</> : "—"}
-            {o?.date && <> · séance du {dateFr(o.date)}</>}
+            {o?.date && <> · cours de clôture du {dateFr(o.date)}</>}
           </p>
         </div>
         <RefreshButton />
@@ -46,7 +46,7 @@ export function Home({ go }: { go: (h: string) => void }) {
             <div class="stats">
               <Stat label="Titres > MM50" value={`${Math.round(o.pct_above_ma50 ?? 0)} %`} sub="tendance court terme" tone={breadth(o.pct_above_ma50)} />
               <Stat label="Titres > MM200" value={`${Math.round(o.pct_above_ma200 ?? 0)} %`} sub="tendance long terme" tone={breadth(o.pct_above_ma200)} />
-              <Stat label="Hausse / baisse" value={<><span class="up">{o.n_hausse_1d}</span> / <span class="down">{o.n_baisse_1d}</span></>} sub="sur la séance" />
+              <Stat label="Hausse / baisse" value={<><span class="up">{o.n_hausse_1d}</span> / <span class="down">{o.n_baisse_1d}</span></>} sub="sur la journée" />
             </div>
             <p class="hint">Repère : plus de 60 % des titres au-dessus de leur MM200 = marché large en tendance haussière ; moins de 40 % = marché fragile.</p>
           </Card>
@@ -68,8 +68,9 @@ export function Home({ go }: { go: (h: string) => void }) {
           <p class="verdict">
             <span class={`badge ${m6.verdict === "signal" ? "good" : m6.verdict === "bruit" ? "neutral" : "bad"}`}>
               {m6.verdict === "signal" ? "Signal" : m6.verdict === "bruit" ? "Faible" : "Aucun avantage"}</span>{" "}
-            Classement des titres à 6 mois : IC {num(m6.diagnostics?.ic_moyen, 3)} (momentum seul : {num(m6.diagnostics?.ic_momentum, 3)}).
-            {m6.verdict === "signal" ? " Le classement a été utile en test." : " À prendre comme un indice, pas comme une décision."}
+            Classement à 6 mois par {({ modele: "modèle IA", momentum: "momentum", multifacteurs: "multi-facteurs" } as Record<string, string>)[m6.diagnostics?.source] ?? "modèle IA"}
+            {" "}(IC {num(({ modele: m6.diagnostics?.ic_moyen, momentum: m6.diagnostics?.ic_momentum, multifacteurs: m6.diagnostics?.ic_multifacteurs } as Record<string, number>)[m6.diagnostics?.source] ?? m6.diagnostics?.ic_moyen, 3)}, le meilleur des trois en test).
+            {m6.verdict === "signal" ? " Utile en test." : " À prendre comme un indice, pas comme une décision."}
           </p>
         </Card>
       ) : mActions && (

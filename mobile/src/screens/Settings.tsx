@@ -5,7 +5,7 @@ import { dateFr, ilYA, num, pct } from "../format";
 import { frontiere, type Univers } from "../optim";
 import { bornesDefaut, definirBornes, type Range, RANGES } from "../ranges";
 import { Relance } from "./Relance";
-import { ecrireParametres, nbModifies, PARAMETRES_DEFAUT, type Parametres, useParametres } from "../settings";
+import { ecrireParametres, nbModifies, PARAMETRES_DEFAUT, type Parametres, PRESET_TRADE_REPUBLIC, useParametres } from "../settings";
 import { BUILD, estNatif, installer, type MiseAJour, VERSION, verifierMiseAJour } from "../update";
 
 /** Champ numérique : la valeur stockée est une fraction, affichée en % si `pctAff`. */
@@ -93,7 +93,16 @@ export function Settings() {
           aide="Les lignes plus petites sont supprimées et le portefeuille est ré-optimisé sans elles." />
       </Card>
 
-      <Card title="Passage des ordres">
+      <Card title="Passage des ordres" right={<button class="link" onClick={() => ecrireParametres(PRESET_TRADE_REPUBLIC)}>Préréglage Trade Republic</button>}>
+        <div class="param">
+          <span class="param-tete"><span>Devise des prix d'ordre</span></span>
+          <div class="seg full" role="group" aria-label="Devise">
+            <button class={p.deviseOrdres === "EUR" ? "on" : ""} onClick={() => ecrireParametres({ deviseOrdres: "EUR" })}>Euros (Trade Republic)</button>
+            <button class={p.deviseOrdres === "USD" ? "on" : ""} onClick={() => ecrireParametres({ deviseOrdres: "USD" })}>Dollars</button>
+          </div>
+          <small>Trade Republic cote les actions américaines en euros (bourse Lang &amp; Schwarz) : pas de frais de change séparé,
+            1 € de frais par ordre (les plans d'épargne sont gratuits).</small>
+        </div>
         <Champ p={p} k="fraisOrdre" label="Frais par ordre (€)" pctAff={false} min={0} max={20} pas={0.5}
           aide="Ce que ton courtier facture à chaque achat. 0 € chez la plupart des courtiers « sans frais »." />
         <Champ p={p} k="fraisChange" label="Frais de change" min={0} max={2} pas={0.05}
