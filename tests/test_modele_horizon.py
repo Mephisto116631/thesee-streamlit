@@ -30,10 +30,16 @@ def test_trouve_un_signal_persistant():
 
 
 def test_n_invente_pas_de_signal():
-    raw, syms = _marche(persistance=False, seed=3)
-    ligne, _ = mh.entrainer_horizon(raw, syms, "6m")
-    assert ligne["verdict"] != "signal"
-    assert abs(ligne["diagnostics"]["ic_moyen"]) < 0.06
+    """Sur du bruit pur, le réglage choisi sur le passé ne doit pas fabriquer de signal en moyenne.
+    (Un seul tirage peut donner un IC de ±0,07 sur ce petit échantillon : on teste la moyenne.)"""
+    ics = []
+    for seed in range(5):
+        raw, syms = _marche(persistance=False, seed=seed)
+        ligne, _ = mh.entrainer_horizon(raw, syms, "6m")
+        assert ligne["verdict"] != "signal"
+        assert ligne["diagnostics"]["config"] in mh.CONFIGS
+        ics.append(ligne["diagnostics"]["ic_moyen"])
+    assert abs(np.mean(ics)) < 0.04
 
 
 def test_publie_le_meilleur_classement():

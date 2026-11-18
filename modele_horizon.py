@@ -44,7 +44,11 @@ PAS_ECHANTILLON = 5          # une observation par titre et par semaine
 N_FENETRES = 4               # nombre de périodes de test (walk-forward)
 INDICE = "SPY"
 FEATURES = ["mom_12_1", "mom_6_1", "rev_1m", "vol_3m", "ecart_mm200",
-            "rsi_14", "dist_plus_haut", "beta_1a", "tendance_volume"]
+            "rsi_14", "dist_plus_haut", "beta_1a", "tendance_volume",
+            # Facteurs long terme documentés (ajoutés après les premiers tests sur 20 ans)
+            "mom_36_12", "vol_idio", "max_1m", "liquidite", "mom_secteur"]
+# Facteurs qui demandent beaucoup d'historique : manquants au début -> rang neutre 0,5
+FEATURES_TOLERANTS = ["mom_36_12", "mom_secteur"]
 LABELS = {
     "mom_12_1": "Momentum 12 mois (hors dernier mois)",
     "mom_6_1": "Momentum 6 mois (hors dernier mois)",
@@ -55,7 +59,25 @@ LABELS = {
     "dist_plus_haut": "Distance au plus haut 1 an",
     "beta_1a": "Bêta 1 an (sensibilité au marché)",
     "tendance_volume": "Volume récent vs habituel",
+    "mom_36_12": "Performance 3 ans (hors dernière année)",
+    "vol_idio": "Volatilité propre (hors marché) 3 mois",
+    "max_1m": "Plus forte hausse d'un jour (1 mois)",
+    "liquidite": "Montants échangés (taille)",
+    "mom_secteur": "Momentum 12 mois vs son secteur",
 }
+
+# Réglages candidats. À chaque période de test, le réglage est choisi sur le PASSÉ seulement
+# (validation interne), jamais sur la période testée : l'IC affiché reste honnête.
+CONFIGS = {
+    "xgb_prudent": {"n_estimators": 300, "max_depth": 2, "learning_rate": 0.03, "min_child_weight": 200},
+    "xgb_standard": {"n_estimators": 200, "max_depth": 3, "learning_rate": 0.05, "min_child_weight": 50},
+    "xgb_riche": {"n_estimators": 400, "max_depth": 4, "learning_rate": 0.03, "min_child_weight": 100},
+    "lineaire": {"alpha": 10.0},   # régression ridge sur les rangs : robuste quand le signal est faible
+}
+CONFIG_DEFAUT = "xgb_standard"
+PART_VALIDATION = 0.3              # dernière part du passé servant à choisir le réglage
+LIBELLES_CONFIGS = {"xgb_prudent": "XGBoost prudent", "xgb_standard": "XGBoost standard",
+                    "xgb_riche": "XGBoost riche", "lineaire": "Linéaire (ridge)"}
 
 
 def _rsi(px: pd.DataFrame, n: int = 14) -> pd.DataFrame:
@@ -65,7 +87,8 @@ def _rsi(px: pd.DataFrame, n: int = 14) -> pd.DataFrame:
     return 100 - 100 / (1 + up / down.replace(0, np.nan))
 
 
-def caracteristiques(market_raw: pd.DataFrame, symboles: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+def caracteristiques(market_raw: pd.DataFrame, symboles: list[str],
+                     secteurs: dict[str, str] | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Retourne (tableau large des cours, caractéristiques empilées par date et titre)."""
     m = market_raw[market_raw["symbol"].isin(set(symboles) | {INDICE})]
     px = m.pivot_table(index="date", columns="symbol", values="close").sort_index().ffill(limit=5)
@@ -85,8 +108,22 @@ def caracteristiques(market_raw: pd.DataFrame, symboles: list[str]) -> tuple[pd.
     if INDICE in ret.columns:
         rm = ret[INDICE]
         f["beta_1a"] = ret.rolling(252).cov(rm).div(rm.rolling(252).var(), axis=0)
+        # Volatilité propre : variance totale - part expliquée par le marché (3 mois)
+        cov63, var_m63 = ret.rolling(63).cov(rm), rm.rolling(63).var()
+        idio = ret.rolling(63).var() - cov63.pow(2).div(var_m63, axis=0)
+        f["vol_idio"] = idio.clip(lower=0).pow(0.5) * np.sqrt(252)
     else:
         f["beta_1a"] = ret * np.nan
+        f["vol_idio"] = ret.rolling(63).std() * np.sqrt(252)
+    f["mom_36_12"] = px.shift(252) / px.shift(756) - 1          # retournement long terme (De Bondt-Thaler)
+    f["max_1m"] = ret.rolling(21).max()                          # effet « loterie » (Bali et al.)
+    f["liquidite"] = np.log((px * vol).rolling(63).mean().replace(0, np.nan))  # taille approchée
+    if secteurs:
+        sect = pd.Series({c: secteurs.get(c, "?") for c in px.columns})
+        mom = f["mom_12_1"]
+        f["mom_secteur"] = mom - mom.T.groupby(sect).transform("median").T
+    else:
+        f["mom_secteur"] = f["mom_12_1"] * np.nan
 
     dates = px.index[252::PAS_ECHANTILLON]
     cols = [c for c in px.columns if c != INDICE and c in symboles]
@@ -96,6 +133,7 @@ def caracteristiques(market_raw: pd.DataFrame, symboles: list[str]) -> tuple[pd.
         blocs.append(t.rank(axis=1, pct=True).stack(future_stack=True).rename(nom))  # rang du jour
     X = pd.concat(blocs, axis=1)
     X.index.names = ["date", "symbol"]
+    X[FEATURES_TOLERANTS] = X[FEATURES_TOLERANTS].fillna(0.5)
     return px[cols], X.reset_index()
 
 
@@ -120,10 +158,40 @@ def cible(px: pd.DataFrame, dates: pd.Index, h: int) -> pd.DataFrame:
     return out.reset_index()
 
 
-def _modele():
+def _modele(config: str = CONFIG_DEFAUT):
+    c = CONFIGS[config]
+    if config == "lineaire":
+        from sklearn.linear_model import Ridge
+        return Ridge(alpha=c["alpha"])
     from xgboost import XGBRegressor
-    return XGBRegressor(n_estimators=200, max_depth=3, learning_rate=0.05, subsample=0.8,
-                        colsample_bytree=0.8, min_child_weight=50, reg_lambda=5.0, random_state=42)
+    return XGBRegressor(**c, subsample=0.8, colsample_bytree=0.8, reg_lambda=5.0, random_state=42)
+
+
+def _importances(m, config: str) -> np.ndarray:
+    if config == "lineaire":
+        v = np.abs(m.coef_)
+        return v / v.sum() if v.sum() > 0 else v
+    return m.feature_importances_
+
+
+def choisir_config(train: pd.DataFrame, h: int) -> tuple[str, dict]:
+    """Choisit le réglage sur le passé seulement : entraînement sur les 70 % les plus anciens,
+    validation (IC) sur les 30 % les plus récents, avec embargo entre les deux."""
+    dates = np.sort(train["date"].unique())
+    if len(dates) < 40:
+        return CONFIG_DEFAUT, {}
+    coupure = pd.Timestamp(dates[int(len(dates) * (1 - PART_VALIDATION))])
+    embargo = pd.Timedelta(days=int(h * 7 / 5) + 1)
+    fit = train[train["date"] < coupure - embargo]
+    val = train[train["date"] >= coupure].copy()
+    if len(fit) < 2000 or val.empty:
+        return CONFIG_DEFAUT, {}
+    scores = {}
+    for nom in CONFIGS:
+        val["pred"] = _modele(nom).fit(fit[FEATURES], fit["y"]).predict(val[FEATURES])
+        ic = _ic_par_date(val, "pred")
+        scores[nom] = float(ic.mean()) if len(ic) else -1.0
+    return max(scores, key=scores.get), scores
 
 
 def _ic_par_date(df: pd.DataFrame, col: str) -> pd.Series:
@@ -146,11 +214,13 @@ def evaluer(data: pd.DataFrame, h: int) -> dict:
         test = data[data["date"].isin(bloc)].copy()
         if len(train) < 2000 or test.empty:
             continue
-        m = _modele().fit(train[FEATURES], train["y"])
+        config, _ = choisir_config(train, h)
+        m = _modele(config).fit(train[FEATURES], train["y"])
         test["pred"] = m.predict(test[FEATURES])
         ic = _ic_par_date(test, "pred")
         fenetres.append({"debut": str(debut.date()), "fin": str(pd.Timestamp(bloc[-1]).date()),
-                         "ic": float(ic.mean()) if len(ic) else None, "n_dates": int(len(ic))})
+                         "ic": float(ic.mean()) if len(ic) else None, "n_dates": int(len(ic)),
+                         "config": config})
         tests.append(test)
     if not tests:
         return {}
@@ -222,11 +292,12 @@ def membres_a_date(data: pd.DataFrame, composition: pd.DataFrame) -> pd.DataFram
 
 
 def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
-                      composition: pd.DataFrame | None = None) -> tuple[dict, pd.DataFrame]:
+                      composition: pd.DataFrame | None = None,
+                      secteurs: dict[str, str] | None = None) -> tuple[dict, pd.DataFrame]:
     """Évalue puis entraîne le modèle final ; retourne (ligne model_runs, scores du jour).
     `composition` (charger_composition()) : évaluation sur les seuls membres de l'indice à chaque date."""
     h = HORIZONS[nom]
-    px, X = caracteristiques(market_raw, symboles)
+    px, X = caracteristiques(market_raw, symboles, secteurs)
     if X.empty:
         return {}, pd.DataFrame()
     Y = cible(px, pd.DatetimeIndex(X["date"].unique()), h)
@@ -242,7 +313,12 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
         ev["titres_par_date"] = float(data.groupby("date")["symbol"].size().mean())
     if data.empty:
         return {}, pd.DataFrame()
-    m = _modele().fit(data[FEATURES], data["y"])
+    config, ic_validation = choisir_config(data, h)      # réglage du modèle final : même règle, sur tout le passé
+    m = _modele(config).fit(data[FEATURES], data["y"])
+    if ev:
+        ev["config"] = config
+        ev["config_libelle"] = LIBELLES_CONFIGS[config]
+        ev["ic_validation_configs"] = ic_validation
 
     # Classement publié : celui qui a le mieux marché en test. Si le modèle ne bat
     # pas la règle simple « momentum 12-1 », c'est le momentum qui est utilisé
@@ -264,7 +340,7 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
     scores = aujourd_hui[["symbol", "score"]].assign(horizon=nom, date=str(pd.Timestamp(derniere).date()))
 
     imp = sorted([{"feature": f, "label": LABELS[f], "importance": float(v)}
-                  for f, v in zip(FEATURES, m.feature_importances_)], key=lambda d: -d["importance"])
+                  for f, v in zip(FEATURES, _importances(m, config))], key=lambda d: -d["importance"])
     cle_ic = {"modele": ("ic_moyen", "t_stat"), "momentum": ("ic_momentum", "t_momentum"),
               "multifacteurs": ("ic_multifacteurs", "t_multifacteurs")}[source]
     ic, t = ev.get(cle_ic[0]), ev.get(cle_ic[1])
