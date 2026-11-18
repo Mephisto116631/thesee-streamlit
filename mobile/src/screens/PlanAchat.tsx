@@ -1,5 +1,7 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
+import { ajouterPositions, utilisateurCourant } from "../api";
 import { Card, Details, Stat } from "../components";
+import { copier, limiteDevise, ouvrirTradeRepublic, texteOrdre } from "../courtier";
 import { num, pct } from "../format";
 import { useParametres } from "../settings";
 import { coutAnnualise, planAchat, type Reglages } from "../strategy";
@@ -25,6 +27,12 @@ export function PlanAchat({ capital, lignes, prix, eurusd, annees, mode = "hold"
   };
   const r: Reglages = { ...etal, fraisOrdre: params.fraisOrdre, fraisChange: params.fraisChange, fractions: params.fractions, margeLimite: params.margeLimite };
   const fx = eurusd ?? EURUSD_SECOURS;
+  const devise = params.deviseOrdres ?? "EUR";
+  const symb = devise === "EUR" ? "€" : "$";
+  const [message, setMessage] = useState("");
+  const [connecte, setConnecte] = useState(false);
+  useEffect(() => { utilisateurCourant().then((u) => setConnecte(Boolean(u))); }, []);
+  const flash = (m: string) => { setMessage(m); setTimeout(() => setMessage(""), 3500); };
   const plan = planAchat(capital, lignes, prix, fx, r);
   const coutAn = coutAnnualise(plan.partFrais, r.fraisChange, annees);
   const t0 = plan.tranches[0];
@@ -59,16 +67,37 @@ export function PlanAchat({ capital, lignes, prix, eurusd, annees, mode = "hold"
           <>
             <h3 class="h3">{r.tranches > 1 ? `Tranche 1 sur ${r.tranches} — ${t0.date.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}` : "Ordres à passer"}</h3>
             <table class="table small">
-              <thead><tr><th>Titre</th><th>Quantité</th><th>Prix limite</th><th>Montant</th></tr></thead>
+              <thead><tr><th>Titre</th><th>Quantité</th><th>Limite ({symb})</th><th>Montant</th><th></th></tr></thead>
               <tbody>{t0.ordres.map((o) => (
                 <tr class={o.quantite === 0 ? "muted" : ""}>
                   <td><b>{o.symbol}</b></td>
                   <td>{o.quantite === 0 ? "—" : num(o.quantite, r.fractions ? 4 : 0)}</td>
-                  <td>{o.prix ? `${num(o.limite, 2)} $` : "—"}</td>
+                  <td>{o.prix ? `${num(limiteDevise(o, devise, fx), 2)} ${symb}` : "—"}</td>
                   <td>{num(o.montantEur, 2)} €</td>
+                  <td>{o.quantite > 0 && <button class="copier" aria-label={`Copier l'ordre ${o.symbol}`}
+                    onClick={async () => flash(await copier(texteOrdre(o, undefined, devise, fx, r.fractions)) ? `Ordre ${o.symbol} copié` : "Copie impossible")}>⧉</button>}</td>
                 </tr>
               ))}</tbody>
             </table>
+            <div class="actions-ordres">
+              <button class="more" onClick={async () => flash(await copier(t0.ordres.filter((o) => o.quantite > 0)
+                .map((o) => texteOrdre(o, undefined, devise, fx, r.fractions)).join("\n")) ? "Tous les ordres sont copiés" : "Copie impossible")}>⧉ Copier tous les ordres</button>
+              <button class="more" onClick={() => ouvrirTradeRepublic()}>↗ Ouvrir Trade Republic</button>
+              {connecte && (
+                <button class="more" onClick={async () => {
+                  if (!confirm("Enregistrer ces ordres dans « Mes positions » ? (à faire une fois les ordres exécutés)")) return;
+                  const lignes = t0.ordres.filter((o) => o.quantite > 0).map((o) => ({
+                    symbol: o.symbol, quantite: o.quantite, prix_achat_eur: Math.round((o.limite / fx) * 100) / 100,
+                    frais_eur: r.fraisOrdre, date_achat: new Date().toISOString().slice(0, 10), note: "Depuis le plan d'achat",
+                  }));
+                  const err = await ajouterPositions(lignes);
+                  flash(err ? `Erreur : ${err}` : `${lignes.length} positions enregistrées (corrige-les si le prix exécuté diffère)`);
+                }}>✓ J'ai passé ces ordres</button>
+              )}
+            </div>
+            {message && <p class="hint accent">{message}</p>}
+            <p class="hint">Trade Republic n'a pas d'API publique : Thésée prépare les ordres, tu les recopies dans l'appli
+              (recherche par ticker ou nom). Prix en {devise === "EUR" ? "euros, comme sur Trade Republic" : "dollars"}.</p>
             {plan.lignesNonAchetees.length > 0 && (
               <div class="note warn">
                 {plan.lignesNonAchetees.join(", ")} : une action entière coûte plus que le montant prévu.

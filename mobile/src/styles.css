@@ -399,3 +399,15 @@ input[type="range"] { width: 100%; margin: 10px 0 2px; accent-color: var(--accen
 /* Étiquettes de données sur les barres d'importance */
 .imp li { grid-template-columns: minmax(0, 1.2fr) 1fr auto; }
 .imp-val { font-size: 12px; min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- Ordres, positions ---------------------------------------------------- */
+.actions-ordres { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.actions-ordres .more { flex: 1 1 140px; margin: 0; }
+.copier { background: var(--card2); border: 1px solid var(--border); border-radius: 8px; width: 34px; height: 30px; color: var(--accent); }
+.liste-achats { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.liste-achats li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.liste-achats .edition { display: flex; gap: 6px; align-items: center; }
+.liste-achats .edition input { width: 84px; min-height: 34px; padding: 4px 6px; }
+.form-position .reglages { margin-top: 8px; }
+.form-position .more { margin-top: 10px; }
+.link.down { color: var(--down); }

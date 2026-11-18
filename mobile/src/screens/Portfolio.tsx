@@ -8,11 +8,14 @@ import { choisirPoint, HORIZON_DEFAUT, HORIZONS, projection } from "../strategy"
 import { CourtTerme } from "./CourtTerme";
 import { MesTitres } from "./MesTitres";
 import { MonteCarlo } from "./MonteCarlo";
+import { Positions } from "./Positions";
 import { PlanAchat } from "./PlanAchat";
 
 const KEY = "thesee:objectif:v1";
-type Onglet = "objectif" | "court" | "titres";
-const ONGLETS: { k: Onglet; label: string }[] = [{ k: "objectif", label: "Hold" }, { k: "court", label: "Court terme" }, { k: "titres", label: "Mes titres" }];
+type Onglet = "objectif" | "court" | "titres" | "positions";
+const ONGLETS: { k: Onglet; label: string }[] = [
+  { k: "objectif", label: "Hold" }, { k: "court", label: "Court" }, { k: "titres", label: "Titres" }, { k: "positions", label: "Positions" },
+];
 // Hold : horizons de 6 mois et plus (en dessous, c'est le mode court terme)
 const HORIZONS_HOLD = HORIZONS.filter((x) => x.annees >= 0.5);
 interface Etat { onglet: Onglet; capital: number; cible: number; horizon: string }
@@ -77,7 +80,7 @@ export function Portfolio() {
         ))}
       </div>
 
-      <Card title="Mon objectif" class="tint-accent">
+      {e.onglet !== "positions" && <Card title="Mon objectif" class="tint-accent">
         <label class="field">Capital à investir (€)
           <input type="number" inputMode="numeric" min={50} step={50} value={e.capital}
             onChange={(ev) => maj({ capital: Math.max(50, Number((ev.target as HTMLInputElement).value) || 200) })} />
@@ -100,9 +103,11 @@ export function Portfolio() {
             <div class="range-labels"><span>2 %</span><span>8 % ≈ actions long terme</span><span>30 %</span></div>
           </div>
         )}
-      </Card>
+      </Card>}
 
-      {e.onglet === "court" ? (
+      {e.onglet === "positions" ? (
+        <Positions cible={lignes} />
+      ) : e.onglet === "court" ? (
         <CourtTerme capital={e.capital} eurusd={ov.data?.eurusd ?? null} />
       ) : e.onglet === "titres" ? (
         <MesTitres capital={e.capital} depart={lignes.map((l) => l.symbol)} eurusd={ov.data?.eurusd ?? null} />

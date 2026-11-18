@@ -6,7 +6,11 @@ import { createClient } from "@supabase/supabase-js";
 const URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 export const configured = Boolean(URL && KEY);
-const sb = configured ? createClient(URL!, KEY!, { auth: { persistSession: false } }) : null;
+// Session conservée sur le téléphone : nécessaire pour « Mes positions » (connexion).
+// Les autres données restent publiques en lecture seule (RLS).
+const sb = configured ? createClient(URL!, KEY!, {
+  auth: { persistSession: true, autoRefreshToken: true, storageKey: "thesee-auth" },
+}) : null;
 
 export interface Snapshot {
   symbol: string; nom: string; secteur: string; indice: string; is_etf: boolean; date: string;
@@ -170,4 +174,57 @@ export async function relancerCalcul(): Promise<{ ok: boolean; message: string }
     return { ok: false, message: error.message };
   }
   return data as { ok: boolean; message: string };
+}
+
+// ---------------------------------------------------------------------------
+// Compte et positions (table « positions », visibles uniquement par leur propriétaire)
+// ---------------------------------------------------------------------------
+export interface Position {
+  id: string; symbol: string; quantite: number; prix_achat_eur: number | null;
+  frais_eur: number; date_achat: string; note: string | null;
+}
+
+export async function utilisateurCourant(): Promise<{ email: string } | null> {
+  if (!sb) return null;
+  const { data } = await sb.auth.getSession();
+  return data.session?.user?.email ? { email: data.session.user.email } : null;
+}
+
+export function surChangementSession(cb: () => void): () => void {
+  if (!sb) return () => {};
+  const { data } = sb.auth.onAuthStateChange(() => cb());
+  return () => data.subscription.unsubscribe();
+}
+
+export async function connexion(email: string, motDePasse: string, creer: boolean): Promise<string | null> {
+  if (!sb) return "Appli non configurée.";
+  const r = creer
+    ? await sb.auth.signUp({ email, password: motDePasse })
+    : await sb.auth.signInWithPassword({ email, password: motDePasse });
+  if (r.error) return r.error.message;
+  if (creer && !r.data.session) return "Compte créé : confirme ton adresse avec le lien reçu par e-mail, puis connecte-toi.";
+  return null;
+}
+
+export async function deconnexion() { await sb?.auth.signOut(); }
+
+export async function lirePositions(): Promise<Position[]> {
+  const { data, error } = await sb!.from("positions").select("*").order("date_achat", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Position[];
+}
+
+export async function ajouterPositions(lignes: Omit<Position, "id">[]): Promise<string | null> {
+  const { error } = await sb!.from("positions").insert(lignes);
+  return error ? error.message : null;
+}
+
+export async function modifierPosition(id: string, champs: Partial<Omit<Position, "id">>): Promise<string | null> {
+  const { error } = await sb!.from("positions").update(champs).eq("id", id);
+  return error ? error.message : null;
+}
+
+export async function supprimerPosition(id: string): Promise<string | null> {
+  const { error } = await sb!.from("positions").delete().eq("id", id);
+  return error ? error.message : null;
 }

@@ -9,6 +9,7 @@ export interface Parametres extends HypothesesModele {
   fraisChange: number;    // fraction (0.0025 = 0,25 %)
   fractions: boolean;
   margeLimite: number;    // prix limite = dernier cours x (1 + marge)
+  deviseOrdres: "EUR" | "USD"; // devise des prix affichés pour les ordres (Trade Republic : EUR)
   // Projection et suivi
   confiance: number;      // part des scénarios dans la fourchette affichée (0.8 / 0.9 / 0.95)
   seuilReequilibrage: number; // rééquilibrer si une ligne dépasse ce poids
@@ -30,6 +31,7 @@ export const PARAMETRES_DEFAUT: Parametres = {
   fraisChange: 0.0025,
   fractions: true,
   margeLimite: 0.003,
+  deviseOrdres: "EUR",
   confiance: 0.9,
   seuilReequilibrage: 0.25,
   ctNbTitres: 8,
@@ -71,3 +73,6 @@ export function useParametres(): Parametres {
 export function nbModifies(p: Parametres): number {
   return (Object.keys(PARAMETRES_DEFAUT) as (keyof Parametres)[]).filter((k) => p[k] !== PARAMETRES_DEFAUT[k]).length;
 }
+
+/** Préréglage Trade Republic : titres US cotés en euros (pas de frais de change séparé), 1 € par ordre. */
+export const PRESET_TRADE_REPUBLIC: Partial<Parametres> = { fraisOrdre: 1, fraisChange: 0, fractions: true, deviseOrdres: "EUR" };
