@@ -291,11 +291,14 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
     db.upsert_rows("market_overview", [overview], on_conflict="id")
 
     # Modèles « horizon » (1 mois, 6 mois, 1 an) : classement relatif des titres
+    # Sur l'historique long (depuis 2005, non stocké) : bien plus de périodes de test indépendantes.
+    raw_long = dp.historique_long()
+    raw_horizon = raw_long if raw_long is not None and not raw_long.empty else raw
     n_scores = 0
     for k, nom in enumerate(modele_horizon.HORIZONS):
         db.progression(65 + 10 * k, f"Modèle IA {dict(court='1 mois', **{'6m': '6 mois', '1a': '1 an'})[nom]}")
         try:
-            ligne, scores = modele_horizon.entrainer_horizon(raw, snap["symbol"].tolist(), nom)
+            ligne, scores = modele_horizon.entrainer_horizon(raw_horizon, snap["symbol"].tolist(), nom)
             if ligne:
                 db.upsert_rows("model_runs", [_clean(ligne)], on_conflict="kind")
                 db.upsert_rows("scores_horizon", _records(scores), on_conflict="symbol,horizon")

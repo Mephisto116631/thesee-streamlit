@@ -145,7 +145,8 @@ function HorizonView({ m }: { m: ModelRun }) {
       <Card title="Verdict" class={`edge-${v.ton}`} right={<small class="muted">entraîné {ilYA(m.trained_at)}</small>}>
         <p class="verdict"><span class={`badge ${v.ton}`}>{v.nom}</span> {v.txt}</p>
         <div class="note">Classement utilisé : <b>{SOURCES[d.source as string] ?? "modèle IA"}</b>.
-          {d.source !== "modele" && " Le modèle IA (XGBoost) a fait moins bien en test : il reste entraîné à chaque calcul et reprendra la main s'il devient meilleur."}</div>
+          {d.source !== "modele" && " Le modèle IA (XGBoost) a fait moins bien en test : il reste entraîné à chaque calcul et reprendra la main s'il devient meilleur."}
+          {d.debut_test && <> Testé depuis {dateFr(d.debut_test)} (données depuis {dateFr(d.debut_donnees)}) : environ {num(d.n_effectif, 0)} périodes indépendantes.</>}</div>
         <div class="stats">
           <Stat label="IC modèle IA" value={num(d.ic_moyen, 3)} sub={`t = ${num(d.t_stat, 1)}`} tone={d.source === "modele" ? v.ton : "neutral"} />
           <Stat label="IC momentum" value={num(d.ic_momentum, 3)} sub={`t = ${num(d.t_momentum, 1)}`} tone={d.source === "momentum" ? v.ton : "neutral"} />
@@ -182,7 +183,8 @@ function HorizonView({ m }: { m: ModelRun }) {
           </table>
           <p class="hint">Validation « walk-forward » : le modèle est entraîné sur le passé puis testé sur la période suivante,
             avec un écart de {d.horizon_jours} jours de bourse entre les deux pour qu'il ne voie jamais le futur. {d.n_dates_test} dates testées,
-            soit environ {num(d.n_effectif, 0)} observations indépendantes (les périodes de {d.horizon_jours} jours de bourse se chevauchent).</p>
+            soit environ {num(d.n_effectif, 0)} observations indépendantes (les périodes de {d.horizon_jours} jours de bourse se chevauchent).
+            Univers = composition actuelle de l'indice : les titres disparus depuis manquent (biais du survivant), les résultats sont donc un peu optimistes.</p>
         </Details>
       </Card>
     </>

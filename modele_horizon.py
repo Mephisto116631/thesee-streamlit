@@ -24,6 +24,10 @@
 #     c'est le meilleur classement simple qui est publié : momentum seul ou
 #     score multi-facteurs (diagnostics.source). Le code XGBoost reste en place
 #     et reprend la main automatiquement s'il fait mieux un jour.
+#   - Historique : depuis 2005 (téléchargé à chaque passage, non stocké). Biais
+#     du survivant : l'univers est la composition ACTUELLE de l'indice, les titres
+#     disparus depuis manquent ; le classement relatif y est moins sensible que
+#     les rendements absolus, mais les résultats restent un peu optimistes.
 # ==============================================================================
 import numpy as np
 import pandas as pd
@@ -168,6 +172,8 @@ def evaluer(data: pd.DataFrame, h: int) -> dict:
         "rendement_par_quintile": [float(q.get(i, np.nan)) for i in range(5)],
         "taux_reussite_top": float((haut_bat_mediane > 0).mean()) if len(haut_bat_mediane) else None,
         "n_dates_test": int(len(ic)), "n_effectif": float(n_eff),
+        "debut_donnees": str(pd.Timestamp(dates[0]).date()),
+        "debut_test": str(pd.Timestamp(t["date"].min()).date()),
         "fenetres": fenetres,
     }
 
