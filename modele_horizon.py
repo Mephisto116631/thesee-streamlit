@@ -414,6 +414,8 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
         couverture = {f: float(fd[f].notna().mean()) for f in fsec.FEATURES_FD}
         for f in fsec.FEATURES_FD:
             fd[f] = fd.groupby("date")[f].rank(pct=True).fillna(0.5)
+        fd["date"] = fd["date"].astype(X["date"].dtype)
+        fd["symbol"] = fd["symbol"].astype(X["symbol"].dtype)
         X = X.merge(fd, on=["date", "symbol"], how="left")
         X[fsec.FEATURES_FD] = X[fsec.FEATURES_FD].fillna(0.5)
         feats += [f for f in fsec.FEATURES_FD if f not in (exclure or [])]

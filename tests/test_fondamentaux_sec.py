@@ -76,3 +76,15 @@ def test_types_apres_concatenation():
     dates = pd.DatetimeIndex(["2021-03-01"])
     fd = fsec.caracteristiques_fondamentales(tout, pd.DataFrame({"AAA": [5.0]}, index=dates), None, dates)
     assert fd["fd_rentabilite"].iloc[0] == 0.4
+
+
+def test_precisions_de_dates_melangees():
+    """Régression : dates SEC en secondes, cours en microsecondes (cas réel sur GitHub)."""
+    faits = fsec.extraire(FAITS, "AAA")
+    faits["end"] = faits["end"].astype("datetime64[s]")
+    faits["filed"] = faits["filed"].astype("datetime64[s]")
+    dates = pd.DatetimeIndex(["2021-03-01"]).astype("datetime64[us]")
+    px = pd.DataFrame({"AAA": [5.0]}, index=dates)
+    sp = pd.DataFrame({"symbol": ["AAA"], "date": pd.to_datetime(["2020-07-01"]).astype("datetime64[ms]"), "ratio": [4.0]})
+    fd = fsec.caracteristiques_fondamentales(faits, px, sp, dates)
+    assert fd["fd_rentabilite"].iloc[0] == 0.4

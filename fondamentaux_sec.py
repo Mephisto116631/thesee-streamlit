@@ -54,6 +54,11 @@ LABELS_FD = {
 }
 
 
+def _ns(x):
+    """Dates à la même précision (nanoseconde) : pandas refuse de joindre s et µs."""
+    return pd.to_datetime(x).astype("datetime64[ns]")
+
+
 def _get(url: str, ua: str):
     for essai in range(4):
         try:
@@ -119,8 +124,8 @@ def telecharger(symboles: list[str], ua: str | None = None) -> pd.DataFrame:
     out = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
         columns=["symbol", "variable", "end", "filed", "val"])
     # Types explicites : une concaténation avec des tables vides laisse des colonnes « object »
-    out["end"] = pd.to_datetime(out["end"])
-    out["filed"] = pd.to_datetime(out["filed"])
+    out["end"] = _ns(out["end"])
+    out["filed"] = _ns(out["filed"])
     out["val"] = pd.to_numeric(out["val"], errors="coerce")
     return out
 
@@ -173,12 +178,17 @@ def caracteristiques_fondamentales(faits: pd.DataFrame, px_ajuste: pd.DataFrame,
                                    splits: pd.DataFrame | None, dates: pd.DatetimeIndex) -> pd.DataFrame:
     """Facteurs fondamentaux BRUTS (non classés) par (date, symbol), sans information future."""
     symboles = list(px_ajuste.columns)
+    dates = pd.DatetimeIndex(_ns(dates))
+    px_ajuste = px_ajuste.copy()
+    px_ajuste.index = pd.DatetimeIndex(_ns(px_ajuste.index))
+    if splits is not None and not splits.empty:
+        splits = splits.assign(date=_ns(splits["date"]), symbol=splits["symbol"].astype(str))
     ech = pd.MultiIndex.from_product([dates, symboles], names=["date", "symbol"]).to_frame(index=False)
     ech["symbol"] = ech["symbol"].astype(str)
     if faits is None or faits.empty:
         return ech.assign(**{f: np.nan for f in FEATURES_FD})
     faits = faits.assign(symbol=faits["symbol"].astype(str), variable=faits["variable"].astype(str),
-                         end=pd.to_datetime(faits["end"]), filed=pd.to_datetime(faits["filed"]),
+                         end=_ns(faits["end"]), filed=_ns(faits["filed"]),
                          val=pd.to_numeric(faits["val"], errors="coerce"))
 
     for var in ["actifs", "fonds_propres", "resultat_net", "marge_brute", "chiffre_affaires",
