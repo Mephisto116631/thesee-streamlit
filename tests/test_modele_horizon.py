@@ -163,3 +163,25 @@ def test_entrainement_avec_fondamentaux():
     seuls, _ = mh.entrainer_horizon(raw, syms, "6m", exclure=list(mh.FEATURES), faits_sec=faits)
     assert seuls["diagnostics"]["facteurs_utilises"] == fsec.FEATURES_FD
     assert len(scores) == len(syms)
+
+
+def test_modele_risque_bat_la_reference():
+    """Volatilité qui dépend du bêta et d'un régime persistant : le modèle doit retrouver
+    le risque futur au moins aussi bien que la volatilité passée."""
+    import modele_risque as mr
+    rng = np.random.default_rng(7)
+    n, jours = 60, 1300
+    dates = pd.bdate_range("2019-01-01", periods=jours)
+    marche = rng.normal(0.0003, 0.01, jours)
+    rows = []
+    for i in range(n):
+        niveau = 0.008 + 0.02 * (i / n)                       # risque propre stable dans le temps
+        px = 100 * np.cumprod(1 + (0.5 + i / n) * marche + rng.normal(0, niveau, jours))
+        rows += [{"symbol": f"T{i:02d}", "date": d, "close": p, "volume": 1e6} for d, p in zip(dates, px)]
+    rows += [{"symbol": "SPY", "date": d, "close": p, "volume": 1e7} for d, p in zip(dates, 100 * np.cumprod(1 + marche))]
+    raw, syms = pd.DataFrame(rows), [f"T{i:02d}" for i in range(n)]
+    ev = mr.entrainer_risque(raw, syms, "6m", "volatilite")
+    assert ev["ic_base"] > 0.5 and ev["ic_moyen"] > 0.5          # le risque est prévisible
+    assert ev["gain"] > -0.05                                     # pas pire que la référence
+    dd = mr.entrainer_risque(raw, syms, "6m", "perte_max")
+    assert dd["ic_moyen"] > 0.3

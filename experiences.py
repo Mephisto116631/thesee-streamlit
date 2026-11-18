@@ -22,6 +22,7 @@ import data_pipeline as dp   # noqa: E402
 import db                    # noqa: E402
 import fondamentaux_sec as fsec  # noqa: E402
 import modele_horizon as mh  # noqa: E402
+import modele_risque as mr   # noqa: E402
 from publish import _clean   # noqa: E402
 
 # nom -> (mode de cible, facteurs retirés, description[, fondamentaux SEC])
@@ -36,6 +37,13 @@ EXPERIENCES = {
     "fondamentaux": ("alpha_secteur", [], "Alpha sectoriel, cours + fondamentaux SEC", True),
     "fondamentaux_seuls": ("alpha_secteur", list(mh.FEATURES),
                            "Alpha sectoriel, fondamentaux SEC uniquement (aucun facteur de cours)", True),
+}
+# Famille distincte : prédire le RISQUE (et non le rendement), jugé sur son gain par
+# rapport à la référence naïve (volatilité des 3 derniers mois). C'est une autre question
+# de recherche : son seuil est corrigé du nombre d'essais de CETTE famille.
+EXPERIENCES_RISQUE = {
+    "risque_volatilite": ("volatilite", "IA de risque : volatilité future, comparée à la volatilité passée"),
+    "risque_perte_max": ("perte_max", "IA de risque : perte maximale future, comparée à la volatilité passée"),
 }
 HORIZONS_TEST = ["6m", "1a"]
 
@@ -84,7 +92,7 @@ def main(noms: list[str]):
     print(f"[LABO] {len(symboles)} titres, essais : {', '.join(noms)} × {', '.join(HORIZONS_TEST)}")
     raw, splits = charger_cours(symboles)
     faits_sec = None
-    if any(len(EXPERIENCES[n]) > 3 and EXPERIENCES[n][3] for n in noms):
+    if any(n in EXPERIENCES and len(EXPERIENCES[n]) > 3 and EXPERIENCES[n][3] for n in noms):
         t1 = time.time()
         faits_sec = fsec.telecharger([s for s in symboles if s != mh.INDICE])
         print(f"[LABO] SEC : {len(faits_sec)} chiffres publiés, {faits_sec['symbol'].nunique()} entreprises, "
@@ -93,12 +101,35 @@ def main(noms: list[str]):
     secteurs = dict(zip(snap["symbol"], snap["secteur"]))
 
     deja = cli.table("experiences").select("nom,horizon").execute().data or []
-    essais = {(r["nom"], r["horizon"]) for r in deja} | {(n, h) for n in noms for h in HORIZONS_TEST}
-    n_essais = len(essais)
+    tous = {(r["nom"], r["horizon"]) for r in deja} | {(n, h) for n in noms for h in HORIZONS_TEST}
+    n_essais = len({e for e in tous if e[0] not in EXPERIENCES_RISQUE})
+    n_essais_risque = len({e for e in tous if e[0] in EXPERIENCES_RISQUE})
     lot = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M")
 
     echecs = []
-    for nom in noms:
+    for nom in [n for n in noms if n in EXPERIENCES_RISQUE]:
+        genre, description = EXPERIENCES_RISQUE[nom]
+        for h in HORIZONS_TEST:
+            try:
+                d = mr.entrainer_risque(raw, snap["symbol"].tolist(), h, genre, compo)
+            except Exception as e:
+                print(f"[LABO][ERREUR] {nom} {h} : {type(e).__name__} : {e}")
+                echecs.append(f"{nom} {h}")
+                continue
+            if not d:
+                continue
+            seuil = mh.seuil_t(d.get("n_effectif"), n_candidats=n_essais_risque)
+            v = ("probant" if d["gain"] > mr.GAIN_MIN and d["n_effectif"] >= mh.MIN_PERIODES_SIGNAL
+                 and d["t_stat"] > seuil else "non probant")
+            cli.table("experiences").insert(_clean({
+                "lot": lot, "nom": nom, "horizon": h, "description": description,
+                "ic": d["ic_moyen"], "t_stat": d["t_stat"], "seuil_t_global": seuil,
+                "n_essais": n_essais_risque, "verdict": v, "diagnostics": d,
+            })).execute()
+            print(f"[LABO] {nom:18s} {h:3s} IC {d['ic_moyen']:.3f} vs référence {d['ic_base']:.3f} "
+                  f"(gain {d['gain']:+.3f}, t {d['t_stat']:.2f}, seuil {seuil:.2f}) -> {v}")
+
+    for nom in [n for n in noms if n in EXPERIENCES]:
         mode, exclus, description, *opt = EXPERIENCES[nom]
         avec_sec = bool(opt and opt[0])
         for h in HORIZONS_TEST:
@@ -132,8 +163,9 @@ def main(noms: list[str]):
 
 if __name__ == "__main__":
     choix = os.environ.get("EXPERIENCES", "").strip()
-    noms = list(EXPERIENCES) if choix in ("", "toutes") else [n.strip() for n in choix.split(",")]
-    inconnues = [n for n in noms if n not in EXPERIENCES]
+    connues = list(EXPERIENCES) + list(EXPERIENCES_RISQUE)
+    noms = connues if choix in ("", "toutes") else [n.strip() for n in choix.split(",")]
+    inconnues = [n for n in noms if n not in connues]
     if inconnues:
-        sys.exit(f"Expériences inconnues : {inconnues} (connues : {list(EXPERIENCES)})")
+        sys.exit(f"Expériences inconnues : {inconnues} (connues : {connues})")
     main(noms)
