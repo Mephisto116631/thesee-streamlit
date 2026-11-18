@@ -22,11 +22,14 @@ import db                    # noqa: E402
 import modele_horizon as mh  # noqa: E402
 from publish import _clean   # noqa: E402
 
-# nom -> (mode de cible, description)
+# nom -> (mode de cible, facteurs retirés, description)
 EXPERIENCES = {
-    "reference": ("relatif", "Modèle publié : rendement futur comparé à la médiane"),
-    "alpha": ("alpha", "Cible ajustée du bêta (alpha de Jensen)"),
-    "alpha_secteur": ("alpha_secteur", "Alpha de Jensen comparé au secteur"),
+    "reference": ("relatif", [], "Modèle publié : rendement futur comparé à la médiane"),
+    "alpha": ("alpha", [], "Cible ajustée du bêta (alpha de Jensen)"),
+    "alpha_secteur": ("alpha_secteur", [], "Alpha de Jensen comparé au secteur"),
+    # Lot 2 : le signal d'alpha_secteur vient-il seulement d'un pari sur les petites valeurs ?
+    "alpha_secteur_sans_taille": ("alpha_secteur", ["liquidite"],
+                                  "Alpha sectoriel, sans le facteur taille (montants échangés)"),
 }
 HORIZONS_TEST = ["6m", "1a"]
 
@@ -66,9 +69,9 @@ def main(noms: list[str]):
     lot = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M")
 
     for nom in noms:
-        mode, description = EXPERIENCES[nom]
+        mode, exclus, description = EXPERIENCES[nom]
         for h in HORIZONS_TEST:
-            ligne, _ = mh.entrainer_horizon(raw, snap["symbol"].tolist(), h, compo, secteurs, mode)
+            ligne, _ = mh.entrainer_horizon(raw, snap["symbol"].tolist(), h, compo, secteurs, mode, exclus)
             if not ligne:
                 print(f"[LABO][WARN] {nom} {h} : pas assez de données")
                 continue

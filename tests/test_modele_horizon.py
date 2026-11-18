@@ -136,3 +136,10 @@ def test_cible_alpha_retire_le_beta():
     assert abs(beta_alp) < beta_rel / 2
     assert alp["diagnostics"]["cible"] == "alpha"
     assert set(alp["diagnostics"]["regimes"]) == {"hausse", "baisse"}
+
+
+def test_exclure_un_facteur():
+    raw, syms = _marche(persistance=True)
+    ligne, _ = mh.entrainer_horizon(raw, syms, "6m", exclure=["liquidite"])
+    assert "liquidite" not in {x["feature"] for x in ligne["importance"]}
+    assert ligne["diagnostics"]["facteurs_exclus"] == ["liquidite"]

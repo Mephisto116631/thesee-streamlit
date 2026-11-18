@@ -207,9 +207,10 @@ def _importances(m, config: str) -> np.ndarray:
     return m.feature_importances_
 
 
-def choisir_config(train: pd.DataFrame, h: int) -> tuple[str, dict]:
+def choisir_config(train: pd.DataFrame, h: int, feats: list[str] | None = None) -> tuple[str, dict]:
     """Choisit le réglage sur le passé seulement : entraînement sur les 70 % les plus anciens,
     validation (IC) sur les 30 % les plus récents, avec embargo entre les deux."""
+    feats = feats or FEATURES
     dates = np.sort(train["date"].unique())
     if len(dates) < 40:
         return CONFIG_DEFAUT, {}
@@ -221,7 +222,7 @@ def choisir_config(train: pd.DataFrame, h: int) -> tuple[str, dict]:
         return CONFIG_DEFAUT, {}
     scores = {}
     for nom in CONFIGS:
-        val["pred"] = _modele(nom).fit(fit[FEATURES], fit["y"]).predict(val[FEATURES])
+        val["pred"] = _modele(nom).fit(fit[feats], fit["y"]).predict(val[feats])
         ic = _ic_par_date(val, "pred")
         scores[nom] = float(ic.mean()) if len(ic) else -1.0
     return max(scores, key=scores.get), scores
@@ -278,8 +279,9 @@ def ic_par_regime(t: pd.DataFrame) -> dict:
     return out
 
 
-def evaluer(data: pd.DataFrame, h: int) -> dict:
+def evaluer(data: pd.DataFrame, h: int, feats: list[str] | None = None) -> dict:
     """Walk-forward avec embargo de h jours entre entraînement et test."""
+    feats = feats or FEATURES
     dates = np.sort(data["date"].unique())
     if len(dates) < 60:
         return {}
@@ -292,9 +294,9 @@ def evaluer(data: pd.DataFrame, h: int) -> dict:
         test = data[data["date"].isin(bloc)].copy()
         if len(train) < 2000 or test.empty:
             continue
-        config, _ = choisir_config(train, h)
-        m = _modele(config).fit(train[FEATURES], train["y"])
-        test["pred"] = m.predict(test[FEATURES])
+        config, _ = choisir_config(train, h, feats)
+        m = _modele(config).fit(train[feats], train["y"])
+        test["pred"] = m.predict(test[feats])
         ic = _ic_par_date(test, "pred")
         fenetres.append({"debut": str(debut.date()), "fin": str(pd.Timestamp(bloc[-1]).date()),
                          "ic": float(ic.mean()) if len(ic) else None, "n_dates": int(len(ic)),
@@ -387,10 +389,12 @@ def membres_a_date(data: pd.DataFrame, composition: pd.DataFrame, par_secteur: b
 def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
                       composition: pd.DataFrame | None = None,
                       secteurs: dict[str, str] | None = None,
-                      cible_mode: str = "relatif") -> tuple[dict, pd.DataFrame]:
+                      cible_mode: str = "relatif",
+                      exclure: list[str] | None = None) -> tuple[dict, pd.DataFrame]:
     """Évalue puis entraîne le modèle final ; retourne (ligne model_runs, scores du jour).
     `composition` (charger_composition()) : évaluation sur les seuls membres de l'indice à chaque date."""
     h = HORIZONS[nom]
+    feats = [f for f in FEATURES if f not in (exclure or [])]   # laboratoire : facteurs retirés
     px, X = caracteristiques(market_raw, symboles, secteurs)
     if X.empty:
         return {}, pd.DataFrame()
@@ -403,15 +407,16 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
         filtre = membres_a_date(data, composition, cible_mode == "alpha_secteur")
         if not filtre.empty:
             data, point_in_time = filtre, True
-    ev = evaluer(data, h)
+    ev = evaluer(data, h, feats)
     if ev:
         ev["cible"] = cible_mode
+        ev["facteurs_exclus"] = list(exclure or [])
         ev["composition_historique"] = point_in_time
         ev["titres_par_date"] = float(data.groupby("date")["symbol"].size().mean())
     if data.empty:
         return {}, pd.DataFrame()
-    config, ic_validation = choisir_config(data, h)      # réglage du modèle final : même règle, sur tout le passé
-    m = _modele(config).fit(data[FEATURES], data["y"])
+    config, ic_validation = choisir_config(data, h, feats)      # réglage du modèle final : même règle, sur tout le passé
+    m = _modele(config).fit(data[feats], data["y"])
     if ev:
         ev["config"] = config
         ev["config_libelle"] = LIBELLES_CONFIGS[config]
@@ -428,7 +433,7 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
     derniere = X["date"].max()
     aujourd_hui = X[X["date"] == derniere].dropna(subset=FEATURES).copy()
     if source == "modele":
-        aujourd_hui["pred"] = m.predict(aujourd_hui[FEATURES])
+        aujourd_hui["pred"] = m.predict(aujourd_hui[feats])
     elif source == "multifacteurs":
         aujourd_hui["pred"] = score_multifacteurs(aujourd_hui)
     else:
@@ -437,7 +442,7 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
     scores = aujourd_hui[["symbol", "score"]].assign(horizon=nom, date=str(pd.Timestamp(derniere).date()))
 
     imp = sorted([{"feature": f, "label": LABELS[f], "importance": float(v)}
-                  for f, v in zip(FEATURES, _importances(m, config))], key=lambda d: -d["importance"])
+                  for f, v in zip(feats, _importances(m, config))], key=lambda d: -d["importance"])
     cle_ic = {"modele": ("ic_moyen", "t_stat"), "momentum": ("ic_momentum", "t_momentum"),
               "multifacteurs": ("ic_multifacteurs", "t_multifacteurs")}[source]
     ic, t = ev.get(cle_ic[0]), ev.get(cle_ic[1])
