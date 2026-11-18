@@ -63,3 +63,16 @@ def test_facteur_splits():
     sp = pd.DataFrame({"symbol": ["AAA"], "date": [pd.Timestamp("2020-07-01")], "ratio": [4.0]})
     f = fsec.facteur_splits(sp, dates, ["AAA", "BBB"])
     assert list(f["AAA"]) == [4.0, 1.0] and list(f["BBB"]) == [1.0, 1.0]
+
+
+def test_types_apres_concatenation():
+    """Régression : une entreprise sans données laissait des dates en type « object »."""
+    vide = fsec.extraire({}, "VIDE")
+    plein = fsec.extraire(FAITS, "AAA")
+    tout = pd.concat([vide.astype(object), plein.astype(object)], ignore_index=True)
+    tout["end"] = pd.to_datetime(tout["end"])
+    tout["filed"] = pd.to_datetime(tout["filed"])
+    tout["val"] = pd.to_numeric(tout["val"])
+    dates = pd.DatetimeIndex(["2021-03-01"])
+    fd = fsec.caracteristiques_fondamentales(tout, pd.DataFrame({"AAA": [5.0]}, index=dates), None, dates)
+    assert fd["fd_rentabilite"].iloc[0] == 0.4

@@ -115,8 +115,14 @@ def telecharger(symboles: list[str], ua: str | None = None) -> pd.DataFrame:
             continue
         frames.append(extraire(_get(URL_FAITS.format(cik=cik), ua), s))
     print(f"[SEC] {len(frames)} entreprises, {len(manquants)} sans CIK (ETF, titres étrangers…)")
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
+    frames = [f for f in frames if not f.empty]
+    out = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
         columns=["symbol", "variable", "end", "filed", "val"])
+    # Types explicites : une concaténation avec des tables vides laisse des colonnes « object »
+    out["end"] = pd.to_datetime(out["end"])
+    out["filed"] = pd.to_datetime(out["filed"])
+    out["val"] = pd.to_numeric(out["val"], errors="coerce")
+    return out
 
 
 def facteur_splits(splits: pd.DataFrame, dates: pd.DatetimeIndex, symboles: list[str]) -> pd.DataFrame:
@@ -145,6 +151,8 @@ def _croissance(faits: pd.DataFrame, var: str) -> pd.DataFrame:
     """Variation sur ~1 an : valeur / valeur de la période close ~12 mois plus tôt − 1."""
     f = _dernier_connu(faits, var).rename(columns={"val": "v"})
     tout = faits[faits["variable"] == var][["symbol", "end", "val"]].rename(columns={"end": "end_prec", "val": "v_prec"})
+    f["symbol"] = f["symbol"].astype(str)
+    tout["symbol"] = tout["symbol"].astype(str)
     f = f.assign(cle=f["end"] - pd.Timedelta(days=365)).sort_values("cle")
     tout = tout.sort_values("end_prec")
     m = pd.merge_asof(f, tout, left_on="cle", right_on="end_prec", by="symbol",
@@ -156,7 +164,8 @@ def _croissance(faits: pd.DataFrame, var: str) -> pd.DataFrame:
 def _asof(echantillon: pd.DataFrame, valeurs: pd.DataFrame, col: str, nom: str) -> pd.DataFrame:
     """Rattache à chaque (date, titre) la dernière valeur PUBLIÉE avant cette date."""
     v = valeurs.dropna(subset=[col]).sort_values("filed")[["symbol", "filed", col]].rename(columns={col: nom})
-    e = echantillon.sort_values("date")
+    v["symbol"] = v["symbol"].astype(str)
+    e = echantillon.assign(symbol=echantillon["symbol"].astype(str)).sort_values("date")
     return pd.merge_asof(e, v, left_on="date", right_on="filed", by="symbol", direction="backward").drop(columns="filed")
 
 
@@ -165,8 +174,12 @@ def caracteristiques_fondamentales(faits: pd.DataFrame, px_ajuste: pd.DataFrame,
     """Facteurs fondamentaux BRUTS (non classés) par (date, symbol), sans information future."""
     symboles = list(px_ajuste.columns)
     ech = pd.MultiIndex.from_product([dates, symboles], names=["date", "symbol"]).to_frame(index=False)
+    ech["symbol"] = ech["symbol"].astype(str)
     if faits is None or faits.empty:
         return ech.assign(**{f: np.nan for f in FEATURES_FD})
+    faits = faits.assign(symbol=faits["symbol"].astype(str), variable=faits["variable"].astype(str),
+                         end=pd.to_datetime(faits["end"]), filed=pd.to_datetime(faits["filed"]),
+                         val=pd.to_numeric(faits["val"], errors="coerce"))
 
     for var in ["actifs", "fonds_propres", "resultat_net", "marge_brute", "chiffre_affaires",
                 "cout_ventes", "flux_exploitation", "actions"]:
@@ -187,6 +200,7 @@ def caracteristiques_fondamentales(faits: pd.DataFrame, px_ajuste: pd.DataFrame,
     fact = facteur_splits(splits, pd.DatetimeIndex(dates), symboles)
     px_reel = (px_ajuste.reindex(dates) * fact).stack(future_stack=True).rename("px_reel").reset_index()
     px_reel.columns = ["date", "symbol", "px_reel"]
+    px_reel["symbol"] = px_reel["symbol"].astype(str)
     ech = ech.merge(px_reel, on=["date", "symbol"], how="left")
     capi = ech["px_reel"] * ech["actions"]
     capi = capi.where(capi > 0)

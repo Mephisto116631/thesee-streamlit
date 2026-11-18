@@ -97,12 +97,18 @@ def main(noms: list[str]):
     n_essais = len(essais)
     lot = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M")
 
+    echecs = []
     for nom in noms:
         mode, exclus, description, *opt = EXPERIENCES[nom]
         avec_sec = bool(opt and opt[0])
         for h in HORIZONS_TEST:
-            ligne, _ = mh.entrainer_horizon(raw, snap["symbol"].tolist(), h, compo, secteurs, mode, exclus,
-                                            faits_sec if avec_sec else None, splits if avec_sec else None)
+            try:
+                ligne, _ = mh.entrainer_horizon(raw, snap["symbol"].tolist(), h, compo, secteurs, mode, exclus,
+                                                faits_sec if avec_sec else None, splits if avec_sec else None)
+            except Exception as e:   # une variante en échec ne doit pas empêcher les autres
+                print(f"[LABO][ERREUR] {nom} {h} : {type(e).__name__} : {e}")
+                echecs.append(f"{nom} {h}")
+                continue
             if not ligne:
                 print(f"[LABO][WARN] {nom} {h} : pas assez de données")
                 continue
@@ -120,6 +126,8 @@ def main(noms: list[str]):
                   f"(seuil {seuil:.2f}, {n_essais} essais) hausse {reg.get('hausse', {}).get('ic')} "
                   f"baisse {reg.get('baisse', {}).get('ic')} -> {v}")
     print(f"[LABO] Terminé en {time.time() - t0:.0f} s")
+    if echecs:
+        sys.exit(f"Variantes en échec : {', '.join(echecs)}")
 
 
 if __name__ == "__main__":
