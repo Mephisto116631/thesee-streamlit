@@ -18,6 +18,12 @@ Règle d'or : un chiffre ne sert à décider dans l'appli que s'il est **prouvé
 | **Force de la preuve** | t / seuil, en %. 100 % = probant (affiché ainsi dans l'appli depuis la PR #23). |
 | **Probant** | IC > 3 %, au moins 8 périodes indépendantes (`MIN_PERIODES_SIGNAL`), et force de la preuve ≥ 100 %. |
 | **Walk-forward** | 4 fenêtres de test successives ; le modèle n'est entraîné que sur le passé, avec un embargo de la durée de l'horizon. |
+| **QLIKE** | Perte d'une prévision de volatilité : r/p − log(r/p) − 1 sur les variances (p prévue, r réalisée). 0 si parfaite ; robuste aux erreurs de mesure (Patton, 2011). |
+| **Diebold-Mariano** | Test de l'écart de perte moyen entre deux prévisions, avec un écart-type de Newey-West (les prévisions à 6 mois se chevauchent). |
+| **EWMA** | Moyenne mobile exponentielle des rendements² (λ = 0,94, méthode RiskMetrics des banques). |
+| **GARCH(1,1)** | Variance de demain = ω + α·rendement² d'aujourd'hui + β·variance d'aujourd'hui : la volatilité vient par vagues, puis revient vers son niveau de long terme. |
+| **HAR** | Régression de la variance future sur les variances du dernier jour, de la semaine, du mois et du trimestre (Corsi, 2009) ; réputée très dure à battre. |
+| **PBO** | Probability of Backtest Overfitting (Bailey et López de Prado) : probabilité que la meilleure variante d'un backtest ne soit bonne que par chance. |
 | **Biais du survivant** | Évité : à chaque date, seuls les membres du S&P 500 **de cette date** (`data/sp500_historique.csv`). |
 
 Familles d'essais (chacune a son propre seuil corrigé) : rendement, risque, portefeuille, régime de marché.
@@ -145,6 +151,25 @@ très bien la volatilité future) : seul ce gain est testé.
 
 ---
 
+### 4.8 Examen approfondi de l'IA de volatilité (PR #26)
+- **Pourquoi** : l'IA de volatilité est le seul modèle probant et elle pilote le risque du portefeuille. Mais sa preuve avait des angles morts :
+  - **référence facile** : la seule comparaison était la volatilité des 3 derniers mois ;
+  - **ordre seulement** : le test portait sur l'ordre des titres, pas sur le niveau, alors que l'appli annonce « 15 % de risque » ;
+  - **pas de 2008** : la crise n'était pas dans la période de test ;
+  - **aucun placebo** ;
+  - **backtest sans frais**.
+- **Données** : historique depuis 1998, membres du S&P 500 à chaque date. La période de test (dernier tiers des dates, 4 fenêtres) couvre 2008.
+  Limite connue : Yahoo n'a pas les titres disparus de la cote, donc un biais du survivant partiel subsiste.
+- **Règles de décision, fixées AVANT les essais** :
+  1. L'IA reste si elle bat la **meilleure** des trois références (EWMA, GARCH, HAR) en QLIKE, avec une force de preuve ≥ 100 % (Diebold-Mariano, seuil corrigé pour 3 comparaisons). Sinon, l'appli bascule sur cette référence, plus simple et explicable, avec le même garde-fou.
+  2. Biais de niveau médian > 10 % → facteur de correction appris sur le passé seulement.
+     « Je limite le risque » dépassé plus de 30 % des semestres → l'appli l'écrit en clair.
+     Fourchette « mauvais cas 5 % » touchée beaucoup plus de 5 % du temps → projection à queues épaisses (loi de Student).
+  3. Placebo : avec une cible mélangée, |IC| < 2 % ; avec une fuite volontaire, l'IC doit exploser (le test sait voir une fuite). Sinon, on arrête tout et on cherche la fuite.
+  4. Crises, VIX, secteurs, tailles : on rapporte les résultats. Si l'IA est nettement moins bonne en crise, l'appli le dit.
+  5. Sensibilité (gain positif avec les 4 réglages), autre marché (S&P MidCap 400, même signe), PBO < 50 % : en cas d'échec, c'est documenté et la décision revient à l'utilisateur.
+- **Résultats** : § 6.
+
 ## 5. Résultats du backtest de la base large (PR #25)
 
 Expérience `backtest_base_large`, lancée le 19/11/2026 :
@@ -193,3 +218,78 @@ nettement moins bien.
 | Risque attendu (volatilité) | 20,6 % | 15,5 % |
 | Rentabilité de long terme (hypothèse CAPM) | 14,1 % | 12,2 % |
 | Données publiées pour l'appli | covariance 40 x 40 | 494 titres, 20 facteurs, 83 Ko |
+
+## 6. Résultats de l'examen approfondi (PR #26)
+
+Essais `examen_*` lancés le 19/11/2026 :
+- **Données** : historique depuis 1998, test du 20/02/2008 à 2026 (919 dates hebdomadaires), membres du S&P 500 à chaque date.
+- **Règles** : celles du § 4.8, fixées avant les essais.
+
+### 6.1 Contre les méthodes reconnues : **règle 1 déclenchée (bascule sur HAR)**
+
+| Méthode | QLIKE (plus bas = mieux) | IC (ordre des titres) |
+|---|---|---|
+| **HAR** | **0,332** | 74,9 % |
+| GARCH(1,1) | 0,374 | 76,8 % |
+| IA | 0,425 | **78,3 %** |
+| Volatilité 3 mois | 0,449 | 75,4 % |
+| EWMA | 0,493 | 72,7 % |
+
+- **Niveau du risque (QLIKE)** : l'IA ne bat pas HAR ; c'est l'inverse (force de la preuve −37 %). Elle ne bat pas non plus GARCH (−43 %). Elle bat presque EWMA (95 % du seuil).
+- **Ordre des titres (IC)** : l'IA reste la meilleure (78,3 %, contre 74,9 % pour HAR).
+- **Pourquoi l'écart** : la perte QLIKE punit beaucoup plus une sous-estimation du risque qu'une surestimation. HAR surestime en médiane (+27 %, § 6.2) et évite ainsi les fortes sous-estimations. L'IA est juste en médiane, mais sous-estime lourdement certaines dates de choc.
+  - Hors crises, l'IA fait mieux que HAR sur 68 % des dates, mais elle perd en moyenne à cause de ces dates.
+- **Conséquence** : HAR prévoit mieux le **niveau** du risque (ce que l'appli affiche, et la limite du mode « Je limite le risque »). L'IA prévoit mieux l'**ordre** (ce qui compte le plus pour composer le portefeuille).
+
+### 6.2 Calibration du niveau : IA calibrée en médiane, mais trop dispersée
+- **Biais médian prévu / réel** : IA −1 % (calibrée), volatilité 3 mois −1 %, EWMA −4 %, GARCH +10 %, HAR +27 %.
+- **Par décile, l'IA est trop dispersée** : elle sous-estime les titres calmes (−21 % pour le 1er décile) et surestime les plus agités (+43 % pour le dernier). Il lui manque un retour vers la moyenne.
+
+### 6.3 Crises : l'IA est moins bonne en niveau pendant les chocs
+- **Contre HAR, en QLIKE**, l'IA est meilleure dans une seule crise sur 6 (2015-2016). Elle n'a été meilleure que sur 5 % des dates du Covid et 17 % des dates de 2008.
+- **En ordre des titres (IC)**, elle reste comparable ou meilleure, sauf en 2008 (84,5 % contre 85,4 %).
+- **VIX** : en marché nerveux (VIX > 25), l'IA n'est meilleure que sur 48 % des dates.
+- **Secteurs et tailles** : l'IC de l'IA est meilleur presque partout, sauf l'énergie (78,1 % contre 78,8 %).
+
+### 6.4 Placebo : **règle 3 déclenchée** (|IC| avec cible mélangée = 8,8 % > 2 %)
+- **Cible mélangée** : IC de −8,8 %. Le signe est **négatif** : une fuite du futur donnerait un IC positif et élevé.
+- **Fuite volontaire** : IC de 95,7 %. Le test détecte bien une fuite quand il y en a une.
+- **Facteur aléatoire** : classé dernier sur 15, importance 0.
+- **Interprétation probable** : avec une cible mélangée, le modèle ajuste du bruit. Comme la volatilité est très persistante d'une semaine à l'autre, ce bruit garde le même signe sur toutes les dates. Un seul tirage ne suffit donc pas.
+- **À confirmer** par la moyenne de plusieurs tirages avant de conclure, comme le prévoit la règle 3.
+
+### 6.5 Sensibilité et autre marché : réussis
+- **Gain d'IC sur la volatilité 3 mois** : positif avec les 4 réglages (+2,7 à +3,1 points, t de 4,6 à 7,2).
+- **S&P MidCap 400**, 397 titres jamais vus : IC de 78,3 % contre 77,3 %, gain +1,0 point (t 2,3). Même signe : le modèle se généralise.
+
+### 6.6 Backtest réel 2006-2026 : **règle 5 déclenchée (PBO 85 %)**, frais très lourds
+- **Rééquilibrage chaque mois** vers la nouvelle recommandation, comme si l'on suivait l'appli à la lettre. Capital de 5 000 €, 1 € par ordre, 0,1 % d'écart de prix.
+
+| Portefeuille | Rendement brut | Rendement net de frais | Volatilité | Ordres / an | Frais / an |
+|---|---|---|---|---|---|
+| Sharpe max, volatilité historique | 11,4 % | 8,3 % | 21,0 % | 171 | 238 € |
+| Sharpe max, IA | 8,6 % | 4,0 % | 19,8 % | 190 | 266 € |
+| Variance min, volatilité historique | 6,7 % | 4,1 % | 14,3 % | 143 | 171 € |
+| Variance min, IA | 7,0 % | 1,9 % | 14,6 % | 195 | 256 € |
+
+- **Frais** : suivre chaque mois la nouvelle recommandation parmi 500 titres change presque tout le portefeuille, avec environ 170 à 190 ordres par an. Les frais coûtent alors 3 à 5 points de rendement par an : c'est **le problème pratique n° 1**.
+- **Promesse « Je limite le risque »** :
+  - avec la volatilité IA, la limite de 15 % est dépassée **61 %** des semestres, et celle de 12 % **68 %** des semestres ;
+  - avec la volatilité historique : 34 % et 51 %.
+
+  Les deux dépassent la règle 2 (30 %) : l'appli doit le dire.
+- **Fourchette à 1 an** : le « mauvais cas 5 % » a été touché **10,8 %** des fois avec la volatilité IA, et 5,6 % avec la volatilité historique.
+- **PBO de 85 %** : parmi les 16 variantes testées, celle qui gagne sur une moitié de la période finit le plus souvent dans la moitié basse sur l'autre. Le choix de variante n'est pas robuste.
+
+### 6.7 Décisions
+L'**IA de volatilité garde sa place pour l'ordre des titres**, qu'elle prévoit mieux que toutes les références.
+Les règles 1, 3 et 5, ainsi que les constats sur la promesse de risque et sur les frais, appellent des décisions de
+l'utilisateur. Décisions du 19/11/2026 :
+
+| Constat | Décision de l'utilisateur | Mise en œuvre |
+|---|---|---|
+| Règle 1 : HAR prévoit mieux le niveau, l'IA mieux l'ordre | **Hybride** : l'IA pour l'ordre des titres, HAR pour le niveau | Nouvel essai (compté dans le seuil), publié seulement s'il est probant, avec le même garde-fou (PR #27) |
+| Frais : ~180 ordres/an en suivant chaque recommandation mensuelle | **Rééquilibrer 1 à 2 fois par an** ; entre-temps, garder les titres | Recommandation figée entre deux révisions, testée au backtest avec frais (PR #27) |
+| Limite « Je limite le risque » dépassée de 34 à 68 % des semestres | **Marge de sécurité** apprise sur le passé, et fréquence réelle de dépassement affichée | PR #27 |
+| Règle 3 : placebo, un seul tirage à −8,8 % | Confirmer avec plusieurs tirages, comme prévu par la règle | PR #27 |
+| Règle 5 : PBO de 85 % | Ne plus choisir parmi des variantes : une seule méthode, fixée à l'avance | Conséquence des décisions ci-dessus |

@@ -157,6 +157,24 @@ def get_nasdaq100_tickers() -> pd.DataFrame:
         })
 
 
+def get_sp400_tickers() -> pd.DataFrame:
+    """Membres ACTUELS du S&P MidCap 400 (Wikipedia) : sert seulement au laboratoire, pour tester
+    l'IA de volatilité sur un autre marché que celui où elle a appris. [symbol, nom, secteur]"""
+    tables = _read_html_with_ua("https://en.wikipedia.org/wiki/List_of_S%26P_400_companies")
+    for t in tables:
+        if isinstance(t.columns, pd.MultiIndex):
+            t.columns = [" ".join(str(x) for x in c) for c in t.columns]
+        cols = {str(c).lower(): c for c in t.columns}
+        col_s = next((c for k, c in cols.items() if "symbol" in k or "ticker" in k), None)
+        if col_s is not None and len(t) >= 300:
+            col_n = next((c for k, c in cols.items() if "security" in k or "company" in k), col_s)
+            col_sec = next((c for k, c in cols.items() if "sector" in k), None)
+            return pd.DataFrame({"symbol": t[col_s].astype(str).str.replace(".", "-", regex=False),
+                                 "nom": t[col_n].astype(str),
+                                 "secteur": t[col_sec].astype(str) if col_sec is not None else "Inconnu"})
+    raise ValueError("table des composants du S&P 400 introuvable")
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_etf_tickers() -> pd.DataFrame:
     return pd.DataFrame({

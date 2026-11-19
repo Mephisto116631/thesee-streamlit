@@ -26,6 +26,8 @@ import portefeuille as pf
 
 VARIANTES = ["hist_3a", "naif_3m", "ia"]
 PORTEFEUILLES = {"variance_min": np.nan, "sharpe_max": None}   # cible passée à pf.optimiser
+# Mode « Je limite le risque » de l'appli : le plus rentable sous une volatilité maximale
+PORTEFEUILLES_RISQUE = {"risque_12": 0.12, "risque_15": 0.15}
 BASES = ["sp500", "momentum40"]
 TENUE = 21              # jours de bourse entre deux rééquilibrages
 HORIZON_IA = "6m"
@@ -58,8 +60,10 @@ def _vol_ia(rangs: pd.Series, vol_3m_membres: pd.Series) -> pd.Series:
 
 def backtest(market_raw: pd.DataFrame, symboles: list[str], composition: pd.DataFrame | None,
              debut: str = "2013-01-01", pas_semaines: int = 4, base: str | list[str] = "momentum40",
-             variantes: list[str] | None = None, secteurs: dict | None = None) -> pd.DataFrame:
+             variantes: list[str] | None = None, secteurs: dict | None = None,
+             portefeuilles: dict | None = None, garder_poids: bool = False) -> pd.DataFrame:
     variantes = variantes or VARIANTES
+    portefeuilles = portefeuilles or PORTEFEUILLES
     bases = [base] if isinstance(base, str) else list(base)   # plusieurs bases : IA entraînée une seule fois
     h = mh.HORIZONS[HORIZON_IA]
     px_tout, X = mh.caracteristiques(market_raw, symboles)
@@ -110,8 +114,8 @@ def backtest(market_raw: pd.DataFrame, symboles: list[str], composition: pd.Data
                 pts = pf.frontiere_lambdas(B, D, mu)
                 if not pts:
                     continue
-                for nom_pf, cible in PORTEFEUILLES.items():
-                    pt = max(pts, key=lambda q: q["sharpe"]) if cible is None else min(pts, key=lambda q: q["volatilite"])
+                for nom_pf, cible in portefeuilles.items():
+                    pt = _choisir(pts, cible)
                     wv = np.zeros(len(cand))
                     wv[pt["idx"]] = pt["w"] / pt["w"].sum()
                     r = futur.values @ wv
@@ -121,7 +125,10 @@ def backtest(market_raw: pd.DataFrame, symboles: list[str], composition: pd.Data
                                    "vol_reelle": float(r.std() * np.sqrt(pf.JOURS)),
                                    "vol_prevue": float(np.sqrt(pf.variance(B, D, wv))),
                                    "rendement": float(np.prod(1 + r) - 1), "n_lignes": int((wv > 1e-6).sum()),
-                                   "poids_secteur_max": float(poids_sect.max()) if len(poids_sect) else None})
+                                   "poids_secteur_max": float(poids_sect.max()) if len(poids_sect) else None,
+                                   "rendement_attendu": float(wv @ mu),
+                                   **({"poids": {cand[k]: float(wv[k]) for k in np.flatnonzero(wv > 1e-6)}}
+                                      if garder_poids else {})})
         # Référence : l'indice lui-même (SPY) sur le même mois
         rm = marche.iloc[marche.index.get_indexer([px_tout.index[i]])[0] + 1:][:TENUE].fillna(0.0).values
         if len(rm):
@@ -129,6 +136,118 @@ def backtest(market_raw: pd.DataFrame, symboles: list[str], composition: pd.Data
                            "vol_reelle": float(rm.std() * np.sqrt(pf.JOURS)), "vol_prevue": None,
                            "rendement": float(np.prod(1 + rm) - 1), "n_lignes": 1, "poids_secteur_max": None})
     return pd.DataFrame(lignes)
+
+
+def _choisir(pts: list[dict], cible) -> dict:
+    """None : meilleur Sharpe ; nan : variance minimale ; nombre : le plus rentable sous ce risque
+    (comme choisirPointRisque dans l'appli), sinon le moins risqué."""
+    if cible is None:
+        return max(pts, key=lambda q: q["sharpe"])
+    if not np.isfinite(cible):
+        return min(pts, key=lambda q: q["volatilite"])
+    sous = [q for q in pts if q["volatilite"] <= cible]
+    return max(sous, key=lambda q: q["rendement"]) if sous else min(pts, key=lambda q: q["volatilite"])
+
+
+# ------------------------------------------------------------------------------
+# Backtest « réel » : frais, rééquilibrage par seuil, promesse de risque, fourchette
+# ------------------------------------------------------------------------------
+FRAIS_ORDRE = 1.0       # € par ordre (préréglage Trade Republic)
+ECART_PRIX = 0.001      # 0,1 % payé sur chaque montant échangé (écart achat / vente)
+CAPITAL = 5000.0        # € investis
+DERIVE_MAX = 0.05       # on rééquilibre si une ligne s'écarte de plus de 5 pts de sa cible
+
+
+def frais_et_ordres(poids_avant: dict, poids_cible: dict, capital: float, frais_ordre: float = FRAIS_ORDRE,
+                    ecart: float = ECART_PRIX) -> tuple[float, int, float]:
+    """(coût en €, nombre d'ordres, rotation) pour passer de poids_avant à poids_cible."""
+    titres = set(poids_avant) | set(poids_cible)
+    echanges = {s: abs(poids_cible.get(s, 0.0) - poids_avant.get(s, 0.0)) for s in titres}
+    ordres = sum(1 for v in echanges.values() if v * capital >= 1.0)
+    rotation = sum(echanges.values())
+    return ordres * frais_ordre + rotation * capital * ecart, ordres, rotation
+
+
+def backtest_reel(res: pd.DataFrame, px: pd.DataFrame, nom_pf: str, variante: str = "ia", base: str = "sp500",
+                  capital: float = CAPITAL, derive_max: float = DERIVE_MAX) -> dict:
+    """Rejoue jour par jour un portefeuille du backtest (lignes avec `poids`) en ne rééquilibrant que si
+    la composition change ou si une ligne dérive de plus de `derive_max`, frais déduits."""
+    g = res[(res["portefeuille"] == nom_pf) & (res["variante"] == variante) & (res["base"] == base)]
+    g = g.dropna(subset=["poids"]).sort_values("date") if "poids" in g else g.iloc[0:0]
+    if g.empty:
+        return {}
+    ret = px.pct_change().fillna(0.0)
+    cibles = {pd.Timestamp(d): p for d, p in zip(g["date"], g["poids"])}
+    jours = ret.index[(ret.index > g["date"].min()) & (ret.index <= g["date"].max() + pd.Timedelta(days=31))]
+    valeur, w, cible = capital, {}, {}
+    serie, cout_total, n_ordres, n_reeq = [], 0.0, 0, 0
+    dates_cibles = sorted(cibles)
+    j = 0
+    for jour in jours:
+        while j < len(dates_cibles) and dates_cibles[j] < jour:
+            cible = cibles[dates_cibles[j]]
+            j += 1
+            derive = max([abs(w.get(s, 0) - cible.get(s, 0)) for s in set(w) | set(cible)] or [1])
+            if set(k for k, v in w.items() if v > 1e-4) != set(cible) or derive > derive_max:
+                cout, ordres, _ = frais_et_ordres(w, cible, valeur)
+                valeur -= cout
+                cout_total += cout
+                n_ordres += ordres
+                n_reeq += 1
+                w = dict(cible)
+        r = sum(wi * ret.at[jour, s] for s, wi in w.items() if s in ret.columns)
+        valeur *= 1 + r
+        if w:
+            tot = sum(wi * (1 + ret.at[jour, s]) for s, wi in w.items() if s in ret.columns) or 1
+            w = {s: wi * (1 + ret.at[jour, s]) / tot for s, wi in w.items() if s in ret.columns}
+        serie.append((jour, r))
+    r = pd.Series(dict(serie))
+    annees = len(r) / 252
+    courbe = (1 + r).cumprod()
+    # Rendement brut (sans frais) des mêmes positions, pour mesurer ce que coûtent les frais
+    brut = float(courbe.iloc[-1] ** (1 / annees) - 1) if annees > 0 else None
+    net = float((valeur / capital) ** (1 / annees) - 1) if annees > 0 else None
+    out = {"rendement_brut": brut, "rendement_net": net, "volatilite": float(r.std() * np.sqrt(252)),
+           "ordres_par_an": n_ordres / annees if annees else None, "reequilibrages_par_an": n_reeq / annees if annees else None,
+           "frais_par_an": cout_total / annees if annees else None, "annees": annees}
+    # Promesse de risque : volatilité réelle par semestre, comparée à la limite
+    limite = PORTEFEUILLES_RISQUE.get(nom_pf)
+    if limite:
+        sem = r.groupby([r.index.year, (r.index.month - 1) // 6]).std() * np.sqrt(252)
+        out["limite"] = limite
+        out["part_semestres_au_dessus"] = float((sem > limite).mean())
+        out["rapport_reel_limite_median"] = float((sem / limite).median())
+        out["n_semestres"] = int(len(sem))
+    return out
+
+
+def couverture_fourchette(res: pd.DataFrame, px: pd.DataFrame, nom_pf: str = "sharpe_max", variante: str = "ia",
+                          base: str = "sp500", z: float = 1.6449) -> dict:
+    """La fourchette à 1 an de l'appli (log-normale, 5 % / 95 %) contient-elle bien 90 % des résultats ?
+    Pour chaque date : portefeuille gardé 1 an, comparé aux bornes calculées avec le risque prévu et la
+    rentabilité de long terme (hypothèse CAPM)."""
+    g = res[(res["portefeuille"] == nom_pf) & (res["variante"] == variante) & (res["base"] == base)]
+    g = g.dropna(subset=["poids"]) if "poids" in g else g.iloc[0:0]
+    bas = haut = n = 0
+    for _, l in g.iterrows():
+        d = pd.Timestamp(l["date"])
+        i = px.index.searchsorted(d, side="right")
+        if i + 252 > len(px):
+            continue
+        fen = px.iloc[i - 1:i + 252]
+        syms = [s for s in l["poids"] if s in fen.columns]
+        if not syms:
+            continue
+        w = np.array([l["poids"][s] for s in syms])
+        r1 = float(((fen[syms].iloc[-1] / fen[syms].iloc[0]).fillna(1).values @ w) / w.sum() - 1)
+        sig, mu = l["vol_prevue"], l.get("rendement_attendu", 0.08)
+        m = np.log1p(mu) - sig ** 2 / 2
+        q05, q95 = np.expm1(m - z * sig), np.expm1(m + z * sig)
+        bas += r1 < q05
+        haut += r1 > q95
+        n += 1
+    return {"n": n, "part_sous_mauvais_cas": bas / n if n else None, "part_au_dessus_bon_cas": haut / n if n else None,
+            "attendu": 0.05}
 
 
 def comparer_bases(res: pd.DataFrame, nom_pf: str = "sharpe_max", variante: str = "hist_3a") -> dict:
@@ -165,7 +284,7 @@ def comparer_bases(res: pd.DataFrame, nom_pf: str = "sharpe_max", variante: str 
 def resume(res: pd.DataFrame) -> dict:
     """Moyennes par variante et comparaisons appariées (mêmes mois) de l'IA contre les deux autres."""
     out = {}
-    for nom_pf, g in res[res["portefeuille"] != "indice"].groupby("portefeuille"):
+    for nom_pf, g in res[res["portefeuille"] != "indice"].drop(columns=["poids"], errors="ignore").groupby("portefeuille"):
         tab = g.pivot_table(index="date", columns="variante", values="vol_reelle")
         prev = g.pivot_table(index="date", columns="variante", values="vol_prevue")
         rend = g.pivot_table(index="date", columns="variante", values="rendement")
