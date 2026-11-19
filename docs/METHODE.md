@@ -61,6 +61,7 @@ Tous les essais sont enregistrés dans la table Supabase `experiences` (onglet A
 | IA de volatilité + comptes SEC | 6 mois | 76,4 % | 6,48 / 2,97 | probant, sans gain sur la version sans comptes |
 | IA de perte maximale (avec ou sans comptes) | 6 mois / 1 an | 42,7 % (réf. 40,6 %) | 2,40 / 2,97 au mieux | non probant |
 | Backtest portefeuille Hold, volatilité IA | mensuel 2013-2026 | volatilité réelle −1,6 pt | 7,16 / 2,52 | probant (moins risqué ; rendement un peu plus faible) |
+| Base large (tout le S&P 500) contre 40 au momentum | mensuel 2013-2026 | écart de rendement mensuel ≈ 0 | 0,15 / 2,52 (Sharpe max) | équivalente : base large adoptée (§ 5) |
 
 Pour l'IA de risque, l'IC compte comme gain **par rapport à la référence** (la volatilité des 3 derniers mois prévoit déjà
 très bien la volatilité future) : seul ce gain est testé.
@@ -136,7 +137,7 @@ très bien la volatilité future) : seul ce gain est testé.
   apparié, sur 2013-2026, avec le même moteur.
 - **Règle de décision** : adopter la base large (elle retire un pari non prouvé), **sauf** si elle est nettement moins
   bonne (force de la preuve ≥ 100 % dans le mauvais sens).
-- **Résultat du backtest** : voir § 5.
+- **Résultat du backtest** : équivalente dans les 4 comparaisons ; la base large est adoptée (détail au § 5).
 
 ### 4.7 Affichage de la preuve en pourcentage (PR #23)
 - **Demande de l'utilisateur** : un pourcentage est plus parlant qu'un t.
@@ -146,4 +147,49 @@ très bien la volatilité future) : seul ce gain est testé.
 
 ## 5. Résultats du backtest de la base large (PR #25)
 
-*Rempli à partir de l'expérience `backtest_base_large` du laboratoire.*
+Expérience `backtest_base_large`, lancée le 19/11/2026 :
+- **Période** : 169 mois de 2013 à 2026, rééquilibrage mensuel, **avant frais**.
+- **Univers** : membres du S&P 500 à chaque date.
+- **Moteur** : le même que l'appli (covariance factorielle, FISTA, au plus 12 lignes, 20 % maximum par ligne).
+- **Mesures** : rendement et volatilité mesurés sur les mois suivant chaque rééquilibrage.
+
+Repère, l'indice (SPY) : **12,1 %/an**, volatilité 15,7 %, rendement / risque 0,77, perte maximale −26 %.
+
+| Portefeuille | Base | Rendement / an | Volatilité | Rendement / risque | Perte max | 1er secteur (moyenne) | Écart de rendement mensuel : force de la preuve |
+|---|---|---|---|---|---|---|---|
+| Sharpe max, volatilité historique 3 ans | **S&P 500** | 16,4 % | 18,8 % | **0,87** | −34 % | 31 % | +0,03 pt/mois, 6 % du seuil |
+| | momentum 40 | 15,8 % | 19,9 % | 0,79 | −32 % | 32 % | |
+| Sharpe max, volatilité IA | **S&P 500** | 14,6 % | 16,2 % | **0,90** | −29 % | 31 % | +0,04 pt/mois, 6 % du seuil |
+| | momentum 40 | 13,7 % | 18,1 % | 0,75 | −30 % | 34 % | |
+| Variance min, volatilité historique | **S&P 500** | 7,5 % | 13,4 % | 0,56 | −26 % | 36 % | −0,24 pt/mois, 44 % du seuil |
+| | momentum 40 | 10,2 % | 16,0 % | 0,64 | −30 % | 34 % | |
+| Variance min, volatilité IA | **S&P 500** | 9,0 % | 12,6 % | 0,72 | −24 % | 36 % | −0,16 pt/mois, 29 % du seuil |
+| | momentum 40 | 10,6 % | 15,5 % | 0,69 | −29 % | 35 % | |
+
+Seuil : 2,52 (loi de Student, corrigée pour 4 comparaisons). Verdict : **équivalente dans les 4 cas**.
+Selon la règle de décision du § 4.6, la base large est **adoptée** : elle retire un pari non prouvé sans faire
+nettement moins bien.
+
+**Lecture honnête**
+- **Portefeuille conseillé (Sharpe max)** :
+  - Avec tout le S&P 500, le rendement / risque est un peu meilleur : 0,87 à 0,90, contre 0,75 à 0,79 pour l'ancienne base et 0,77 pour l'indice. Le risque est aussi un peu plus faible.
+  - Ces écarts **ne sont pas prouvés** : force de la preuve de 6 % seulement. Il ne faut pas en conclure que l'appli « bat le marché ».
+- **Perte maximale** : avec la volatilité historique, le portefeuille Sharpe max a connu −34 %, plus que l'indice (−26 %). Le portefeuille est concentré, 12 lignes au plus.
+- **Avec la volatilité IA** : la perte maximale descend à −29 % et la volatilité à 16,2 %. C'est cohérent avec le § 4.3.
+- **Variance minimale** :
+  - Elle est nettement plus calme (12,6 à 13,4 % de volatilité, perte maximale −24 à −26 %).
+  - Elle rapporte moins : 7,5 à 9 %/an, contre 12,1 % pour l'indice.
+  - Elle correspond au mode « Je limite le risque » avec un risque bas.
+- **Frais non comptés** : un rééquilibrage mensuel complet coûterait plus cher. Dans l'appli, le rééquilibrage ne se
+  fait qu'au-delà d'un seuil d'écart (Paramètres).
+
+**Portefeuille conseillé avant / après (synchro du 19/11/2026)**
+
+| | Avant (40 au momentum) | Après (494 titres du S&P 500) |
+|---|---|---|
+| Lignes | TRV 19 %, TRGP 13 %, STT 11 %, VTRS 9 %, GWW 8 %, MU 8 %, STX 7 %, AMD 6 %, TWLO 5 %, LITE 5 %, OKTA 5 %, FTNT 5 % | BNY 18 %, MU 12 %, WELL 11 %, CRWD 10 %, EBAY 8 %, WMT 7 %, CAH 7 %, MCK 7 %, TRV 6 %, MO 6 %, ECHO 4 %, CBOE 4 % |
+| Premier secteur | Technologie 41 % | Finance 28 % |
+| Secteurs représentés | 6 | 8 |
+| Risque attendu (volatilité) | 20,6 % | 15,5 % |
+| Rentabilité de long terme (hypothèse CAPM) | 14,1 % | 12,2 % |
+| Données publiées pour l'appli | covariance 40 x 40 | 494 titres, 20 facteurs, 83 Ko |
