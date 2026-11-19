@@ -212,3 +212,20 @@ def test_backtest_risque():
         assert r[nom_pf]["n_mois"] >= 5
         assert "ia_vs_hist_3a" in r[nom_pf]
         assert all(0 < v["vol_reelle"] < 1 for v in r[nom_pf]["variantes"].values())
+
+
+def test_risque_avec_comptes():
+    """Les comptes publiés s'ajoutent aux facteurs du modèle de risque, sans fuite du futur."""
+    import fondamentaux_sec as fsec
+    import modele_risque as mr
+    raw, syms = _marche(persistance=True)
+    faits = pd.DataFrame([
+        {"symbol": s, "variable": v, "end": pd.Timestamp(f"{y}-12-31"), "filed": pd.Timestamp(f"{y + 1}-02-15"), "val": val}
+        for i, s in enumerate(syms) for y in range(2020, 2025)
+        for v, val in (("actifs", 100.0), ("fonds_propres", 20 + i), ("resultat_net", 5.0),
+                       ("marge_brute", 30.0), ("flux_exploitation", 6.0), ("actions", 10.0))
+    ])
+    ev = mr.entrainer_risque(raw, syms, "6m", "perte_max", faits_sec=faits)
+    assert "fd_levier" in ev["facteurs_utilises"] and ev["couverture_fondamentaux"]["fd_levier"] > 0.5
+    assert set(fsec.FEATURES_FD) <= {x["feature"] for x in ev["importance"]}
+    assert "controles" in ev

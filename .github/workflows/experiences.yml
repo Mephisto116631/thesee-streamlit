@@ -33,6 +33,6 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           # Sur une PR : seulement le dernier essai ajouté (les autres sont déjà dans la table)
-          EXPERIENCES: ${{ inputs.experiences || 'backtest_volatilite' }}
+          EXPERIENCES: ${{ inputs.experiences || 'risque_perte_max_comptes,risque_volatilite_comptes' }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: python experiences.py

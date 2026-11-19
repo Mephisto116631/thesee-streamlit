@@ -16,6 +16,7 @@
 #   fd_croissance_actifs croissance des actifs sur 1 an (Cooper et al.)  ↓ mieux
 #   fd_emissions       variation du nombre d'actions sur 1 an            ↓ mieux
 #   fd_accruals        (bénéfice − trésorerie d'exploitation) / actifs   ↓ mieux (Sloan 1996)
+#   fd_levier          1 − fonds propres / actifs (endettement)          risque de chute
 # ==============================================================================
 import os
 import time
@@ -42,9 +43,10 @@ CONCEPTS = {
     "flux_exploitation": (["NetCashProvidedByUsedInOperatingActivities"], "USD", "annuel"),
     "actions": (["dei:EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"], "shares", "instant"),
 }
-FEATURES_FD = ["fd_rentabilite", "fd_rendement_benef", "fd_valeur_comptable",
+FEATURES_FD = ["fd_rentabilite", "fd_rendement_benef", "fd_valeur_comptable", "fd_levier",
                "fd_croissance_actifs", "fd_emissions", "fd_accruals"]
 LABELS_FD = {
+    "fd_levier": "Endettement (part des actifs financée par la dette)",
     "fd_rentabilite": "Rentabilité brute (marge brute / actifs)",
     "fd_rendement_benef": "Rendement bénéficiaire (bénéfice / capitalisation)",
     "fd_valeur_comptable": "Valeur comptable / capitalisation",
@@ -223,4 +225,5 @@ def caracteristiques_fondamentales(faits: pd.DataFrame, px_ajuste: pd.DataFrame,
     ech["fd_croissance_actifs"] = ech["croissance_actifs"]
     ech["fd_emissions"] = ech["croissance_actions"].clip(-0.5, 2.0)   # écarte les erreurs d'unité
     ech["fd_accruals"] = (ech["resultat_net"] - ech["flux_exploitation"]) / actifs
+    ech["fd_levier"] = 1 - ech["fonds_propres"] / actifs                 # 0,8 = 80 % des actifs financés par des dettes
     return ech[["date", "symbol"] + FEATURES_FD].replace([np.inf, -np.inf], np.nan)

@@ -45,6 +45,9 @@ EXPERIENCES = {
 EXPERIENCES_RISQUE = {
     "risque_volatilite": ("volatilite", "IA de risque : volatilité future, comparée à la volatilité passée"),
     "risque_perte_max": ("perte_max", "IA de risque : perte maximale future, comparée à la volatilité passée"),
+    # Algorithme 1 : le risque de chute vient souvent des bilans fragiles -> comptes SEC publiés à chaque date
+    "risque_perte_max_comptes": ("perte_max", "IA de risque : perte maximale future, avec les comptes des entreprises (SEC)", True),
+    "risque_volatilite_comptes": ("volatilite", "IA de risque : volatilité future, avec les comptes des entreprises (SEC)", True),
 }
 # Famille « portefeuille » : backtest mensuel du portefeuille construit avec la volatilité IA
 EXPERIENCES_PORTEFEUILLE = {
@@ -97,7 +100,8 @@ def main(noms: list[str]):
     print(f"[LABO] {len(symboles)} titres, essais : {', '.join(noms)} × {', '.join(HORIZONS_TEST)}")
     raw, splits = charger_cours(symboles)
     faits_sec = None
-    if any(n in EXPERIENCES and len(EXPERIENCES[n]) > 3 and EXPERIENCES[n][3] for n in noms):
+    if any((n in EXPERIENCES and len(EXPERIENCES[n]) > 3 and EXPERIENCES[n][3])
+           or (n in EXPERIENCES_RISQUE and len(EXPERIENCES_RISQUE[n]) > 2 and EXPERIENCES_RISQUE[n][2]) for n in noms):
         t1 = time.time()
         faits_sec = fsec.telecharger([s for s in symboles if s != mh.INDICE])
         print(f"[LABO] SEC : {len(faits_sec)} chiffres publiés, {faits_sec['symbol'].nunique()} entreprises, "
@@ -135,10 +139,12 @@ def main(noms: list[str]):
             print(f"[LABO] {nom}_{nom_pf} : vol réelle {vs} ; IA vs 3 ans {comp} -> {v}")
 
     for nom in [n for n in noms if n in EXPERIENCES_RISQUE]:
-        genre, description = EXPERIENCES_RISQUE[nom]
+        genre, description, *opt_r = EXPERIENCES_RISQUE[nom]
+        sec_r = bool(opt_r and opt_r[0])
         for h in HORIZONS_TEST:
             try:
-                d = mr.entrainer_risque(raw, snap["symbol"].tolist(), h, genre, compo)
+                d = mr.entrainer_risque(raw, snap["symbol"].tolist(), h, genre, compo,
+                                        faits_sec if sec_r else None, splits if sec_r else None)
             except Exception as e:
                 print(f"[LABO][ERREUR] {nom} {h} : {type(e).__name__} : {e}")
                 echecs.append(f"{nom} {h}")
