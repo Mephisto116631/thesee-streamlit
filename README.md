@@ -66,7 +66,8 @@ npm test
 | Cours, indicateurs, portefeuille, volatilité IA | 3 fois par jour ouvré (ouverture, mi-séance, clôture US) | `sync.yml` |
 | Comptes officiels SEC (PER, ROE…) | 1 fois par semaine (option « Recharger les comptes SEC » au lancement manuel) | `sync.yml` |
 | Prévision IA enregistrée pour le suivi réel | 1 fois par semaine | `sync.yml` |
-| Re-test de l'IA de volatilité | le 2 de chaque mois, et sur chaque PR qui touche aux modèles | `experiences.yml` |
+| Re-test de l'IA de volatilité et de l'hybride IA + HAR | le 2 de chaque mois, et sur chaque PR qui touche aux modèles | `experiences.yml` |
+| Révision du portefeuille conseillé (univers figé) | 1er passage de janvier et de juillet ; l'appli suit le rythme choisi (6 ou 12 mois) | `sync.yml` |
 | Tests | à chaque PR | `tests.yml`, `mobile.yml` |
 
 Un job *keepalive* empêche GitHub de désactiver les workflows planifiés après 60 jours sans commit.
@@ -108,6 +109,8 @@ Garde-fous : refus si un calcul tourne déjà ou a démarré il y a moins de 10 
 
 | PR | Apport |
 |---|---|
+| #27 | Prévision hybride (ordre des titres par l'IA, niveau par HAR) ; portefeuille révisé tous les 6 ou 12 mois ; marge de sécurité du mode « Je limite le risque » ; projection à queues épaisses (Student) |
+| #26 | Examen approfondi de l'IA de volatilité : EWMA, GARCH, HAR, calibration, crises depuis 2008, placebo, autre marché, backtest avec frais, PBO |
 | #25 | Markowitz sur tout le S&P 500 (fin de la présélection par momentum, non prouvée) ; covariance en 20 facteurs ; même optimiseur serveur / appli ; gain de diversification dans la Fiche de calculs ; journal `docs/METHODE.md` |
 | #24 | README à jour |
 | #23 | Force de la preuve en % du seuil ; ratios SEC fiabilisés (bornes, « n.d. » plutôt qu'un chiffre faux) ; option « Recharger les comptes SEC » |

@@ -43,8 +43,10 @@ Tous les essais sont enregistrés dans la table Supabase `experiences` (onglet A
 | Candidats du portefeuille | Tous les titres du S&P 500 avec 3 ans d'historique, hors Z-Score < 1,81 | `portefeuille.candidats()` | Pas de pari non prouvé (§ 4.6) |
 | Contraintes | 20 % max par ligne, ≤ 12 lignes, ≥ 3 % par ligne | Paramètres ; `POIDS_MAX`, `N_MAX_LIGNES`, `POIDS_MIN` | Lisibilité et frais pour un petit capital |
 | Optimiseur | FISTA (gradient projeté accéléré), 400 itérations, grille de 18 compromis λ | `optim.ts` et `portefeuille.py` (identiques) | Même résultat sur le serveur et le téléphone |
-| Volatilité de chaque titre | 3 ans d'historique, ou prévue par l'IA (6 mois) si son dernier test est probant | Portefeuille › « Risque mesuré avec » | Seul modèle probant (§ 4.3) |
-| Projection à l'horizon | Log-normale, fourchette de 90 % des scénarios | Paramètres (confiance) | Sous-estime les chocs extrêmes (krachs) : à garder en tête |
+| Volatilité de chaque titre | 3 ans d'historique, ou prévision **hybride** sur 6 mois : ordre des titres par l'IA, niveau par HAR (si ses tests sont probants) | Portefeuille › « Risque mesuré avec » | Meilleure méthode en ordre et en niveau (§ 7) |
+| Révision du portefeuille | Tous les 6 mois (janvier, juillet), ou tous les ans | Paramètres | Suivre chaque mois coûtait ~180 ordres/an et 3 à 5 points de rendement (§ 6.6, § 7) |
+| Marge « Je limite le risque » | On vise limite × m, m appris sur le passé (≈ 0,85 à 0,93) | Automatique (laboratoire, `model_runs.marge_risque`) | Le risque réel varie plus que prévu (§ 7) |
+| Projection à l'horizon | Rendements composés, écarts selon une loi de Student à 5 degrés (échelle σ), fourchette de 90 % | Paramètres (confiance) | La loi normale sous-estimait les mauvaises années (§ 7) |
 | Ratios SEC affichés | PER entre 2 et 1000, cours / valeur comptable entre 0,1 et 500 ; sinon « n.d. » | `fondamentaux_sec.PER_MIN…` | Plutôt « non disponible » qu'un chiffre faux (§ 4.5) |
 
 ---
@@ -318,4 +320,65 @@ l'utilisateur. Décisions du 19/11/2026 :
 
 ## 7. Hybride, révision et marge (PR #27)
 
-*Rempli à partir des essais du laboratoire, après leur lancement.*
+Essais du 19/11/2026 :
+- **Données** : historique depuis 1998, test de 2008 à 2026.
+- **Backtest** : 2006-2026, frais réels (1 € par ordre, 0,1 % d'écart de prix, 5 000 €).
+- **Règles** : § 4.9, commitées avant les essais (commit e6e5fc0).
+
+### 7.1 Hybride : **publié** (règle 1 validée)
+
+| Méthode | QLIKE (niveau, plus bas = mieux) | IC (ordre des titres) |
+|---|---|---|
+| **Hybride (ordre IA, niveau HAR)** | **0,331** | **78,3 %** |
+| HAR | 0,332 | 74,9 % |
+| IA seule | 0,425 | 78,3 % |
+| Volatilité 3 mois | 0,449 | 75,4 % |
+
+- **(a) Niveau** : l'hybride est un peu meilleur que HAR (force de la preuve de HAR : −56 %, donc pas nettement meilleur).
+- **(b) Ordre** : il bat la volatilité 3 mois avec une force de **217 %** du seuil (seuil 2,63, corrigé pour 4 essais).
+- **Verdict** : publié. Il hérite de l'ordre de l'IA et du niveau de HAR.
+- **Limite connue** : comme HAR, il surestime le niveau en médiane (+27 %). La perte QLIKE le préfère, car une sous-estimation du risque coûte bien plus cher qu'une surestimation.
+
+### 7.2 Placebo : **réussi** (règle 4 validée)
+- **Moyenne de 10 tirages** de cible mélangée : IC de **−1,5 %** (|moyenne| < 2 %).
+- **Dispersion** : les tirages vont de −12,5 % à +10,2 % (écart-type 7,9 %). Le premier tirage (−8,8 %, § 6.4) relevait donc bien du hasard, et un seul tirage ne suffisait pas.
+- **Contrôles** : la fuite volontaire donne un IC de 95,7 %, et le facteur aléatoire est classé dernier.
+
+### 7.3 Rythme de révision : la décision de l'utilisateur est confirmée par les chiffres
+
+| Portefeuille (hybride) | Rythme | Ordres / an | Frais / an | Rendement brut | Rendement net |
+|---|---|---|---|---|---|
+| Conseillé (Sharpe max) | chaque mois | 165 | 231 € | 8,8 % | 5,7 % |
+| | **tous les 6 mois** | **34** | **63 €** | 10,9 % | **10,2 %** |
+| | tous les ans | 21 | 49 € | 13,0 % | 12,6 % |
+| « Je limite le risque » 15 % | chaque mois | 180 | 277 € | 11,4 % | 8,5 % |
+| | **tous les 6 mois** | **35** | **76 €** | 12,2 % | **11,6 %** |
+| | tous les ans | 21 | 51 € | 12,8 % | 12,4 % |
+
+Réviser moins souvent divise les ordres par 5 à 8 et rend 4 à 7 points de rendement net par an. Le rythme annuel a fait
+encore un peu mieux que le semestriel sur cette période. L'écart entre les deux n'est pas testé, et les deux restent proposés.
+
+### 7.4 Marge de sécurité : **règle 3 non atteinte** (documentée et affichée)
+
+| Limite | Marge m (actuelle) | Limite tenue avec marge | Sans marge |
+|---|---|---|---|
+| 10 % | 0,93 | 8 % des semestres | 8 % |
+| 12 % | 0,93 | 24 % | 24 % |
+| 15 % | 0,89 | 54 % | 51 % |
+| 18 % | 0,85 | 62 % | 54 % |
+
+- **Une marge ne suffit pas.** En moyenne, le risque prévu est juste (rapport réel / prévu médian ≈ 0,97 à 0,99). Mais :
+  - **les limites basses sont hors d'atteinte** : avec 12 titres au plus, le portefeuille le plus calme de la frontière
+    dépasse souvent 10 à 12 % ; la marge ne peut alors rien changer ;
+  - **les crises** font monter le risque de tous les titres à la fois, plusieurs semestres de suite.
+- **Décision** (prévue par la règle 3) : la marge est appliquée, et l'appli affiche, pour la limite choisie, la part des
+  semestres où elle a été tenue (en rouge sous 70 %), avec une explication. Une limite sous ~15 % est à considérer comme
+  un objectif, pas une garantie.
+
+### 7.5 Fourchette à 1 an : **règle 5 déclenchée**, loi de Student
+- Avec les niveaux hybrides et la loi normale, le « mauvais cas 5 % » a été touché **8,8 %** des fois (seuil 7,5 %). La projection passe donc à une loi de Student à 5 degrés de liberté.
+- **Précision de mise en œuvre** : à volatilité égale, une loi de Student à 5 degrés a une fourchette à 90 % **plus étroite**
+  que la loi normale (±1,56 σ contre ±1,64 σ) ; ses queues ne s'épaississent qu'au-delà de ~2,5 σ. On utilise donc la
+  Student d'échelle σ (±2,02 σ), qui élargit réellement la fourchette, conformément au texte de la règle (« loi de Student
+  à 5 degrés »).
+- **Couverture revérifiée** : voir ci-dessous.
