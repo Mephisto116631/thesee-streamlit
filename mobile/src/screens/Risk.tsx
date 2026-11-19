@@ -316,7 +316,7 @@ function Laboratoire() {
   const vus = new Set<string>();
   const lot = lignes.filter((e) => { const k = `${e.nom}|${e.horizon}`; if (vus.has(k)) return false; vus.add(k); return true; }).reverse();
   const dernier = lignes[0].lot;
-  const n = Math.max(...lot.filter((e) => !e.nom.startsWith("risque")).map((e) => e.n_essais ?? 0), 0);
+  const n = Math.max(...lot.filter((e) => !e.nom.startsWith("risque") && !e.nom.startsWith("backtest")).map((e) => e.n_essais ?? 0), 0);
   return (
     <Card title="Laboratoire" right={<small class="muted">essais du {dernier}</small>}>
       <table class="table small">
@@ -325,7 +325,9 @@ function Laboratoire() {
           <tr>
             <td><b>{e.nom}</b>{e.verdict === "probant" && <span class="badge good"> probant</span>}</td>
             <td>{e.horizon === "1a" ? "1 an" : e.horizon === "6m" ? "6 mois" : e.horizon}</td>
-            <td class={signClass(e.ic)}>{num(e.ic, 3)}{e.ic_base != null && <small class="muted"> réf. {num(e.ic_base, 3)}</small>}</td>
+            {e.nom.startsWith("backtest")
+              ? <td class={signClass(-(e.ic ?? 0))}>{pct(e.ic, 1)} <small class="muted">de volatilité</small></td>
+              : <td class={signClass(e.ic)}>{num(e.ic, 3)}{e.ic_base != null && <small class="muted"> réf. {num(e.ic_base, 3)}</small>}</td>}
             <td>{num(e.t_stat, 1)} / {num(e.seuil_t_global, 1)}</td>
             <td><span class={signClass(e.regimes?.hausse?.ic)}>{num(e.regimes?.hausse?.ic, 3)}</span> · <span class={signClass(e.regimes?.baisse?.ic)}>{num(e.regimes?.baisse?.ic, 3)}</span></td>
           </tr>
@@ -334,7 +336,9 @@ function Laboratoire() {
       <p class="hint">Variantes du modèle testées à part : les scores publiés ne changent pas.
         <b> reference</b> = modèle publié ;
         <b> risque_…</b> = IA qui prédit le risque (volatilité ou perte maximale) : elle doit battre la « réf. »,
-        la simple volatilité des 3 derniers mois, et son t mesure ce gain ; <b>alpha</b> = cible ajustée du bêta (alpha de Jensen : rendement − bêta × marché,
+        la simple volatilité des 3 derniers mois, et son t mesure ce gain ;
+        <b> backtest_…</b> = portefeuille reconstruit chaque mois depuis 2013 avec la volatilité IA : écart de volatilité
+        réelle par rapport à la méthode actuelle (3 ans), négatif = moins risqué ; <b>alpha</b> = cible ajustée du bêta (alpha de Jensen : rendement − bêta × marché,
         ce qui reste une fois le risque de marché retiré) ; <b>alpha_secteur</b> = idem, comparé aux titres du même secteur.
         « Hausse · baisse » : IC (Information Coefficient) quand le marché a monté ou baissé sur l'horizon.
         Une variante n'est « probante » que si son t dépasse un seuil corrigé des {n} essais de rendement faits jusqu'ici (les essais de risque forment une famille à part) :
