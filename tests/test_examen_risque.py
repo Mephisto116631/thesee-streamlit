@@ -124,3 +124,36 @@ def test_backtest_reel_frais_promesse_fourchette():
     assert 0 <= r["part_semestres_au_dessus"] <= 1 and r["limite"] == 0.15
     c = bt.couverture_fourchette(res, px, "sharpe_max", "hist_3a")
     assert c["n"] > 0 and 0 <= c["part_sous_mauvais_cas"] <= 1
+
+
+def test_hybride_revision_marge():
+    """Hybride : ordre de l'IA, niveaux HAR. Révision semestrielle : moins d'ordres. Marge apprise sur le passé."""
+    raw, syms = _donnees_examen()
+    data, ret = ex.preparer(raw, syms, None)
+    t = ex.walk_forward(data, ret, forcer_config="xgb_prudent")
+    tt = t.assign(rel=t["brut"])
+    ic_ia = ex.mh._ic_par_date(tt, "lvl_ia").mean()
+    ic_hyb = ex.mh._ic_par_date(tt.dropna(subset=["lvl_hybride"]), "lvl_hybride").mean()
+    assert abs(ic_ia - ic_hyb) < 0.02                                  # même ordre que l'IA
+    med = lambda c: float((t[c] / t["brut"]).median())
+    assert abs(med("lvl_hybride") - med("lvl_har")) < 0.1              # niveau de HAR
+    c = ex.comparer_hybride(t)
+    assert c["decision"] in ("hybride", "har") and set(c["qlike"]) == {"hybride", "har", "ia"}
+
+    tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
+    res = bt.backtest(raw, syms, None, debut="2011-01-01", pas_semaines=4, base="sp500", variantes=["hybride"],
+                      portefeuilles=tous, garder_poids=True, garder_frontieres=True)
+    assert (res["variante"] == "hybride").any() and res.attrs["frontieres"]
+    px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
+    mensuel = bt.backtest_reel(res, px, "sharpe_max", "hybride", revision_mois=1)
+    semestre = bt.backtest_reel(res, px, "sharpe_max", "hybride", revision_mois=6)
+    assert semestre["ordres_par_an"] < mensuel["ordres_par_an"]
+    m = bt.marge_walk_forward(res, px, 0.15, "hybride", min_hist=2)
+    assert 0.5 <= m["marge_actuelle"] <= 1.5 and m["n_semestres"] > 0
+
+
+def test_dates_revision():
+    d = pd.date_range("2020-01-06", periods=30, freq="4W")
+    r6 = bt.dates_revision(d, 6)
+    assert all(x.month in (1, 2, 7, 8) for x in r6) and len(r6) == len({(x.year, (x.month - 1) // 6) for x in d})
+    assert len(bt.dates_revision(d, 12)) == len({x.year for x in d})

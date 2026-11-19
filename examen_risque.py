@@ -179,19 +179,20 @@ def preparer(market_raw: pd.DataFrame, symboles: list[str], composition: pd.Data
     return data.dropna(subset=["lvl_vol_3m", "brut"]).reset_index(drop=True), ret
 
 
-def _rang_vers_niveau(df: pd.DataFrame, col_rang: str) -> pd.Series:
-    """Rang prédit -> niveau : quantile correspondant des volatilités 3 mois du jour
-    (même méthode que modele_risque.predire_volatilite)."""
+def _rang_vers_niveau(df: pd.DataFrame, col_rang: str, col_niveaux: str = "lvl_vol_3m") -> pd.Series:
+    """Rang prédit -> niveau : quantile correspondant des niveaux du jour (volatilités 3 mois, ou
+    niveaux HAR pour l'hybride : l'ordre vient de l'IA, le niveau de HAR)."""
     out = pd.Series(np.nan, index=df.index)
     for _, g in df.groupby("date"):
-        v = np.sort(g["lvl_vol_3m"].dropna().values)
+        v = np.sort(g[col_niveaux].dropna().values)
         if len(v):
             out.loc[g.index] = np.quantile(v, g[col_rang].rank(pct=True).clip(0, 1).values)
     return out
 
 
 def walk_forward(data: pd.DataFrame, ret: pd.DataFrame, feats: list[str] | None = None,
-                 forcer_config: str | None = None, h: int = H, transformer=None) -> pd.DataFrame:
+                 forcer_config: str | None = None, h: int = H, transformer=None,
+                 references: bool = True) -> pd.DataFrame:
     """Prévisions de test de l'IA et des références, fenêtre par fenêtre (passé seulement).
     `transformer(train, test) -> (train, test)` : variantes placebo. Colonnes ajoutées :
     pred (rang IA), lvl_ia, lvl_garch, lvl_har, fenetre, config."""
@@ -212,6 +213,10 @@ def walk_forward(data: pd.DataFrame, ret: pd.DataFrame, feats: list[str] | None 
         m = mh._modele(config).fit(train[feats], train["y"])
         test["pred"] = m.predict(test[feats])
         test["lvl_ia"] = _rang_vers_niveau(test, "pred")
+        test["fenetre"], test["config"] = k, config
+        if not references:            # placebo, sensibilité : seul le classement de l'IA compte
+            sorties.append(test)
+            continue
         # GARCH : paramètres estimés sur les rendements antérieurs à la fenêtre de test
         a, b = garch_parametres(ret[ret.index < debut - embargo])
         g = garch(ret, a, b, h).reindex(pd.DatetimeIndex(bloc))
@@ -219,7 +224,7 @@ def walk_forward(data: pd.DataFrame, ret: pd.DataFrame, feats: list[str] | None 
         gs.index.names = ["date", "symbol"]
         test = test.merge(gs.reset_index(), on=["date", "symbol"], how="left")
         test["lvl_har"] = har_prevoir(test, har_ajuster(train))
-        test["fenetre"], test["config"] = k, config
+        test["lvl_hybride"] = _rang_vers_niveau(test, "pred", "lvl_har")
         test["garch_ab"] = f"{a:.3f}/{b:.3f}"
         sorties.append(test)
     return pd.concat(sorties, ignore_index=True) if sorties else pd.DataFrame()
@@ -251,6 +256,30 @@ def comparer_references(t: pd.DataFrame, h: int = H) -> dict:
     out["meilleure_reference"] = meilleure
     out["ia_reste"] = bool(out["dm"][meilleure]["force"] >= 1.0)
     return out
+
+
+def comparer_hybride(t: pd.DataFrame, h: int = H) -> dict:
+    """Règle 1 de la PR #27 (docs/METHODE.md § 4.9) : l'hybride est publié si (a) il n'est pas nettement
+    moins bon que HAR en QLIKE et (b) son IC bat la volatilité 3 mois avec une force ≥ 100 %.
+    4ᵉ essai de la famille « références » : seuil corrigé pour 4."""
+    p_hyb, p_har = _pertes_par_date(t, "lvl_hybride"), _pertes_par_date(t, "lvl_har")
+    n_eff = max(1.0, len(p_hyb) * mh.PAS_ECHANTILLON / h)
+    seuil = mh.seuil_t(n_eff, n_candidats=4)
+    dm = diebold_mariano(p_hyb, p_har, decalage=max(1, h // mh.PAS_ECHANTILLON))
+    tt = t.assign(rel=t["brut"])
+    ic_h, ic_r = mh._ic_par_date(tt.dropna(subset=["lvl_hybride"]), "lvl_hybride"), mh._ic_par_date(tt, "lvl_vol_3m")
+    g = (ic_h - ic_r).dropna()
+    t_ic = float(g.mean() / g.std() * np.sqrt(n_eff)) if g.std() > 0 else 0.0
+    force_har = dm["t"] / seuil              # > 100 % : HAR nettement meilleur que l'hybride
+    force_ic = t_ic / seuil
+    publie = bool(force_har < 1.0 and force_ic >= 1.0)
+    return {"qlike": {"hybride": float(p_hyb.mean()), "har": float(p_har.mean()),
+                      "ia": float(_pertes_par_date(t, "lvl_ia").mean())},
+            "ic": {"hybride": float(ic_h.mean()), "vol_3m": float(ic_r.mean()),
+                   "har": float(mh._ic_par_date(tt.dropna(subset=["lvl_har"]), "lvl_har").mean())},
+            "dm_contre_har": dm, "force_har_meilleur": force_har, "t_ic": t_ic, "force_ic": force_ic,
+            "seuil": seuil, "n_effectif": n_eff, "calibration": calibration(t, "lvl_hybride"),
+            "publie": publie, "decision": "hybride" if publie else "har"}
 
 
 def par_periode(t: pd.DataFrame, vix: pd.Series | None = None, ref: str = "lvl_har") -> dict:
@@ -310,9 +339,14 @@ def _fuite(graine: int = 0):
     return f
 
 
-def placebo(data: pd.DataFrame, ret: pd.DataFrame, config: str = "xgb_prudent") -> dict:
-    t_mel = walk_forward(data, ret, forcer_config=config, transformer=_melanger())
-    t_fui = walk_forward(data, ret, forcer_config=config, transformer=_fuite())
+def placebo(data: pd.DataFrame, ret: pd.DataFrame, config: str = "xgb_prudent", n_tirages: int = 10) -> dict:
+    """Règle 4 de la PR #27 : moyenne de n_tirages cibles mélangées, |moyenne| < 2 %."""
+    ic_tirages = []
+    for g in range(n_tirages):
+        tm = walk_forward(data, ret, forcer_config=config, transformer=_melanger(g), references=False)
+        if not tm.empty:
+            ic_tirages.append(float(mh._ic_par_date(tm.assign(rel=tm["brut"]), "pred").mean()))
+    t_fui = walk_forward(data, ret, forcer_config=config, transformer=_fuite(), references=False)
     rng = np.random.default_rng(1)
     d2 = data.assign(bruit=rng.uniform(0, 1, len(data)))
     feats = mh.FEATURES + ["bruit"]
@@ -321,7 +355,10 @@ def placebo(data: pd.DataFrame, ret: pd.DataFrame, config: str = "xgb_prudent") 
     imp = pd.Series(mh._importances(m, config), index=feats)
     imp = imp / imp.sum() if imp.sum() > 0 else imp
     ic = lambda t: float(mh._ic_par_date(t.assign(rel=t["brut"]), "pred").mean()) if not t.empty else None
-    return {"ic_cible_melangee": ic(t_mel), "ic_fuite_volontaire": ic(t_fui),
+    moy = float(np.mean(ic_tirages)) if ic_tirages else None
+    return {"ic_cible_melangee": moy, "ic_tirages": ic_tirages,
+            "ecart_type_tirages": float(np.std(ic_tirages)) if ic_tirages else None,
+            "ic_fuite_volontaire": ic(t_fui),
             "importance_facteur_aleatoire": float(imp["bruit"]),
             "importance_rang_facteur_aleatoire": int((imp > imp["bruit"]).sum()) + 1, "n_facteurs": len(feats)}
 
@@ -330,7 +367,7 @@ def sensibilite(data: pd.DataFrame, ret: pd.DataFrame) -> dict:
     """Gain d'IC (IA − volatilité 3 mois) pour chaque réglage du modèle, imposé sur toutes les fenêtres."""
     out = {}
     for config in mh.CONFIGS:
-        t = walk_forward(data, ret, forcer_config=config).assign(rel=lambda x: x["brut"])
+        t = walk_forward(data, ret, forcer_config=config, references=False).assign(rel=lambda x: x["brut"])
         if t.empty:
             continue
         ic_ia, ic_ref = mh._ic_par_date(t, "pred"), mh._ic_par_date(t, "lvl_vol_3m")

@@ -24,7 +24,7 @@ import modele_horizon as mh
 import modele_risque as mr
 import portefeuille as pf
 
-VARIANTES = ["hist_3a", "naif_3m", "ia"]
+VARIANTES = ["hist_3a", "naif_3m", "ia"]   # + "hybride" (rang IA, niveaux HAR) sur demande
 PORTEFEUILLES = {"variance_min": np.nan, "sharpe_max": None}   # cible passée à pf.optimiser
 # Mode « Je limite le risque » de l'appli : le plus rentable sous une volatilité maximale
 PORTEFEUILLES_RISQUE = {"risque_12": 0.12, "risque_15": 0.15}
@@ -51,6 +51,31 @@ def _predictions_ia(data: pd.DataFrame, dates_rebal: list, h: int) -> pd.DataFra
     return pd.concat(sorties, ignore_index=True) if sorties else pd.DataFrame(columns=["date", "symbol", "rang_ia"])
 
 
+def _niveaux_har(data: pd.DataFrame, ret: pd.DataFrame, dates_rebal: list, h: int) -> pd.DataFrame:
+    """Niveau de volatilité prévu par HAR à chaque date de rééquilibrage, régression réajustée chaque
+    1er janvier sur le passé seulement (cible connue : volatilité réalisée `brut`)."""
+    import examen_risque as ex
+    entrees = ex.har_entrees(ret)
+    dates = pd.DatetimeIndex(sorted(set(pd.to_datetime(data["date"].unique())) | set(pd.to_datetime(dates_rebal))))
+    tab = None
+    for nom, t in entrees.items():
+        s = t.reindex(dates).stack(future_stack=True).rename(nom)
+        s.index.names = ["date", "symbol"]
+        tab = s.to_frame() if tab is None else tab.join(s)
+    tab = tab.reset_index()
+    base = data[["date", "symbol", "brut"]].merge(tab, on=["date", "symbol"], how="left")
+    embargo = pd.Timedelta(days=int(h * 7 / 5) + 1)
+    sorties = []
+    for annee in sorted({pd.Timestamp(d).year for d in dates_rebal}):
+        train = base[base["date"] < pd.Timestamp(f"{annee}-01-01") - embargo].dropna()
+        cible = tab[tab["date"].isin([d for d in dates_rebal if pd.Timestamp(d).year == annee])].copy()
+        if len(train) < 2000 or cible.empty:
+            continue
+        cible["lvl_har"] = ex.har_prevoir(cible, ex.har_ajuster(train))
+        sorties.append(cible[["date", "symbol", "lvl_har"]])
+    return pd.concat(sorties, ignore_index=True) if sorties else pd.DataFrame(columns=["date", "symbol", "lvl_har"])
+
+
 def _vol_ia(rangs: pd.Series, vol_3m_membres: pd.Series) -> pd.Series:
     """Rang prédit -> niveau : quantile correspondant de la distribution actuelle des volatilités
     3 mois de tous les membres (garde le niveau de marché du moment, l'IA ne change que l'ordre)."""
@@ -61,7 +86,8 @@ def _vol_ia(rangs: pd.Series, vol_3m_membres: pd.Series) -> pd.Series:
 def backtest(market_raw: pd.DataFrame, symboles: list[str], composition: pd.DataFrame | None,
              debut: str = "2013-01-01", pas_semaines: int = 4, base: str | list[str] = "momentum40",
              variantes: list[str] | None = None, secteurs: dict | None = None,
-             portefeuilles: dict | None = None, garder_poids: bool = False) -> pd.DataFrame:
+             portefeuilles: dict | None = None, garder_poids: bool = False,
+             garder_frontieres: bool = False) -> pd.DataFrame:
     variantes = variantes or VARIANTES
     portefeuilles = portefeuilles or PORTEFEUILLES
     bases = [base] if isinstance(base, str) else list(base)   # plusieurs bases : IA entraînée une seule fois
@@ -74,7 +100,11 @@ def backtest(market_raw: pd.DataFrame, symboles: list[str], composition: pd.Data
     # Dates de rééquilibrage : toutes les 4 semaines (les caractéristiques existent à ces dates)
     toutes = sorted(d for d in X["date"].unique() if d >= pd.Timestamp(debut))
     dates_rebal = toutes[::pas_semaines]
-    preds = _predictions_ia(data, dates_rebal, h) if "ia" in variantes else pd.DataFrame(columns=["date", "symbol", "rang_ia"])
+    besoin_ia = bool({"ia", "hybride"} & set(variantes))
+    preds = _predictions_ia(data, dates_rebal, h) if besoin_ia else pd.DataFrame(columns=["date", "symbol", "rang_ia"])
+    har = (_niveaux_har(data, px_tout.pct_change(), dates_rebal, h) if "hybride" in variantes
+           else pd.DataFrame(columns=["date", "symbol", "lvl_har"]))
+    frontieres = {}
 
     ret = px_tout.pct_change()
     marche = market_raw[market_raw["symbol"] == mh.INDICE].set_index("date")["close"].sort_index().pct_change()
@@ -88,8 +118,9 @@ def backtest(market_raw: pd.DataFrame, symboles: list[str], composition: pd.Data
         passe = passe.dropna(axis=1, thresh=int(len(passe) * 0.95)).fillna(0.0)
         vol_3m = ret.iloc[i - 62:i + 1][membres].std() * np.sqrt(pf.JOURS)
         p = preds[preds["date"] == d].set_index("symbol")["rang_ia"]
-        if "ia" in variantes and p.empty:
+        if besoin_ia and p.empty:
             continue
+        lh = har[har["date"] == d].set_index("symbol")["lvl_har"]
         for base in bases:
             if base == "momentum40":
                 # Ancienne présélection : momentum 12-1 / volatilité 1 an
@@ -106,6 +137,9 @@ def backtest(market_raw: pd.DataFrame, symboles: list[str], composition: pd.Data
                 "hist_3a": lambda: sd_hist,
                 "naif_3m": lambda: vol_3m.reindex(cand).fillna(pd.Series(sd_hist, index=cand)).values,
                 "ia": lambda: _vol_ia(p.reindex(cand).fillna(0.5), vol_3m).values,
+                # Hybride : ordre de l'IA, niveaux de HAR (docs/METHODE.md § 4.9)
+                "hybride": lambda: _vol_ia(p.reindex(cand).fillna(0.5), lh.reindex(membres).dropna()
+                                            if lh.notna().sum() > 20 else vol_3m).values,
             }
             futur = ret.iloc[i + 1:i + TENUE + 1][cand].fillna(0.0)
             for variante in variantes:
@@ -114,6 +148,11 @@ def backtest(market_raw: pd.DataFrame, symboles: list[str], composition: pd.Data
                 pts = pf.frontiere_lambdas(B, D, mu)
                 if not pts:
                     continue
+                if garder_frontieres:
+                    frontieres[(pd.Timestamp(d), base, variante)] = (
+                        list(cand), [{"volatilite": q["volatilite"], "rendement": q["rendement"], "sharpe": q["sharpe"],
+                                      "poids": {cand[k]: float(w) for k, w in zip(q["idx"], q["w"] / q["w"].sum())}}
+                                     for q in pts])
                 for nom_pf, cible in portefeuilles.items():
                     pt = _choisir(pts, cible)
                     wv = np.zeros(len(cand))
@@ -135,7 +174,10 @@ def backtest(market_raw: pd.DataFrame, symboles: list[str], composition: pd.Data
             lignes.append({"date": d, "variante": "indice", "portefeuille": "indice", "base": "sp500",
                            "vol_reelle": float(rm.std() * np.sqrt(pf.JOURS)), "vol_prevue": None,
                            "rendement": float(np.prod(1 + rm) - 1), "n_lignes": 1, "poids_secteur_max": None})
-    return pd.DataFrame(lignes)
+    out = pd.DataFrame(lignes)
+    if garder_frontieres:
+        out.attrs["frontieres"] = frontieres
+    return out
 
 
 def _choisir(pts: list[dict], cible) -> dict:
@@ -168,16 +210,43 @@ def frais_et_ordres(poids_avant: dict, poids_cible: dict, capital: float, frais_
     return ordres * frais_ordre + rotation * capital * ecart, ordres, rotation
 
 
+SEUIL_LIGNE = 0.25      # entre deux révisions : on ne rééquilibre que si une ligne dépasse 25 % (seuil de l'appli)
+
+
+def dates_revision(dates, revision_mois: int) -> list:
+    """Premières dates de chaque période de révision (1 : chaque mois ; 6 : janvier et juillet ; 12 : janvier)."""
+    out, vues = [], set()
+    for d in sorted(pd.to_datetime(list(dates))):
+        cle = (d.year, (d.month - 1) // revision_mois)
+        if cle not in vues:
+            vues.add(cle)
+            out.append(d)
+    return out
+
+
 def backtest_reel(res: pd.DataFrame, px: pd.DataFrame, nom_pf: str, variante: str = "ia", base: str = "sp500",
-                  capital: float = CAPITAL, derive_max: float = DERIVE_MAX) -> dict:
-    """Rejoue jour par jour un portefeuille du backtest (lignes avec `poids`) en ne rééquilibrant que si
-    la composition change ou si une ligne dérive de plus de `derive_max`, frais déduits."""
+                  capital: float = CAPITAL, derive_max: float = DERIVE_MAX, revision_mois: int = 1,
+                  seuil_ligne: float = SEUIL_LIGNE) -> dict:
+    """Rejoue jour par jour un portefeuille du backtest (lignes avec `poids`), frais déduits.
+    revision_mois = 1 : on suit chaque nouvelle recommandation (si la composition change ou si une ligne dérive
+    de plus de `derive_max`). revision_mois = 6 ou 12 : la cible n'est révisée qu'à ces dates ; entre deux,
+    on ne rééquilibre que si une ligne dépasse `seuil_ligne` du portefeuille (comme l'appli)."""
     g = res[(res["portefeuille"] == nom_pf) & (res["variante"] == variante) & (res["base"] == base)]
     g = g.dropna(subset=["poids"]).sort_values("date") if "poids" in g else g.iloc[0:0]
     if g.empty:
         return {}
     ret = px.pct_change().fillna(0.0)
     cibles = {pd.Timestamp(d): p for d, p in zip(g["date"], g["poids"])}
+    if revision_mois > 1:
+        garder = set(dates_revision(cibles, revision_mois))
+        controles = sorted(cibles)                       # dates de contrôle du seuil par ligne
+        revisees = {}
+        courante = None
+        for d in controles:
+            if d in garder:
+                courante = cibles[d]
+            revisees[d] = courante
+        cibles = {d: c for d, c in revisees.items() if c is not None}
     jours = ret.index[(ret.index > g["date"].min()) & (ret.index <= g["date"].max() + pd.Timedelta(days=31))]
     valeur, w, cible = capital, {}, {}
     serie, cout_total, n_ordres, n_reeq = [], 0.0, 0, 0
@@ -185,10 +254,16 @@ def backtest_reel(res: pd.DataFrame, px: pd.DataFrame, nom_pf: str, variante: st
     j = 0
     for jour in jours:
         while j < len(dates_cibles) and dates_cibles[j] < jour:
-            cible = cibles[dates_cibles[j]]
+            nouvelle = cibles[dates_cibles[j]]
+            change = nouvelle is not cible
+            cible = nouvelle
             j += 1
             derive = max([abs(w.get(s, 0) - cible.get(s, 0)) for s in set(w) | set(cible)] or [1])
-            if set(k for k, v in w.items() if v > 1e-4) != set(cible) or derive > derive_max:
+            if revision_mois > 1:
+                agir = change or (max(w.values()) if w else 1) > seuil_ligne
+            else:
+                agir = set(k for k, v in w.items() if v > 1e-4) != set(cible) or derive > derive_max
+            if agir:
                 cout, ordres, _ = frais_et_ordres(w, cible, valeur)
                 valeur -= cout
                 cout_total += cout
@@ -219,6 +294,45 @@ def backtest_reel(res: pd.DataFrame, px: pd.DataFrame, nom_pf: str, variante: st
         out["rapport_reel_limite_median"] = float((sem / limite).median())
         out["n_semestres"] = int(len(sem))
     return out
+
+
+def marge_walk_forward(res: pd.DataFrame, px: pd.DataFrame, limite: float, variante: str = "hybride",
+                       base: str = "sp500", revision_mois: int = 6, q: float = 0.70, min_hist: int = 4) -> dict:
+    """Marge de sécurité apprise sur le passé (docs/METHODE.md § 4.9, règle 3) : à chaque révision, on vise
+    limite x m avec m = 1 / quantile q du rapport (risque réel / risque prévu) des semestres PASSÉS.
+    Retourne la part des semestres où la limite a été respectée, avec et sans marge, et la marge actuelle."""
+    fr = res.attrs.get("frontieres", {})
+    dates = sorted(d for (d, b, v) in fr if b == base and v == variante)
+    revs = dates_revision(dates, revision_mois)
+    ret = px.pct_change()
+    rapports, avec, sans, ms = [], [], [], []
+    for k, d in enumerate(revs):
+        fin = revs[k + 1] if k + 1 < len(revs) else None
+        cand, pts = fr[(d, base, variante)]
+        m = 1.0 / float(np.quantile(rapports, q)) if len(rapports) >= min_hist else 1.0
+        m = float(np.clip(m, 0.5, 1.5))
+        periode = ret[(ret.index > d) & ((ret.index <= fin) if fin is not None else True)]
+        if len(periode) < 60:
+            continue
+
+        def reel(pt):
+            w = pd.Series(pt["poids"])
+            cols = w.index.intersection(periode.columns)
+            r = periode[cols].fillna(0.0) @ w[cols]
+            return float(r.std() * np.sqrt(252))
+        pt_m = _choisir(pts, limite * m)
+        pt_0 = _choisir(pts, limite)
+        v_m, v_0 = reel(pt_m), reel(pt_0)
+        if len(rapports) >= min_hist:                     # mesure seulement quand la marge est apprise
+            avec.append(v_m <= limite)
+            sans.append(v_0 <= limite)
+            ms.append(m)
+        rapports.append(v_0 / pt_0["volatilite"] if pt_0["volatilite"] > 0 else 1.0)
+    m_actuelle = float(np.clip(1.0 / np.quantile(rapports, q), 0.5, 1.5)) if len(rapports) >= min_hist else 1.0
+    return {"limite": limite, "part_respectee_avec_marge": float(np.mean(avec)) if avec else None,
+            "part_respectee_sans_marge": float(np.mean(sans)) if sans else None, "n_semestres": len(avec),
+            "marge_actuelle": m_actuelle, "marge_moyenne": float(np.mean(ms)) if ms else None,
+            "rapport_reel_prevu_median": float(np.median(rapports)) if rapports else None}
 
 
 def couverture_fourchette(res: pd.DataFrame, px: pd.DataFrame, nom_pf: str = "sharpe_max", variante: str = "ia",
