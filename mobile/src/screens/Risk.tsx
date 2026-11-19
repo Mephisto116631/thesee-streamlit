@@ -240,6 +240,8 @@ const NOMS_LABO: Record<string, string> = {
   fondamentaux_seuls: "Comptes des entreprises seuls", risque_volatilite: "IA de risque : volatilité",
   risque_perte_max: "IA de risque : perte maximale", backtest_volatilite_sharpe_max: "Portefeuille avec la volatilité IA",
   backtest_volatilite_variance_min: "Portefeuille le plus calme avec la volatilité IA",
+  risque_perte_max_comptes: "IA de risque : perte maximale + comptes", risque_volatilite_comptes: "IA de risque : volatilité + comptes",
+  regime_logistique: "Baisse du marché > 10 % en 6 mois (logistique)", regime_xgboost: "Baisse du marché > 10 % en 6 mois (XGBoost)",
 };
 
 /** Laboratoire : variantes du modèle essayées sans toucher aux scores publiés (experiences.py). */
@@ -261,7 +263,9 @@ function Laboratoire() {
           <div class="chiffres">
             {e.nom.startsWith("backtest")
               ? <span>Risque réel <b class={signClass(-(e.ic ?? 0))}>{e.ic != null && e.ic > 0 ? "+" : ""}{pct(e.ic, 1, false)}</b> vs méthode actuelle</span>
-              : <span>IC <b class={signClass(e.ic)}>{corr(e.ic)}</b>{e.ic_base != null && <> (réf. {corr(e.ic_base)})</>}</span>}
+              : e.nom.startsWith("regime")
+                ? <span>AUC <b>{corr(e.ic, 0)}</b> (50 % = hasard)</span>
+                : <span>IC <b class={signClass(e.ic)}>{corr(e.ic)}</b>{e.ic_base != null && <> (réf. {corr(e.ic_base)})</>}</span>}
             {e.regimes?.hausse && <span>marché en hausse {corr(e.regimes.hausse.ic)} · en baisse {corr(e.regimes?.baisse?.ic)}</span>}
             {e.verdict === "probant" && <span>{hz(e.horizon)}</span>}
           </div>
