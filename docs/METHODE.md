@@ -192,6 +192,11 @@ très bien la volatilité future) : seul ce gain est testé.
   4. Placebo : 10 tirages de cible mélangée ; |moyenne des IC| < 2 %, sinon on arrête et on cherche une fuite.
   5. Fourchette à 1 an : si, avec les niveaux hybrides, le « mauvais cas 5 % » est touché plus de 7,5 % des fois, la
      projection passe à une loi de Student à 5 degrés de liberté.
+  6. *(Ajoutée le 19/11/2026 à la demande de l'utilisateur, AVANT l'essai « examen_ia_contre_har »)*. L'IA ne reste dans
+     l'hybride que si elle bat **HAR** sur l'ordre des titres : écart d'IC par date entre l'hybride et HAR, force de la
+     preuve ≥ 100 % (seuil corrigé pour 5 essais de la famille « références »). Sinon, l'appli passe à **HAR seul**, plus
+     simple et explicable, et l'IA retourne au laboratoire. Le backtest 2006-2026 (frais, révision semestrielle) avec
+     l'hybride puis avec HAR seul est rapporté : risque réel, rendement net, limite tenue. C'est un constat, pas une condition.
 - **Résultats** : § 7.
 
 ## 5. Résultats du backtest de la base large (PR #25)
