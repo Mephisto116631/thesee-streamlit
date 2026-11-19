@@ -46,7 +46,7 @@ export function Settings() {
   const reco = useData(api.portefeuilleReco);
   const sync = useData(api.lastSync);
   const fiab = useFiabiliteVol();
-  const u = universFiable(reco.data?.univers as Univers | undefined, fiab);
+  const u = universFiable((reco.data?.univers_facteurs ?? reco.data?.univers ?? undefined) as Univers | undefined, fiab);
   const apercu = useMemo(() => (u ? frontiere(u, p, 10) : []), [u, p.tauxSansRisque, p.primeRisque, p.poidsHistorique, p.poidsMax, p.nMaxLignes, p.poidsMin, p.sourceVol, fiab.probant]);
   const bt = useData(api.backtestVol);
   const impossible = p.poidsMax * p.nMaxLignes < 1 - 1e-9;
@@ -166,9 +166,13 @@ export function Settings() {
 
       <Card title="Ce que le serveur fixe" repliable ouvert={false}>
         <ul class="liste-fixe">
-          <li><b>Candidats</b> : les 40 meilleurs titres par momentum 12-1 mois divisé par la volatilité (S&P 500, Nasdaq-100, ETF).</li>
+          <li><b>Candidats</b> : tous les titres du S&P 500 ayant 3 ans d'historique ({u?.symbols.length || "~500"} titres),
+            sans tri préalable. L'ancienne présélection par momentum (ce qui a le plus monté) a été retirée : elle n'a pas été probante.</li>
           <li><b>Exclusion</b> : titres en détresse financière (Z-Score Altman &lt; 1,81).</li>
-          <li><b>Estimation</b> : 3 ans de cours quotidiens ; covariance Ledoit-Wolf ; bêta mesuré contre SPY.</li>
+          <li><b>Estimation</b> : 3 ans de cours quotidiens ; covariance Ledoit-Wolf résumée en 20 facteurs + risque propre de chaque titre
+            (variance de chaque titre exacte) ; bêta mesuré contre SPY.</li>
+          <li><b>Optimisation</b> : même algorithme sur le serveur et le téléphone (gradient projeté accéléré, FISTA).
+            Historique des choix : docs/METHODE.md du dépôt.</li>
           <li><b>Projection à l'horizon</b> : modèle log-normal ; fourchette = 90 % des scénarios.</li>
           <li><b>Données</b> : synchronisation {sync.data ? ilYA(sync.data.finished_at ?? sync.data.started_at) : "—"}
             {reco.data?.updated_at && <> · candidats du {dateFr(reco.data.updated_at)}</>}.</li>

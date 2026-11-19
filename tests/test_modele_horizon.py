@@ -206,12 +206,24 @@ def test_backtest_risque():
     rows += [{"symbol": "SPY", "date": d, "close": p, "volume": 1e7} for d, p in zip(dates, 100 * np.cumprod(1 + marche))]
     raw, syms = pd.DataFrame(rows), [f"T{i:02d}" for i in range(n)]
     res = bt.backtest(raw, syms, None, debut="2012-01-01", pas_semaines=8)
-    assert set(res["variante"]) == set(bt.VARIANTES) and set(res["portefeuille"]) == set(bt.PORTEFEUILLES)
+    pfs = res[res["portefeuille"] != "indice"]
+    assert set(pfs["variante"]) == set(bt.VARIANTES) and set(pfs["portefeuille"]) == set(bt.PORTEFEUILLES)
+    assert (res["portefeuille"] == "indice").any()                    # l'indice sert de repère
     r = bt.resume(res)
     for nom_pf in bt.PORTEFEUILLES:
         assert r[nom_pf]["n_mois"] >= 5
         assert "ia_vs_hist_3a" in r[nom_pf]
         assert all(0 < v["vol_reelle"] < 1 for v in r[nom_pf]["variantes"].values())
+
+    # Base large (tous les titres) contre ancienne base (40 meilleurs au momentum), même moteur
+    secteurs = {s: "AB"[i % 2] for i, s in enumerate(syms)}
+    res2 = bt.backtest(raw, syms, None, debut="2012-01-01", pas_semaines=8, base=bt.BASES,
+                       variantes=["hist_3a"], secteurs=secteurs)
+    assert set(res2["base"]) == {"sp500", "momentum40"}
+    c = bt.comparer_bases(res2, "sharpe_max", "hist_3a")
+    assert c["sp500"]["n_mois"] == c["momentum40"]["n_mois"] >= 5
+    assert 0 < c["sp500"]["volatilite"] < 1 and "indice" in c and "t" in c["ecart"]
+    assert 0.5 <= c["sp500"]["poids_secteur_max"] <= 1
 
 
 def test_risque_avec_comptes():

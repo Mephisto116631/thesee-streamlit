@@ -13,7 +13,8 @@ GitHub Actions (cron)  ──écrit──▶  Supabase  ◀──lit──  Appl
 | `cron_sync.py` | Point d'entrée du cron : synchro incrémentale, modèles, publication |
 | `data_pipeline.py`, `fred.py`, `universe.py` | Collecte (Yahoo depuis 2005, Alpha Vantage, FRED) et ancien modèle XGBoost 1 jour (conservé, désactivé) |
 | `publish.py` | Tables pour l'appli : `titres_snapshot`, `sector_medians`, `model_runs`, `market_overview`, `portefeuille_recommande`, `suivi_volatilite` |
-| `portefeuille.py` | Portefeuille conseillé (Markowitz, frontière efficiente) |
+| `portefeuille.py` | Portefeuille conseillé : Markowitz sur tout le S&P 500, covariance factorielle, même optimiseur que l'appli |
+| `docs/METHODE.md` | **Journal de la méthode** : chaque choix, ses hypothèses, ses tests et leurs résultats |
 | `modele_risque.py` | **IA de volatilité à 6 mois** (seul modèle probant), bilan en conditions réelles |
 | `modele_horizon.py` | Modèles de rendement 1 mois / 6 mois / 1 an (en test, non probants) |
 | `fondamentaux_sec.py` | Comptes officiels SEC (EDGAR) : facteurs du laboratoire et valorisation de l'appli (PER, ROE…) |
@@ -72,6 +73,9 @@ Un job *keepalive* empêche GitHub de désactiver les workflows planifiés aprè
 
 ## Ne montrer que du fiable
 
+Le détail de chaque choix (hypothèses, tests, résultats chiffrés, ce qui a été écarté) est tenu dans
+[`docs/METHODE.md`](docs/METHODE.md).
+
 Règle de l'appli : un chiffre ne sert à décider que s'il est **prouvé**, sinon il est présenté comme une **hypothèse**.
 
 - **Volatilité prévue par l'IA (6 mois)** : seul modèle probant (testé sur 2013-2026, sur des années jamais vues ;
@@ -104,6 +108,8 @@ Garde-fous : refus si un calcul tourne déjà ou a démarré il y a moins de 10 
 
 | PR | Apport |
 |---|---|
+| #25 | Markowitz sur tout le S&P 500 (fin de la présélection par momentum, non prouvée) ; covariance en 20 facteurs ; même optimiseur serveur / appli ; gain de diversification dans la Fiche de calculs ; journal `docs/METHODE.md` |
+| #24 | README à jour |
 | #23 | Force de la preuve en % du seuil ; ratios SEC fiabilisés (bornes, « n.d. » plutôt qu'un chiffre faux) ; option « Recharger les comptes SEC » |
 | #22 | Preuve continue de l'IA de volatilité (re-test mensuel, suivi réel, garde-fou) ; valorisation SEC dans l'appli ; tri PER |
 | #21 | Algorithme 4 : CNN (réseau de neurones convolutif) sur la forme des courbes de cours, au laboratoire (non probant) |

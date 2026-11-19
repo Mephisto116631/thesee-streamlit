@@ -79,12 +79,42 @@ def test_ingredients_coherents():
     """Les ingrédients publiés redonnent exactement les rendements attendus du serveur."""
     raw, snap = _marche(n_titres=21, jours=800)
     reco = pf.portefeuille_recommande(raw, snap)
-    u = reco["univers"]
+    u = reco["univers_facteurs"]
+    assert reco["univers"] is None          # anciennes versions de l'appli : frontière du serveur
     n = len(u["symbols"])
     assert len(u["mu_hist"]) == n and len(u["beta"]) == n
-    assert len(u["cov"]) == n and all(len(r) == n for r in u["cov"])
+    assert len(u["facteurs"]) == n and len(u["idio"]) == n
     mu = [(1 - pf.POIDS_HISTORIQUE) * (pf.RF + b * pf.PRIME_RISQUE) + pf.POIDS_HISTORIQUE * h
           for b, h in zip(u["beta"], u["mu_hist"])]
     R = pf._matrice_rendements(raw, u["symbols"], pf.JOURS_ESTIMATION)
     mu_srv, _ = pf.estimations(R, None)
     assert np.allclose(mu, mu_srv, atol=1e-9)
+
+
+def test_facteurs_conservent_les_variances():
+    """Σ ≈ B·Bᵀ + D : variance de chaque titre exacte, covariances proches."""
+    rng = np.random.default_rng(3)
+    f = rng.normal(0, 0.01, (800, 3))
+    R = f @ rng.normal(1, 0.5, (3, 60)) + rng.normal(0, 0.01, (800, 60))
+    cov = np.cov(R.T) * 252
+    B, D = pf.facteurs(cov, k=10)
+    approx = B @ B.T + np.diag(D)
+    assert np.allclose(np.diag(approx), np.diag(cov), rtol=1e-9)
+    assert np.abs(approx - cov).max() / np.abs(cov).max() < 0.05
+
+
+def test_fista_retrouve_la_variance_minimale():
+    """2 titres non corrélés : poids de variance minimale ∝ 1 / variance (comme l'appli)."""
+    B = np.zeros((2, 1))
+    D = np.array([0.04, 0.01])
+    w = pf.resoudre(B, D, np.zeros(2), 0.0, 1.0, iters=2000)
+    assert abs(w[0] - 0.2) < 1e-3 and abs(w[1] - 0.8) < 1e-3
+
+
+def test_candidats_tout_le_sp500_sans_etf_ni_detresse():
+    raw, snap = _marche(n_titres=30, jours=800)
+    snap["indice"] = ["S&P 500"] * 27 + ["ETF", "Nasdaq-100", "S&P 500"]
+    snap["is_etf"] = [False] * 27 + [True, False, False]
+    snap.loc[snap["symbol"] == "T29", "z_score"] = 1.0
+    c = pf.candidats(raw, snap)
+    assert c == [f"T{i:02d}" for i in range(27)]     # ni ETF, ni Nasdaq seul, ni détresse ; pas de limite à 40

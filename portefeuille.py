@@ -2,23 +2,22 @@
 # ==============================================================================
 # PORTEFEUILLE RECOMMANDÉ — calculé par le cron, affiché par l'appli
 # ==============================================================================
-# Méthode (volontairement simple et robuste, à titre indicatif) :
-#   1. Présélection : titres avec 1 an d'historique complet, classés par
-#      momentum 12-1 mois ajusté du risque (rendement 12 mois hors dernier mois
-#      / volatilité). On écarte les titres en détresse (Z-Score < 1,81).
-#   2. Optimisation de Markowitz « portefeuille tangent » (Sharpe maximal),
-#      sans vente à découvert, avec un plafond par ligne (20 %) pour éviter
-#      qu'un seul titre domine.
-#      - Covariance estimée par Ledoit-Wolf (stable avec peu d'observations).
-#      - Rendements attendus = 90 % CAPM (taux sans risque + bêta x 5 %) + 10 %
-#        historique : les titres étant présélectionnés sur leur hausse passée,
-#        l'historique seul promettrait 20 à 50 %/an (biais de sélection).
-#      - Estimation sur 3 ans d'historique.
-#   4. Frontière efficiente : pour une grille de rentabilités visées, le
-#      portefeuille de variance minimale qui l'atteint (même contraintes).
-#   3. Épuration : au plus 12 lignes d'au moins 3 %, en ré-optimisant sur les
-#      titres retenus (supprimer des lignes sans ré-optimiser casserait le
-#      portefeuille, surtout le moins risqué qui se répartit sur beaucoup de titres).
+# Méthode (journal des choix et des hypothèses : docs/METHODE.md) :
+#   1. Candidats : TOUS les membres actuels du S&P 500 (hors ETF) ayant 3 ans
+#      d'historique, hors titres en détresse (Z-Score < 1,81). Pas de présélection
+#      par momentum : ce pari n'a pas été probant au laboratoire.
+#   2. Risque : covariance Ledoit-Wolf sur 3 ans, mise sous forme factorielle
+#      Σ ≈ B·Bᵀ + D (20 composantes principales + risque propre de chaque titre,
+#      variance de chaque titre conservée exactement). Assez légère pour l'appli.
+#   3. Rendements attendus = 90 % CAPM (taux sans risque + bêta x prime de risque
+#      de 5 %) + 10 % historique. Hypothèse de long terme, pas une prévision.
+#   4. Optimisation de Markowitz par gradient projeté accéléré (FISTA), MÊME
+#      algorithme que l'appli (mobile/src/optim.ts) : pour une grille de compromis
+#      λ, min wᵀΣw − λ·wᵀμ sous 0 ≤ w ≤ 20 %, Σw = 1. Chaque λ donne un point de
+#      la frontière efficiente ; le portefeuille conseillé est celui au meilleur
+#      ratio de Sharpe.
+#   5. Épuration : au plus 12 lignes d'au moins 3 %, en ré-optimisant sur les
+#      titres retenus.
 # Les statistiques (rendement, volatilité, perte max) sont mesurées sur l'année
 # passée : elles décrivent ce qu'aurait fait CE portefeuille, pas une promesse.
 # ==============================================================================
@@ -26,7 +25,10 @@ import numpy as np
 import pandas as pd
 
 RF = 0.0435             # taux sans risque annuel (même valeur que l'appli)
-N_CANDIDATS = 40
+N_CANDIDATS = 40        # ancienne présélection par momentum (gardée pour le backtest comparatif)
+N_FACTEURS = 20         # composantes principales de la covariance publiée
+ITERATIONS = 400        # itérations FISTA (comme l'appli)
+N_LAMBDAS = 18          # points de la grille de compromis (comme l'appli)
 POIDS_MAX = 0.20
 POIDS_MIN = 0.03
 N_MAX_LIGNES = 12       # au-delà, trop de petits ordres pour un petit capital
@@ -70,23 +72,176 @@ def ingredients(R: pd.DataFrame, marche: pd.Series | None = None) -> dict:
     """Données brutes pour que l'appli recalcule la frontière avec SES hypothèses
     (taux sans risque, prime de risque, part d'historique, plafonds...).
 
-    {symbols, mu_hist (annuel), beta, cov (annuelle, Ledoit-Wolf), jours}
+    {symbols, mu_hist (annuel), beta, facteurs (n x k), idio (n), jours} :
+    covariance annuelle Ledoit-Wolf = facteurs·facteursᵀ + diag(idio).
     """
     from sklearn.covariance import LedoitWolf
     cov = LedoitWolf().fit(R.values).covariance_ * JOURS
+    B, D = facteurs(cov)
     m = marche.reindex(R.index).fillna(0.0) if marche is not None else R.mean(axis=1)
     var_m = float(m.var())
     return {
         "symbols": list(R.columns),
         "mu_hist": [float(x) for x in R.mean().values * JOURS],
         "beta": [float(R[c].cov(m)) / var_m if var_m > 0 else 1.0 for c in R.columns],
-        "cov": [[float(x) for x in row] for row in cov],
+        "facteurs": [[float(f"{x:.6g}") for x in row] for row in B],
+        "idio": [float(f"{x:.6g}") for x in D],
         "jours": int(len(R)),
     }
 
 
+# ------------------------------------------------------------------------------
+# Covariance factorielle et optimiseur (identique à mobile/src/optim.ts)
+# ------------------------------------------------------------------------------
+def facteurs(cov: np.ndarray, k: int = N_FACTEURS) -> tuple[np.ndarray, np.ndarray]:
+    """Σ ≈ B·Bᵀ + diag(D) : k premières composantes principales + risque propre.
+    D est choisi pour que la variance de chaque titre soit EXACTEMENT conservée."""
+    n = cov.shape[0]
+    k = max(1, min(k, n - 1)) if n > 1 else 1
+    val, vec = np.linalg.eigh(cov)
+    ordre = np.argsort(val)[::-1][:k]
+    B = vec[:, ordre] * np.sqrt(np.clip(val[ordre], 0, None))
+    D = np.clip(np.diag(cov) - (B ** 2).sum(axis=1), 1e-10, None)
+    return B, D
+
+
+def _mul(B: np.ndarray, D: np.ndarray, w: np.ndarray) -> np.ndarray:
+    return B @ (B.T @ w) + D * w
+
+
+def variance(B: np.ndarray, D: np.ndarray, w: np.ndarray) -> float:
+    return float(w @ _mul(B, D, w))
+
+
+def projeter(v: np.ndarray, cap: float, mn: np.ndarray | None = None) -> np.ndarray:
+    """Projection euclidienne sur {mn ≤ w ≤ cap, Σw = 1} : w = clip(v − τ, mn, cap), où τ annule
+    Σw − 1. Cette somme est affine par morceaux en τ : la méthode de Newton tombe sur la valeur
+    exacte en quelques pas (repli : dichotomie, comme l'appli)."""
+    bas = mn if mn is not None else np.zeros_like(v)
+    tau = float(np.mean(v) - 1 / len(v))
+    for _ in range(30):
+        w = np.clip(v - tau, bas, cap)
+        ecart = w.sum() - 1
+        if abs(ecart) < 1e-13:
+            return w
+        actifs = int(((v - tau > bas) & (v - tau < cap)).sum())
+        if actifs == 0:
+            break
+        tau += ecart / actifs
+    lo, hi = v.min() - cap - 1, v.max() + 1
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if np.clip(v - mid, bas, cap).sum() > 1:
+            lo = mid
+        else:
+            hi = mid
+    return np.clip(v - (lo + hi) / 2, bas, cap)
+
+
+def resoudre(B: np.ndarray, D: np.ndarray, mu: np.ndarray, lam: float, cap: float,
+             iters: int = ITERATIONS, mn: np.ndarray | None = None) -> np.ndarray:
+    """min wᵀΣw − λ·wᵀμ sur le simplexe plafonné, par FISTA."""
+    n = len(mu)
+    # Pas : 1 / constante de Lipschitz du gradient 2Σw ; ‖Σ‖ ≤ ‖B·Bᵀ‖ + max D, et ‖B·Bᵀ‖ est la
+    # plus grande valeur propre de Bᵀ·B (petite matrice k x k : calcul exact et rapide)
+    L = 2 * (float(np.linalg.eigvalsh(B.T @ B).max()) if B.size else 0.0) + 2 * float(D.max())
+    pas = 1 / (L + 1e-12)
+    w = projeter(np.full(n, 1 / n), cap, mn)
+    y, t = w, 1.0
+    for _ in range(iters):
+        w_suiv = projeter(y - pas * (2 * _mul(B, D, y) - lam * mu), cap, mn)
+        t_suiv = (1 + np.sqrt(1 + 4 * t * t)) / 2
+        y = w_suiv + ((t - 1) / t_suiv) * (w_suiv - w)
+        w, t = w_suiv, t_suiv
+    return w
+
+
+def resoudre_epure(B: np.ndarray, D: np.ndarray, mu: np.ndarray, lam: float, poids_max: float = POIDS_MAX,
+                   n_max: int = N_MAX_LIGNES, poids_min: float = POIDS_MIN) -> tuple[np.ndarray, np.ndarray]:
+    """Résout puis garde au plus n_max lignes ≥ poids_min en ré-optimisant sur elles. -> (indices, poids)"""
+    idx = np.arange(len(mu))
+    n_min = int(np.ceil(1 / poids_max - 1e-9))
+    w = resoudre(B, D, mu, lam, poids_max)
+    for _ in range(4):
+        ordre = np.argsort(-w)
+        garder = [k for k in ordre if w[k] >= poids_min][:n_max]
+        if len(garder) < n_min:
+            garder = list(ordre[:max(n_min, min(n_max, len(ordre)))])
+        if len(garder) == len(idx):
+            break
+        idx = idx[np.sort(garder)]
+        w = resoudre(B[idx], D[idx], mu[idx], lam, poids_max)
+    return idx, w
+
+
+def frontiere_lambdas(B: np.ndarray, D: np.ndarray, mu: np.ndarray, n_points: int = N_LAMBDAS,
+                      poids_max: float = POIDS_MAX) -> list[dict]:
+    """Points de la frontière efficiente pour une grille de λ (même grille que l'appli).
+    Chaque point : {rendement, volatilite, sharpe, idx, w}, triés, sans points dominés."""
+    n = len(mu)
+    if n == 0 or poids_max * min(n, N_MAX_LIGNES) < 1 - 1e-9:
+        return []
+    diag = (B ** 2).sum(axis=1) + D
+    echelle = diag.mean() / (np.abs(mu).max() or 1)
+    lambdas = [0.0] + [echelle * 10 ** (-2 + 3.5 * k / (n_points - 2)) for k in range(n_points - 1)]
+    pts = []
+    for lam in lambdas:
+        idx, w = resoudre_epure(B, D, mu, lam, poids_max)
+        w = w / w.sum()
+        r = float(w @ mu[idx])
+        vol = float(np.sqrt(max(variance(B[idx], D[idx], w), 0)))
+        pts.append({"rendement": r, "volatilite": vol, "sharpe": (r - RF) / vol if vol > 0 else 0.0,
+                    "idx": idx, "w": w})
+    pts.sort(key=lambda p: p["rendement"])
+    garde = [a for a in pts if not any(b is not a and b["rendement"] > a["rendement"] + 1e-6
+                                        and b["volatilite"] <= a["volatilite"] * 1.02 for b in pts)]
+    out = []
+    for p in garde:
+        if not out or p["rendement"] - out[-1]["rendement"] > 1e-5:
+            out.append(p)
+    return out
+
+
+def optimiser(mu: np.ndarray, B: np.ndarray, D: np.ndarray, colonnes, cible) -> pd.Series | None:
+    """Portefeuille épuré : cible=None -> meilleur ratio de Sharpe de la frontière ;
+    cible non finie (nan, -inf) -> variance minimale."""
+    pts = frontiere_lambdas(B, D, mu)
+    if not pts:
+        return None
+    if cible is None:
+        p = max(pts, key=lambda q: q["sharpe"])
+    else:
+        p = min(pts, key=lambda q: q["volatilite"])
+    return _nettoyer(pd.Series(p["w"], index=[colonnes[i] for i in p["idx"]]))
+
+
+def candidats(market_raw: pd.DataFrame, snapshot: pd.DataFrame) -> list[str]:
+    """Tous les membres actuels du S&P 500 (hors ETF) avec 3 ans d'historique, hors détresse."""
+    ok = snapshot.copy()
+    if "indice" in ok:
+        ok = ok[ok["indice"] == "S&P 500"]
+    if "is_etf" in ok:
+        ok = ok[~ok["is_etf"].fillna(False).astype(bool)]
+    if "z_score" in ok:
+        ok = ok[~(ok["z_score"].astype(float) < 1.81)]
+    px = (market_raw[market_raw["symbol"].isin(ok["symbol"])]
+          .pivot_table(index="date", columns="symbol", values="close").sort_index())
+    px = px.iloc[-(JOURS_ESTIMATION + 1):]
+    if len(px) < JOURS // 2:
+        return []
+    return sorted(px.dropna(axis=1, thresh=int(len(px) * 0.95)).columns)
+
+
+def score_momentum(px: pd.DataFrame) -> pd.Series:
+    """Ancien critère de présélection : momentum 12-1 mois / volatilité 1 an (non probant)."""
+    mom_12_1 = px.iloc[-22] / px.iloc[0] - 1
+    vol = px.pct_change().std() * np.sqrt(JOURS)
+    return (mom_12_1 / vol.replace(0, np.nan)).dropna().sort_values(ascending=False)
+
+
 def preselection(market_raw: pd.DataFrame, snapshot: pd.DataFrame, n: int = N_CANDIDATS) -> list[str]:
-    """Top n par momentum 12-1 / volatilité, hors titres en détresse financière."""
+    """ANCIENNE méthode (jusqu'à la PR #24) : top n par momentum 12-1 / volatilité.
+    Plus utilisée pour le portefeuille ; gardée pour le backtest comparatif."""
     ok = snapshot.copy()
     if "z_score" in ok:
         ok = ok[~(ok["z_score"].astype(float) < 1.81)]
@@ -95,120 +250,28 @@ def preselection(market_raw: pd.DataFrame, snapshot: pd.DataFrame, n: int = N_CA
     px = px.iloc[-(JOURS + 1):].dropna(axis=1, thresh=int(JOURS * 0.95)).ffill()
     if len(px) < JOURS // 2:
         return []
-    mom_12_1 = px.iloc[-22] / px.iloc[0] - 1                       # 12 mois hors dernier mois
-    vol = px.pct_change().std() * np.sqrt(JOURS)
-    score = (mom_12_1 / vol.replace(0, np.nan)).dropna().sort_values(ascending=False)
-    return score.index[:n].tolist()
-
-
-def _optimiser(objectif, n: int, poids_max: float, contraintes: list) -> np.ndarray | None:
-    from scipy.optimize import minimize
-    w0 = np.full(n, 1 / n)
-    # Tolérance fine : les variances annuelles valent ~0,005, la tolérance par défaut
-    # de SLSQP (1e-6) arrêtait l'optimisation presque au point de départ.
-    res = minimize(objectif, w0, method="SLSQP", bounds=[(0.0, poids_max)] * n,
-                   constraints=[{"type": "eq", "fun": lambda w: w.sum() - 1}] + contraintes,
-                   options={"maxiter": 1000, "ftol": 1e-12})
-    w = np.clip(res.x, 0, None)
-    # SLSQP signale parfois un échec (« Positive directional derivative ») alors que
-    # la solution est correcte : on l'accepte si toutes les contraintes sont tenues.
-    faisable = (abs(w.sum() - 1) < 1e-4 and w.max() <= poids_max + 1e-4
-                and all(c["fun"](w) >= -1e-4 for c in contraintes))
-    return w if (res.success or faisable) else None
-
-
-def _resoudre(mu: np.ndarray, cov: np.ndarray, poids_max: float, cible: float | None) -> np.ndarray | None:
-    """cible=None : Sharpe maximal ; sinon variance minimale avec rendement >= cible."""
-    n = len(mu)
-    if n * poids_max < 1 - 1e-9:
-        return None
-    if cible is None:
-        def objectif(w):
-            vol = np.sqrt(w @ cov @ w)
-            return -(w @ mu - RF) / vol if vol > 0 else 0.0
-        return _optimiser(objectif, n, poids_max, [])
-    contraintes = [{"type": "ineq", "fun": lambda w: w @ mu - cible}] if np.isfinite(cible) else []
-    return _optimiser(lambda w: 1e4 * (w @ cov @ w), n, poids_max, contraintes)
-
-
-def _optimiser_epure(mu: np.ndarray, cov: np.ndarray, colonnes, poids_max: float, cible: float | None) -> pd.Series | None:
-    """Optimise, garde au plus N_MAX_LIGNES lignes >= POIDS_MIN, ré-optimise sur ce sous-ensemble.
-
-    Si le sous-ensemble ne permet plus d'atteindre la cible, on garde la dernière
-    solution valide (quitte à avoir quelques petites lignes de plus).
-    """
-    idx = np.arange(len(mu))
-    n_min = int(np.ceil(1 / poids_max - 1e-9))
-    meilleur = None  # (w, idx) dernière solution valide
-    for _ in range(4):
-        w = _resoudre(mu[idx], cov[np.ix_(idx, idx)], poids_max, cible)
-        if w is None or (cible is not None and np.isfinite(cible) and w @ mu[idx] < cible - 1e-4):
-            break
-        meilleur = (w, idx)
-        ordre = np.argsort(-w)
-        garder = [i for i in ordre[:N_MAX_LIGNES] if w[i] >= POIDS_MIN]
-        if len(garder) < n_min:
-            garder = list(ordre[:max(n_min, min(N_MAX_LIGNES, len(ordre)))])
-        if len(garder) == len(idx):
-            break
-        idx = idx[sorted(garder)]
-    if meilleur is None:
-        return None
-    w, idx = meilleur
-    return _nettoyer(pd.Series(w, index=[colonnes[i] for i in idx]))
+    return score_momentum(px).index[:n].tolist()
 
 
 def markowitz_tangent(R: pd.DataFrame, poids_max: float = POIDS_MAX, marche: pd.Series | None = None) -> pd.Series:
-    """Poids long-only maximisant le Sharpe, plafonnés, au plus N_MAX_LIGNES lignes."""
+    """Poids long-only au meilleur ratio de Sharpe, plafonnés, au plus N_MAX_LIGNES lignes."""
     mu, cov = estimations(R, marche)
-    w = _optimiser_epure(mu, cov, list(R.columns), poids_max, None)
+    B, D = facteurs(cov)
+    w = optimiser(mu, B, D, list(R.columns), None)
     return w if w is not None else pd.Series(1 / R.shape[1], index=R.columns)
 
 
-def frontiere_efficiente(R: pd.DataFrame, n_points: int = N_FRONTIERE, poids_max: float = POIDS_MAX,
-                         marche: pd.Series | None = None) -> list[dict]:
-    """Pour une grille de rentabilités visées : portefeuille de variance minimale.
-
-    Chaque point : {cible, rendement, volatilite, sharpe, lignes: [{symbol, poids}]}.
-    La grille va du portefeuille le moins risqué au plus rentable atteignable
-    sous le plafond par ligne.
-    """
+def frontiere_efficiente(R: pd.DataFrame, marche: pd.Series | None = None) -> list[dict]:
+    """Frontière publiée : {cible, rendement, volatilite, sharpe, lignes: [{symbol, poids}]}."""
     mu, cov = estimations(R, marche)
+    B, D = facteurs(cov)
     cols = list(R.columns)
-    w_minvar = _optimiser_epure(mu, cov, cols, poids_max, -np.inf)
-    if w_minvar is None:
-        return []
-    # Rendement maximal sous plafond : les meilleurs titres à poids_max
-    r_max = float(np.sort(mu)[::-1][:int(np.ceil(1 / poids_max))].mean())
-    r_min = float(w_minvar.reindex(cols).fillna(0).values @ mu)
-
-    points = []
-    for cible in np.linspace(r_min, r_max * 0.995, n_points):
-        w = w_minvar if cible <= r_min + 1e-9 else _optimiser_epure(mu, cov, cols, poids_max, float(cible))
-        if w is None:
-            continue
-        wv = w.reindex(cols).fillna(0).values
-        rend, vol = float(wv @ mu), float(np.sqrt(wv @ cov @ wv))
-        if points and rend < points[-1]["rendement"] - 1e-6:
-            continue  # l'épuration peut faire reculer légèrement : on garde une frontière croissante
-        points.append({
-            "cible": float(cible), "rendement": rend, "volatilite": vol,
-            "sharpe": (rend - RF) / vol if vol > 0 else None,
-            "lignes": [{"symbol": k, "poids": float(v)} for k, v in w.items()],
-        })
-    # Frontière efficiente au sens strict : on retire les points dominés
-    # (un autre point fait au moins aussi bien en rentabilité ET en risque).
-    # Tolérance de 2 % (relatif) sur le risque : +10 pts de rentabilité pour un risque
-    # identique à 0,0002 près, c'est un portefeuille meilleur.
-    def domine(a, b):
-        return (b["rendement"] > a["rendement"] + 1e-6 and b["volatilite"] <= a["volatilite"] * 1.02)
-    points = [a for a in points if not any(domine(a, b) for b in points if b is not a)]
-    # Doublons (même portefeuille pour plusieurs cibles)
-    uniques = []
-    for p in points:
-        if not uniques or abs(p["rendement"] - uniques[-1]["rendement"]) > 1e-6:
-            uniques.append(p)
-    return uniques
+    out = []
+    for p in frontiere_lambdas(B, D, mu):
+        w = _nettoyer(pd.Series(p["w"], index=[cols[i] for i in p["idx"]]))
+        out.append({"cible": p["rendement"], "rendement": p["rendement"], "volatilite": p["volatilite"],
+                    "sharpe": p["sharpe"], "lignes": [{"symbol": k, "poids": float(v)} for k, v in w.items()]})
+    return out
 
 
 def _nettoyer(w: pd.Series) -> pd.Series:
@@ -244,10 +307,10 @@ def portefeuille_recommande(market_raw: pd.DataFrame, snapshot: pd.DataFrame) ->
     """Retourne {lignes: [...], stats: {...}, methode: str} ou None si données insuffisantes."""
     if market_raw.empty or snapshot.empty:
         return None
-    candidats = preselection(market_raw, snapshot)
-    if len(candidats) < 5:
+    cands = candidats(market_raw, snapshot)
+    if len(cands) < 5:
         return None
-    R = _matrice_rendements(market_raw, candidats, JOURS_ESTIMATION)
+    R = _matrice_rendements(market_raw, cands, JOURS_ESTIMATION)
     marche = None
     if INDICE_MARCHE in set(market_raw["symbol"]):
         px_m = market_raw[market_raw["symbol"] == INDICE_MARCHE].set_index("date")["close"].sort_index()
@@ -255,8 +318,11 @@ def portefeuille_recommande(market_raw: pd.DataFrame, snapshot: pd.DataFrame) ->
     if R.shape[1] < 5 or len(R) < JOURS // 2:
         return None
 
-    w = markowitz_tangent(R, marche=marche)
     mu, cov = estimations(R, marche)
+    B, D = facteurs(cov)
+    w = optimiser(mu, B, D, list(R.columns), None)
+    if w is None:
+        return None
     wv = w.reindex(R.columns).fillna(0).values
     infos = snapshot.set_index("symbol")
     lignes = []
@@ -290,14 +356,17 @@ def portefeuille_recommande(market_raw: pd.DataFrame, snapshot: pd.DataFrame) ->
             "poids_secteur_max": float(secteurs.max()),
             "secteur_principal": str(secteurs.idxmax()),
             "rendement_attendu": float(wv @ mu),
-            "volatilite_attendue": float(np.sqrt(wv @ cov @ wv)),
+            "volatilite_attendue": float(np.sqrt(variance(B, D, wv))),
         },
         "frontiere": frontiere_efficiente(R, marche=marche),
         "titres": titres,
-        "univers": ingredients(R, marche),
-        "methode": (f"Markowitz (Sharpe max), {len(candidats)} candidats présélectionnés par "
-                    f"momentum 12-1 ajusté du risque, plafond {int(POIDS_MAX * 100)} % par ligne, "
+        # Nouveau format (forme factorielle) sous une nouvelle clé : les anciennes versions de l'appli,
+        # qui attendent `univers.cov`, voient `univers` vide et affichent la frontière du serveur.
+        "univers": None,
+        "univers_facteurs": ingredients(R, marche),
+        "methode": (f"Markowitz (meilleur ratio de Sharpe) parmi les {R.shape[1]} titres du S&P 500 "
+                    f"ayant 3 ans d'historique, plafond {int(POIDS_MAX * 100)} % par ligne, "
                     f"au plus {N_MAX_LIGNES} lignes d'au moins {int(POIDS_MIN * 100)} %, "
-                    f"covariance Ledoit-Wolf sur 3 ans, rendements attendus = 90 % CAPM (taux sans risque "
-                    f"+ bêta x prime de risque de {int(PRIME_RISQUE * 100)} %) + 10 % historique."),
+                    f"covariance Ledoit-Wolf sur 3 ans ({N_FACTEURS} facteurs), rendements attendus = 90 % CAPM "
+                    f"(taux sans risque + bêta x prime de risque de {int(PRIME_RISQUE * 100)} %) + 10 % historique."),
     }
