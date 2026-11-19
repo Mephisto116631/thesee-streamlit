@@ -346,6 +346,15 @@ def publier_valorisation_sec(snap: pd.DataFrame, force: bool = False) -> int:
     valo = fsec.valorisation_actuelle(faits, snap.set_index("symbol")["close"], splits)
     if valo.empty:
         return 0
+    # Diagnostic : comptes lus mais aucun bénéfice exploitable -> on montre ce que la SEC a fourni
+    sans = valo[valo["bpa_sec"].isna() & valo["roe_sec"].isna()]["symbol"].tolist()
+    if sans:
+        print(f"[PUBLISH][SEC] Sans bénéfice exploitable : {', '.join(sans)}")
+        rn = faits[(faits["variable"].isin(["resultat_net", "bpa", "actions"])) & faits["symbol"].isin(sans[:15])]
+        for s, g in rn.sort_values("filed").groupby("symbol"):
+            print(f"[PUBLISH][SEC]   {s} : " + " ; ".join(
+                f"{r.variable} fin {pd.Timestamp(r.end).date()} publié {pd.Timestamp(r.filed).date()} = {r.val:.4g}"
+                for r in g.groupby("variable").tail(2).itertuples()))
     maj = pd.Timestamp.now(tz="UTC").isoformat()
     lignes = valo.assign(comptes_date=valo["comptes_date"].dt.strftime("%Y-%m-%d"), sec_maj=maj)
     db.upsert_rows("titres_snapshot", _records(lignes), on_conflict="symbol")

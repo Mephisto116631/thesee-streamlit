@@ -117,3 +117,33 @@ def test_valorisation_absurde_ecartee_et_medianes():
     med = publish.medianes_valorisation(valo, snap).set_index("secteur").loc["Tech"]
     assert med["per"] == 15.0                                      # médiane de 20 et 10 ; la perte est exclue
     assert med["cours_vc"] == 4.0
+
+
+def _faits(eps=None, actions=None, balise_rn="NetIncomeLoss"):
+    us = {k: v for k, v in FAITS["facts"]["us-gaap"].items() if k not in ("EarningsPerShareDiluted", "NetIncomeLoss")}
+    us[balise_rn] = FAITS["facts"]["us-gaap"]["NetIncomeLoss"]
+    if eps is not None:
+        us["EarningsPerShareDiluted"] = {"units": {"USD/shares": [
+            {"start": "2025-01-01", "end": "2025-12-31", "val": eps, "filed": "2026-02-20", "form": "10-K"}]}}
+    f = {"facts": {"us-gaap": us}}
+    if actions is not None:
+        f["facts"]["dei"] = {"EntityCommonStockSharesOutstanding": {"units": {"shares": [
+            {"end": "2026-02-01", "val": actions, "filed": "2026-02-20", "form": "10-K"}]}}}
+    return fsec.extraire(f, "AAA")
+
+
+def test_bpa_d_une_autre_categorie_d_actions_ecarte():
+    # BPA de l'action A (≈ 1 500 actions B) : PER 0,0075 et cours / valeur comptable absurde -> non disponible
+    v = fsec.valorisation_actuelle(_faits(eps=8000.0), pd.Series({"AAA": 60.0})).iloc[0]
+    assert pd.isna(v["bpa_sec"]) and pd.isna(v["vc_action_sec"])
+    assert abs(v["roe_sec"] - 0.2) < 1e-9                      # les ratios sans action restent justes
+
+
+def test_repli_sans_bpa_publie_et_balise_de_repli():
+    # Pas de BPA publié : bénéfice 80 / 20 actions en couverture = 4 $ -> PER 15
+    v = fsec.valorisation_actuelle(_faits(actions=20.0), pd.Series({"AAA": 60.0})).iloc[0]
+    assert v["bpa_sec"] == 4.0
+    # Bénéfice publié sous une balise de repli (résultat des activités poursuivies)
+    v = fsec.valorisation_actuelle(_faits(eps=4.0, balise_rn="IncomeLossFromContinuingOperations"),
+                                   pd.Series({"AAA": 60.0})).iloc[0]
+    assert abs(v["roe_sec"] - 0.2) < 1e-9 and v["bpa_sec"] == 4.0

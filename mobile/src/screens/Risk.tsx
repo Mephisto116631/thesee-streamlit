@@ -1,6 +1,6 @@
 import { useCallback, useState } from "preact/hooks";
 import { api, type ModelRun } from "../api";
-import { BarreSeuil, Card, ChartBox, cssVar, Details, HelpButton, Loading, OfflineNote, RangeBar, Stat, toneOf, useData, ZoneBadge, RefreshButton } from "../components";
+import { BarreSeuil, textePreuve, Card, ChartBox, cssVar, Details, HelpButton, Loading, OfflineNote, RangeBar, Stat, toneOf, useData, ZoneBadge, RefreshButton } from "../components";
 import { corr, dateFr, ilYA, num, pb, pct, signClass } from "../format";
 import { Relance } from "./Relance";
 import { isIG } from "./Stock";
@@ -145,8 +145,9 @@ function FiabiliteRisque() {
           </div>
           <BarreSeuil t={f.t} seuil={f.seuil} />
           <p class="hint">Test sur 2013-2026, sur des années que le modèle n'a jamais vues. L'IC (Information Coefficient) mesure, de 0 à 100 %,
-            si les titres prévus agités l'ont vraiment été. L'IA doit battre nettement la référence : t = {num(f.t, 1)} pour un seuil
-            de {num(f.seuil, 1)} (seuil relevé pour chaque essai fait, afin que le hasard ne passe pas).</p>
+            si les titres prévus agités l'ont vraiment été. L'IA doit battre nettement la référence : sa force de preuve est
+            de <b>{textePreuve(f.t, f.seuil)} du seuil</b> (100 % = probant ; seuil relevé pour chaque essai fait, afin que le hasard ne passe pas).
+            <small class="muted"> t = {num(f.t, 1)}, seuil {num(f.seuil, 1)}.</small></p>
         </>
       )}
       <h3 class="h3">En conditions réelles</h3>
@@ -215,13 +216,14 @@ function HorizonView({ m }: { m: ModelRun }) {
         <div class="note">Classement utilisé : <b>{SOURCES[d.source as string] ?? "modèle IA"}</b>.
           {d.source !== "modele" && " Le modèle IA (XGBoost) a fait moins bien en test : il reste entraîné à chaque calcul et reprendra la main s'il devient meilleur."}
           {d.debut_test && <> Testé depuis {dateFr(d.debut_test)} (données depuis {dateFr(d.debut_donnees)}) : environ {num(d.n_effectif, 0)} périodes indépendantes.</>}
-          {d.seuil_t != null && <> « Signal » exige t &gt; {num(d.seuil_t, 1)} (seuil relevé : peu de périodes et meilleur de 3 classements).</>}
+          {d.seuil_t != null && <> « Signal » exige une force de preuve d'au moins 100 % du seuil (seuil relevé : peu de périodes et meilleur de 3 classements ;
+            <small class="muted"> t &gt; {num(d.seuil_t, 1)}</small>).</>}
           <BarreSeuil t={d.source === "momentum" ? d.t_momentum : d.source === "multifacteurs" ? d.t_multifacteurs : d.t_stat} seuil={d.seuil_t} />
           {d.config_libelle && <> Réglage du modèle IA : {d.config_libelle}, choisi sur le passé uniquement.</>}</div>
         <div class="stats">
-          <Stat label="IC modèle IA" value={corr(d.ic_moyen)} sub={`t = ${num(d.t_stat, 1)}`} tone={d.source === "modele" ? v.ton : "neutral"} />
-          <Stat label="IC momentum" value={corr(d.ic_momentum)} sub={`t = ${num(d.t_momentum, 1)}`} tone={d.source === "momentum" ? v.ton : "neutral"} />
-          <Stat label="IC multi-facteurs" value={corr(d.ic_multifacteurs)} sub={`t = ${num(d.t_multifacteurs, 1)}`} tone={d.source === "multifacteurs" ? v.ton : "neutral"} />
+          <Stat label="IC modèle IA" value={corr(d.ic_moyen)} sub={<>preuve {textePreuve(d.t_stat, d.seuil_t)} du seuil<small class="muted"> · t {num(d.t_stat, 1)}</small></>} tone={d.source === "modele" ? v.ton : "neutral"} />
+          <Stat label="IC momentum" value={corr(d.ic_momentum)} sub={<>preuve {textePreuve(d.t_momentum, d.seuil_t)} du seuil<small class="muted"> · t {num(d.t_momentum, 1)}</small></>} tone={d.source === "momentum" ? v.ton : "neutral"} />
+          <Stat label="IC multi-facteurs" value={corr(d.ic_multifacteurs)} sub={<>preuve {textePreuve(d.t_multifacteurs, d.seuil_t)} du seuil<small class="muted"> · t {num(d.t_multifacteurs, 1)}</small></>} tone={d.source === "multifacteurs" ? v.ton : "neutral"} />
         </div>
         <p class="hint">L'<b>IC</b> (« Information Coefficient », coefficient d'information) mesure, date par date, si les titres classés en tête ont réellement fait mieux
           que les autres sur les {d.horizon_jours} jours de bourse suivants (corrélation de rang, de −100 % à +100 %). En gestion, un IC de 5 % stable est déjà bon.

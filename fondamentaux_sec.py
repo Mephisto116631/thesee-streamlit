@@ -35,7 +35,8 @@ CONCEPTS = {
     "actifs": (["Assets"], "USD", "instant"),
     "fonds_propres": (["StockholdersEquity",
                        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], "USD", "instant"),
-    "resultat_net": (["NetIncomeLoss", "ProfitLoss"], "USD", "annuel"),
+    "resultat_net": (["NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic",
+                      "IncomeLossFromContinuingOperations"], "USD", "annuel"),
     "marge_brute": (["GrossProfit"], "USD", "annuel"),
     "chiffre_affaires": (["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax",
                           "SalesRevenueNet"], "USD", "annuel"),
@@ -235,6 +236,8 @@ def caracteristiques_fondamentales(faits: pd.DataFrame, px_ajuste: pd.DataFrame,
 # VALORISATION ACTUELLE (affichée dans l'appli) : comptes annuels officiels les plus
 # récents, rapportés au cours du jour. Ce sont des FAITS publiés, pas des prévisions.
 # ------------------------------------------------------------------------------
+PER_MIN, PER_MAX = 2.0, 1000.0      # bornes de plausibilité du PER
+PB_MIN, PB_MAX = 0.1, 500.0         # et du cours / valeur comptable
 COLONNES_VALO = ["bpa_sec", "vc_action_sec", "roe_sec", "rentabilite_brute", "endettement",
                  "part_encaissee", "comptes_date"]
 
@@ -283,12 +286,16 @@ def valorisation_actuelle(faits: pd.DataFrame, prix: pd.Series, splits: pd.DataF
         if np.isnan(marge):
             marge = v("chiffre_affaires") - v("cout_ventes")
         bpa = v("bpa") / _divisions_apres(splits, s, fin("bpa"))
+        actions_couv = v("actions") * _divisions_apres(splits, s, fin("actions"))
         # Nombre d'actions : celui implicite du bénéfice (bénéfice / BPA, toutes catégories
         # d'actions confondues), sinon celui publié en couverture, corrigé des divisions
         if rn > 0 and v("bpa") > 0:
             n_actions = rn / bpa
         else:
-            n_actions = v("actions") * _divisions_apres(splits, s, fin("actions"))
+            n_actions = actions_couv
+        # BPA non publié (souvent : plusieurs catégories d'actions) -> bénéfice / actions en couverture
+        if np.isnan(bpa) and not np.isnan(rn) and actions_couv > 0:
+            bpa = rn / actions_couv
         filed = [dern[k].at[s, "filed"] for k in ("resultat_net", "fonds_propres", "actifs") if s in dern[k].index]
         lignes.append({
             "symbol": s,
@@ -303,11 +310,12 @@ def valorisation_actuelle(faits: pd.DataFrame, prix: pd.Series, splits: pd.DataF
     out = pd.DataFrame(lignes)
     # Garde-fous contre les erreurs d'unité ou de balise : valeurs absurdes -> non disponible
     px = prix.reindex(out["symbol"]).values
-    # BPA négatif conservé (entreprise en perte : « PER non significatif ») ; PER > 1000 = erreur
+    # BPA négatif conservé (entreprise en perte : « PER non significatif »). Hors bornes = erreur
+    # d'unité ou de catégorie d'actions (ex. BPA d'une action A valant 1 500 actions B) -> non disponible
     per = px / out["bpa_sec"].values
-    out.loc[(out["bpa_sec"] > 0) & ~((per > 0) & (per <= 1000)), "bpa_sec"] = np.nan
+    out.loc[(out["bpa_sec"] > 0) & ~((per >= PER_MIN) & (per <= PER_MAX)), "bpa_sec"] = np.nan
     pb = px / out["vc_action_sec"].values
-    out.loc[(pb <= 0) | (pb > 500) | ~np.isfinite(pb), "vc_action_sec"] = np.nan
+    out.loc[~((pb >= PB_MIN) & (pb <= PB_MAX)), "vc_action_sec"] = np.nan
     out.loc[out["roe_sec"].abs() > 5, "roe_sec"] = np.nan
     out.loc[~out["endettement"].between(-0.5, 1.5), "endettement"] = np.nan
     out.loc[out["part_encaissee"].abs() > 20, "part_encaissee"] = np.nan
