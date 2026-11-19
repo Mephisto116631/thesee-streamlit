@@ -386,4 +386,13 @@ encore un peu mieux que le semestriel sur cette période. L'écart entre les deu
   que la loi normale (±1,56 σ contre ±1,64 σ) ; ses queues ne s'épaississent qu'au-delà de ~2,5 σ. On utilise donc la
   Student d'échelle σ (±2,02 σ), qui élargit réellement la fourchette, conformément au texte de la règle (« loi de Student
   à 5 degrés »).
-- **Couverture revérifiée** : voir ci-dessous.
+- **Couverture revérifiée** (251 portefeuilles gardés 1 an, 2006-2025, prévision hybride) :
+
+  | Loi de la projection | « Mauvais cas 5 % » touché | « Bon cas 5 % » dépassé |
+  |---|---|---|
+  | Normale | 8,8 % | 5,2 % |
+  | **Student à 5 degrés (échelle σ)** | **6,4 %** | 1,6 % |
+
+  Avec la loi de Student, le mauvais cas repasse sous le seuil de 7,5 % : la règle 5 est satisfaite. Contrepartie
+  assumée : le bon cas devient prudent (dépassé 1,6 % des fois au lieu de 5 %). La fourchette est un peu trop large
+  vers le haut, ce qui est préférable pour décider.
