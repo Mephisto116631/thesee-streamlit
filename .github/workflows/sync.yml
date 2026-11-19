@@ -9,7 +9,12 @@ on:
     - cron: "0 14 * * 1-5"   # ~10:00 ET (peu après l'ouverture)
     - cron: "0 17 * * 1-5"   # ~13:00 ET (mi-journée)
     - cron: "30 21 * * 1-5"  # ~16:30 ET hiver / 17:30 ET été (après la clôture)
-  workflow_dispatch: {}       # bouton "Run workflow" manuel dans l'onglet Actions
+  workflow_dispatch:          # bouton "Run workflow" manuel dans l'onglet Actions
+    inputs:
+      forcer_sec:
+        description: "Recharger les comptes SEC maintenant (sinon une fois par semaine)"
+        type: boolean
+        default: false
 
 # Jamais deux synchronisations en même temps (écritures concurrentes dans Supabase)
 concurrency:
@@ -44,6 +49,7 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           # Comptes officiels SEC (valorisation, une fois par semaine) : contact exigé par la SEC
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          SEC_FORCER: ${{ inputs.forcer_sec && '1' || '0' }}
         run: python cron_sync.py
 
   # GitHub désactive automatiquement les workflows planifiés après 60 jours sans

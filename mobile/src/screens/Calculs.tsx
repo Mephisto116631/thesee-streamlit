@@ -1,7 +1,7 @@
 import { useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { api } from "../api";
-import { Card, Loading, useData } from "../components";
+import { Card, Loading, textePreuve, useData } from "../components";
 import { corr, num, pct, ratioPct } from "../format";
 import { avecVolIA, rendementsAttendus, sousUnivers } from "../optim";
 import { coutAnnualise, planAchat, projection } from "../strategy";
@@ -156,10 +156,11 @@ export function Calculs({ section }: { section?: string }) {
           <table class="table small"><tbody>{["court", "6m", "1a"].map((k) => {
             const m = models.data?.find((x) => x.kind === `horizon_${k}`);
             const d = m?.diagnostics ?? {};
-            return <tr><td>{k === "court" ? "1 mois" : k === "6m" ? "6 mois" : "1 an"}</td><td>IC {corr(d.ic_moyen)}</td><td>t = {num(d.t_stat, 1)}{d.seuil_t != null && ` (seuil ${num(d.seuil_t, 1)})`}</td></tr>;
+            return <tr><td>{k === "court" ? "1 mois" : k === "6m" ? "6 mois" : "1 an"}</td><td>IC {corr(d.ic_moyen)}</td><td>preuve <b>{textePreuve(d.t_stat, d.seuil_t)}</b> du seuil<br /><small class="muted">t {num(d.t_stat, 1)}{d.seuil_t != null && ` / ${num(d.seuil_t, 1)}`}</small></td></tr>;
           })}</tbody></table>
-          <p class="hint">t = IC moyen / écart-type × √(périodes indépendantes). « Signal » si IC &gt; 3 % et t au-dessus du seuil, relevé quand il y a
-            peu de périodes ou plusieurs essais (sinon le hasard finit par faire gagner un modèle).</p>
+          <p class="hint">Force de la preuve = t / seuil, en % : à 100 % ou plus, le résultat ne s'explique plus par le hasard.
+            t = IC moyen / écart-type × √(périodes indépendantes) ; le seuil est relevé quand il y a peu de périodes ou plusieurs essais
+            (sinon le hasard finit par faire gagner un modèle). « Signal » si IC &gt; 3 % et preuve ≥ 100 %.</p>
         </Etape>
         <Etape titre="IA de risque" formule="volatilité prévue = classement IA du risque → niveau des volatilités 3 mois du moment"
           definition={<>L'IA classe les titres du plus calme au plus agité pour les 6 prochains mois ; chaque rang reçoit le niveau de volatilité

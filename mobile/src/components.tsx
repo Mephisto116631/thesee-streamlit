@@ -226,14 +226,28 @@ export function Info({ children }: { children: ComponentChildren }) {
   );
 }
 
-/** Barre « hasard ↔ probant » : position du t par rapport au seuil exigé. */
+/** Force de la preuve en % du seuil : 100 % = juste assez pour exclure le hasard (t = seuil). */
+export function forcePreuve(t: number | null | undefined, seuil: number | null | undefined): number | null {
+  return t == null || seuil == null || seuil <= 0 ? null : t / seuil;
+}
+export const textePreuve = (t: number | null | undefined, seuil: number | null | undefined) => {
+  const f = forcePreuve(t, seuil);
+  return f == null ? "—" : `${Math.round(Math.max(0, f) * 100)} %`;
+};
+
+const fr1 = (x: number) => x.toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+/** Barre « hasard ↔ probant » : force de la preuve en % du seuil, t et seuil en petit. */
 export function BarreSeuil({ t, seuil }: { t: number | null | undefined; seuil: number | null | undefined }) {
-  if (t == null || seuil == null || seuil <= 0) return null;
-  const r = Math.max(0, Math.min(1.5, t / seuil));
+  const f = forcePreuve(t, seuil);
+  if (f == null) return null;
+  const r = Math.max(0, Math.min(1.5, f));
   return (
-    <div class="barre-seuil" title={`t = ${t.toFixed(1)} pour un seuil de ${seuil.toFixed(1)}`}>
+    <div class="barre-seuil" title={`t = ${t!.toFixed(1)} pour un seuil de ${seuil!.toFixed(1)}`}>
+      <span class="force"><b class={f >= 1 ? "up" : ""}>{textePreuve(t, seuil)}</b><small> du seuil</small></span>
       <div class="piste"><div class={`rempli ${r >= 1 ? "ok" : ""}`} style={{ width: `${(r / 1.5) * 100}%` }} /><span class="repere" /></div>
-      <small>{r >= 1 ? "probant" : r >= 0.66 ? "proche du seuil" : "hasard possible"}</small>
+      <small>{f >= 1 ? "probant" : f >= 0.66 ? "proche du seuil" : "hasard possible"}
+        <span class="t-petit"> · t {fr1(t!)} / {fr1(seuil!)}</span></small>
     </div>
   );
 }
