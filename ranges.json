@@ -123,7 +123,7 @@
   },
   "vix": {
     "label": "VIX",
-    "unite": "pts",
+    "unite": "pctpts",
     "bornes": [15, 25],
     "zones": [
       {"nom": "Calme", "ton": "good", "aide": "Volatilité implicite basse."},

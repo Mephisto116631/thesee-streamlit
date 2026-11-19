@@ -20,6 +20,19 @@ export interface HypothesesModele {
   nMaxLignes: number;       // 12
   poidsMin: number;         // 0.03
   sourceVol?: "historique" | "ia"; // volatilités utilisées : 3 ans d'historique, ou prévues par l'IA
+  imposes?: string[];        // titres que l'utilisateur veut garder (au moins le poids minimal)
+}
+
+/** Univers sans les titres exclus par l'utilisateur (même ingrédients, mêmes calculs). */
+export function sousUnivers(u: Univers, exclus: string[]): Univers {
+  if (!exclus.length) return u;
+  const garde = u.symbols.map((s, i) => [s, i] as const).filter(([s]) => !exclus.includes(s)).map(([, i]) => i);
+  return {
+    ...u,
+    symbols: garde.map((i) => u.symbols[i]), mu_hist: garde.map((i) => u.mu_hist[i]), beta: garde.map((i) => u.beta[i]),
+    cov: garde.map((i) => garde.map((j) => u.cov[i][j])),
+    vol_ia: u.vol_ia ? garde.map((i) => u.vol_ia![i]) : undefined,
+  };
 }
 
 /** Volatilité historique (3 ans) de chaque titre : racine de la diagonale de la covariance. */
@@ -41,15 +54,17 @@ export function rendementsAttendus(u: Univers, h: HypothesesModele): number[] {
   return u.beta.map((b, i) => (1 - h.poidsHistorique) * (h.tauxSansRisque + b * h.primeRisque) + h.poidsHistorique * u.mu_hist[i]);
 }
 
-/** Projection euclidienne sur {0 ≤ w ≤ cap, Σw = 1} (recherche du seuil par dichotomie). */
-export function projeterSimplexePlafonne(v: Float64Array, cap: number): Float64Array {
+/** Projection euclidienne sur {min_i ≤ w_i ≤ cap, Σw = 1} (recherche du seuil par dichotomie).
+ *  `min` : poids minimal par titre (0 par défaut ; > 0 pour un titre imposé par l'utilisateur). */
+export function projeterSimplexePlafonne(v: Float64Array, cap: number, min?: Float64Array): Float64Array {
   const n = v.length;
-  const somme = (t: number) => { let s = 0; for (let i = 0; i < n; i++) s += Math.min(cap, Math.max(0, v[i] - t)); return s; };
-  let lo = Math.min(...v) - cap, hi = Math.max(...v);
-  for (let k = 0; k < 60; k++) { const mid = (lo + hi) / 2; if (somme(mid) > 1) lo = mid; else hi = mid; }
+  const bas = (i: number) => (min ? min[i] : 0);
+  const somme = (t: number) => { let s = 0; for (let i = 0; i < n; i++) s += Math.min(cap, Math.max(bas(i), v[i] - t)); return s; };
+  let lo = Math.min(...v) - cap - 1, hi = Math.max(...v) + 1;
+  for (let k = 0; k < 80; k++) { const mid = (lo + hi) / 2; if (somme(mid) > 1) lo = mid; else hi = mid; }
   const t = (lo + hi) / 2;
   const w = new Float64Array(n);
-  for (let i = 0; i < n; i++) w[i] = Math.min(cap, Math.max(0, v[i] - t));
+  for (let i = 0; i < n; i++) w[i] = Math.min(cap, Math.max(bas(i), v[i] - t));
   return w;
 }
 
@@ -60,18 +75,18 @@ function matVec(S: Float64Array[], w: Float64Array): Float64Array {
 }
 
 /** min wᵀΣw − λ wᵀμ sur le simplexe plafonné (FISTA). */
-export function resoudre(S: Float64Array[], mu: Float64Array, lambda: number, cap: number, iters = 400): Float64Array {
+export function resoudre(S: Float64Array[], mu: Float64Array, lambda: number, cap: number, iters = 400, min?: Float64Array): Float64Array {
   const n = mu.length;
   // Constante de Lipschitz du gradient 2Σw : 2 × (norme de Frobenius ≥ plus grande valeur propre)
   let fro = 0; for (const r of S) for (const x of r) fro += x * x;
   const pas = 1 / (2 * Math.sqrt(fro) + 1e-12);
-  let w = projeterSimplexePlafonne(new Float64Array(n).fill(1 / n), cap);
+  let w = projeterSimplexePlafonne(new Float64Array(n).fill(1 / n), cap, min);
   let y = w, t = 1;
   for (let k = 0; k < iters; k++) {
     const g = matVec(S, y);
     const v = new Float64Array(n);
     for (let i = 0; i < n; i++) v[i] = y[i] - pas * (2 * g[i] - lambda * mu[i]);
-    const wNext = projeterSimplexePlafonne(v, cap);
+    const wNext = projeterSimplexePlafonne(v, cap, min);
     const tNext = (1 + Math.sqrt(1 + 4 * t * t)) / 2;
     const yNext = new Float64Array(n);
     for (let i = 0; i < n; i++) yNext[i] = wNext[i] + ((t - 1) / tNext) * (wNext[i] - w[i]);
@@ -88,14 +103,20 @@ function sousMatrice(cov: number[][], idx: number[]): Float64Array[] {
 function resoudreEpure(u: Univers, mu: number[], lambda: number, h: HypothesesModele): { idx: number[]; w: Float64Array } {
   let idx = u.symbols.map((_, i) => i);
   const nMin = Math.ceil(1 / h.poidsMax - 1e-9);
-  let w = resoudre(sousMatrice(u.cov, idx), Float64Array.from(idx.map((i) => mu[i])), lambda, h.poidsMax);
+  // Titres imposés : poids minimal garanti (poidsMin, au moins 1 %), jamais retirés à l'épuration
+  const imposes = new Set((h.imposes ?? []).map((s) => u.symbols.indexOf(s)).filter((i) => i >= 0));
+  const plancher = Math.max(h.poidsMin, 0.01);
+  const mins = (ids: number[]) => (imposes.size ? Float64Array.from(ids.map((i) => (imposes.has(i) ? plancher : 0))) : undefined);
+  const res = (ids: number[]) => resoudre(sousMatrice(u.cov, ids), Float64Array.from(ids.map((i) => mu[i])), lambda, h.poidsMax, 400, mins(ids));
+  let w = res(idx);
   for (let tour = 0; tour < 4; tour++) {
     const ordre = [...w.keys()].sort((a, b) => w[b] - w[a]);
-    let garder = ordre.slice(0, h.nMaxLignes).filter((k) => w[k] >= h.poidsMin);
-    if (garder.length < nMin) garder = ordre.slice(0, Math.max(nMin, Math.min(h.nMaxLignes, ordre.length)));
+    const forces = ordre.filter((k) => imposes.has(idx[k]));
+    let garder = [...forces, ...ordre.filter((k) => !imposes.has(idx[k]) && w[k] >= h.poidsMin)].slice(0, Math.max(h.nMaxLignes, forces.length));
+    if (garder.length < nMin) garder = [...new Set([...forces, ...ordre])].slice(0, Math.max(nMin, Math.min(h.nMaxLignes, ordre.length)));
     if (garder.length === idx.length) break;
     idx = garder.sort((a, b) => a - b).map((k) => idx[k]);
-    w = resoudre(sousMatrice(u.cov, idx), Float64Array.from(idx.map((i) => mu[i])), lambda, h.poidsMax);
+    w = res(idx);
   }
   return { idx, w };
 }

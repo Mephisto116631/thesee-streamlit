@@ -1,18 +1,21 @@
 import { useCallback, useMemo, useState } from "preact/hooks";
 import { api } from "../api";
-import { Card, ChartBox, cssVar, Details, HelpButton, Loading, OfflineNote, RefreshButton, ReglagesButton, Stat, toneOf, useData } from "../components";
-import { frontiere as calculerFrontiere, type Univers } from "../optim";
-import { nbModifies, useParametres } from "../settings";
-import { ilYA, num, pct } from "../format";
-import { choisirPoint, choisirPointRisque, HORIZON_DEFAUT, HORIZONS, projection } from "../strategy";
+import { BarreSeuil, Card, ChartBox, cssVar, HelpButton, Info, Loading, OfflineNote, RefreshButton, ReglagesButton, Stat, toneOf, useData, Verifier } from "../components";
+import { frontiere as calculerFrontiere, sousUnivers, type Univers } from "../optim";
+import { ecrireParametres, nbModifies, useParametres } from "../settings";
+import { ilYA, num, pct, ratioPct } from "../format";
+import { choisirPoint, choisirPointRisque, HORIZON_DEFAUT, HORIZONS, planAchat, projection } from "../strategy";
 import { MonteCarlo } from "./MonteCarlo";
 import { PlanAchat } from "./PlanAchat";
 
 const KEY = "thesee:objectif:v1";
 // Hold : horizons de 6 mois et plus (en dessous, c'est le mode court terme)
 const HORIZONS_HOLD = HORIZONS.filter((x) => x.annees >= 0.5);
-export interface Etat { capital: number; cible: number; horizon: string; mode: "rendement" | "risque"; volMax: number }
-const DEFAUT: Etat = { capital: 200, cible: 0.08, horizon: HORIZON_DEFAUT, mode: "rendement", volMax: 0.15 };
+export interface Etat {
+  capital: number; cible: number; horizon: string; mode: "rendement" | "risque"; volMax: number;
+  exclus: string[]; imposes: string[];   // ajustements de l'utilisateur parmi les candidats
+}
+const DEFAUT: Etat = { capital: 200, cible: 0.08, horizon: HORIZON_DEFAUT, mode: "rendement", volMax: 0.15, exclus: [], imposes: [] };
 const charger = (): Etat => {
   try { return { ...DEFAUT, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") }; } catch { return DEFAUT; }
 };
@@ -35,8 +38,10 @@ export function usePortefeuilleCible() {
   const u = reco.data?.univers as Univers | undefined;
   // Frontière recalculée sur le téléphone avec les hypothèses de la page Paramètres
   // (repli : celle du serveur si l'univers n'est pas encore publié).
-  const frontiere = useMemo(() => (u ? calculerFrontiere(u, params) : reco.data?.frontiere ?? []),
-    [u, reco.data?.frontiere, params.tauxSansRisque, params.primeRisque, params.poidsHistorique, params.poidsMax, params.nMaxLignes, params.poidsMin, params.sourceVol]);
+  // Titres exclus / imposés par l'utilisateur : même optimiseur, sur le sous-univers
+  const frontiere = useMemo(() => (u ? calculerFrontiere(sousUnivers(u, e.exclus), { ...params, imposes: e.imposes }) : reco.data?.frontiere ?? []),
+    [u, reco.data?.frontiere, params.tauxSansRisque, params.primeRisque, params.poidsHistorique, params.poidsMax, params.nMaxLignes,
+      params.poidsMin, params.sourceVol, e.exclus.join(","), e.imposes.join(",")]);
   const modifies = nbModifies(params);
   const choix = e.mode === "risque" ? choisirPointRisque(frontiere, e.volMax) : choisirPoint(frontiere, e.cible);
   const volIA = params.sourceVol === "ia" && Boolean(u?.vol_ia?.length);
@@ -47,167 +52,242 @@ export function usePortefeuilleCible() {
 }
 
 export function Portfolio() {
-  const { e, maj, reco, ov, snap, h, params, frontiere, modifies, choix, volIA, volHistDe, volIADe, lignes } = usePortefeuilleCible();
+  const { e, maj, reco, ov, snap, h, params, u, frontiere, modifies, choix, volIA, volHistDe, volIADe, lignes } = usePortefeuilleCible();
   const prix: Record<string, number | null | undefined> = {
     ...Object.fromEntries(Object.entries(reco.data?.titres ?? {}).map(([k, v]) => [k, v.prix])),
     ...Object.fromEntries((snap.data ?? []).map((x) => [x.symbol, x.close])),
   };
   const proj = choix ? projection(e.capital, choix.point.rendement, choix.point.volatilite, h.annees, e.cible, params.confiance) : null;
+  const fx = ov.data?.eurusd ?? 1.08;
+  const frais = choix ? planAchat(e.capital, lignes, prix, fx, { fraisOrdre: params.fraisOrdre, fraisChange: params.fraisChange,
+    fractions: params.fractions, margeLimite: params.margeLimite, tranches: 1, frequence: "mois" }) : null;
   const queue = pct((1 - params.confiance) / 2, 0, false);
+  const ajuste = e.exclus.length + e.imposes.length;
 
   return (
     <div class="screen">
       <header class="screen-head">
-        <div><h1>Portefeuille</h1><p class="sub">{num(e.capital, 0)} € · horizon {h.label}</p></div>
+        <div><h1>Portefeuille</h1><p class="sub">{num(e.capital, 0)} € · horizon {h.label}{ajuste ? ` · ${ajuste} ajustement(s)` : ""}</p></div>
         <HelpButton keys={["sharpe", "volatility", "max_drawdown"]} intro={<>
-          <p><b>Objectif</b> : tu fixes la rentabilité visée par an et ton horizon. L'appli choisit, parmi les meilleurs titres du moment,
-            le portefeuille <b>le moins risqué</b> qui l'atteint en théorie (frontière efficiente de Markowitz, 20 % max par titre).</p>
-          <p>Toutes les hypothèses (taux sans risque, prime de risque, plafonds, frais…) se règlent dans les <b>Paramètres</b> (roue dentée ⚙ en haut à droite).</p>
+          <p><b>Objectif</b> : tu fixes soit la rentabilité visée, soit le risque maximal. L'appli choisit, parmi ~40 titres présélectionnés,
+            le meilleur compromis (frontière efficiente de Markowitz, 20 % max par titre).</p>
           <p><b>Rentabilité attendue</b> : estimée surtout par le modèle CAPM (taux sans risque + prime de risque selon la sensibilité
-            du titre au marché), et seulement à 10 % par l'historique. Les titres ont été choisis parce qu'ils ont monté : leur passé
-            surestime l'avenir. Ce n'est pas une promesse, c'est une estimation volontairement prudente (≈ 8 à 12 %/an pour des actions).</p>
-          <p><b>Fourchette</b> : 90 % des scénarios simulés finissent entre la valeur basse et la valeur haute (modèle log-normal).</p>
+            du titre au marché), à 10 % seulement par l'historique. C'est une estimation volontairement prudente, pas une promesse.</p>
+          <p><b>Ajuster les titres</b> : exclus ou impose des titres ; le calcul reste exactement le même.</p>
         </>} />
         <RefreshButton />
         <ReglagesButton />
       </header>
       {modifies > 0 && <div class="note">Calculé avec {modifies} hypothèse(s) personnalisée(s) — <a href="#/parametres">voir les Paramètres</a>.</div>}
+      <OfflineNote res={reco.res} />
 
-
-      <Card title="Mon objectif" class="tint-accent">
-        <label class="field">Capital à investir (€)
-          <input type="number" inputMode="numeric" min={50} step={50} value={e.capital}
-            onChange={(ev) => maj({ capital: Math.max(50, Number((ev.target as HTMLInputElement).value) || 200) })} />
-        </label>
-        {(
-          <>
-            <div class="field" style={{ marginTop: 10 }}>Horizon de placement
-              <div class="chips wrap" role="group" aria-label="Horizon">
-                {HORIZONS_HOLD.map((x) => <button class={`chip ${e.horizon === x.k ? "on" : ""}`} onClick={() => maj({ horizon: x.k })}>{x.label}</button>)}
-              </div>
-            </div>
-            <p class="hint" style={{ marginTop: 4 }}>{h.conseil}</p>
-          </>
+      {/* 1. Objectif : ce que je fixe */}
+      <Card title="Mon objectif" class="tint-accent" repliable>
+        <div class="stats">
+          <label class="field" style={{ flex: 1 }}>Montant (€)
+            <input type="number" inputMode="numeric" min={50} step={50} value={e.capital}
+              onChange={(ev) => maj({ capital: Math.max(50, Number((ev.target as HTMLInputElement).value) || 200) })} />
+          </label>
+        </div>
+        <div class="field" style={{ marginTop: 8 }}>Durée de placement
+          <div class="chips wrap" role="group" aria-label="Horizon">
+            {HORIZONS_HOLD.map((x) => <button class={`chip ${e.horizon === x.k ? "on" : ""}`} onClick={() => maj({ horizon: x.k })}>{x.label}</button>)}
+          </div>
+        </div>
+        <div class="seg full" role="group" aria-label="Ce que je fixe" style={{ marginTop: 10 }}>
+          <button class={e.mode === "rendement" ? "on" : ""} onClick={() => maj({ mode: "rendement" })}>Je vise une rentabilité</button>
+          <button class={e.mode === "risque" ? "on" : ""} onClick={() => maj({ mode: "risque" })}>Je limite le risque</button>
+        </div>
+        {e.mode === "rendement" ? (
+          <div class="field">
+            <span>Rentabilité visée : <b class="accent">{pct(e.cible, 0, false)} par an</b></span>
+            <input type="range" min={0.02} max={0.3} step={0.01} value={e.cible} aria-label="Rentabilité visée par an"
+              onInput={(ev) => maj({ cible: Number((ev.target as HTMLInputElement).value) })} />
+            <div class="range-labels"><span>2 %</span><span>8 % ≈ actions long terme</span><span>30 %</span></div>
+          </div>
+        ) : (
+          <div class="field">
+            <span>Risque maximal : <b class="accent">{pct(e.volMax, 0, false)} de volatilité par an</b></span>
+            <input type="range" min={0.08} max={0.35} step={0.01} value={e.volMax} aria-label="Volatilité maximale par an"
+              onInput={(ev) => maj({ volMax: Number((ev.target as HTMLInputElement).value) })} />
+            <div class="range-labels"><span>8 % calme</span><span>≈ 18 % S&P 500</span><span>35 % agité</span></div>
+          </div>
         )}
-        {(
-          <>
-            <div class="seg full" role="group" aria-label="Ce que je fixe" style={{ marginTop: 12 }}>
-              <button class={e.mode === "rendement" ? "on" : ""} onClick={() => maj({ mode: "rendement" })}>Je vise une rentabilité</button>
-              <button class={e.mode === "risque" ? "on" : ""} onClick={() => maj({ mode: "risque" })}>Je limite le risque</button>
-            </div>
-            {e.mode === "rendement" ? (
-              <div class="field">
-                <span>Rentabilité visée : <b class="accent">{pct(e.cible, 0, false)} par an</b></span>
-                <input type="range" min={0.02} max={0.3} step={0.01} value={e.cible} aria-label="Rentabilité visée par an"
-                  onInput={(ev) => maj({ cible: Number((ev.target as HTMLInputElement).value) })} />
-                <div class="range-labels"><span>2 %</span><span>8 % ≈ actions long terme</span><span>30 %</span></div>
-              </div>
-            ) : (
-              <div class="field">
-                <span>Volatilité maximale : <b class="accent">{pct(e.volMax, 0, false)} par an</b></span>
-                <input type="range" min={0.08} max={0.35} step={0.01} value={e.volMax} aria-label="Volatilité maximale par an"
-                  onInput={(ev) => maj({ volMax: Number((ev.target as HTMLInputElement).value) })} />
-                <div class="range-labels"><span>8 % calme</span><span>≈ 18 % S&P 500</span><span>35 % agité</span></div>
-                <p class="hint">Le portefeuille le plus rentable dont la volatilité reste sous ce plafond.
-                  Volatilité {volIA ? "prévue par l'IA" : "historique (3 ans)"} — à changer dans <a href="#/parametres">Paramètres</a>.</p>
-              </div>
-            )}
-          </>
-        )}
+        <div class="field" style={{ marginTop: 6 }}>Risque mesuré avec
+          <div class="seg full" role="group" aria-label="Source de volatilité">
+            <button class={!volIA ? "on" : ""} onClick={() => ecrireParametres({ sourceVol: "historique" })}>Historique 3 ans</button>
+            <button class={volIA ? "on" : ""} disabled={!u?.vol_ia?.length} onClick={() => ecrireParametres({ sourceVol: "ia" })}>Prévision de l'IA</button>
+          </div>
+        </div>
+        <BacktestVol />
       </Card>
 
-      {(
+      {reco.loading && !reco.data ? <Loading /> : !choix ? (
+        <div class="note">Le portefeuille sera disponible après la prochaine synchronisation du serveur.</div>
+      ) : (
         <>
-          <OfflineNote res={reco.res} />
-          {reco.loading && !reco.data ? <Loading /> : !choix ? (
-            <div class="note">Le portefeuille objectif sera disponible après la prochaine synchronisation du serveur.</div>
-          ) : (
-            <>
-              <Card title="Portefeuille proposé" class={`edge-${choix.atteignable ? "good" : "bad"}`}>
-                {e.mode === "risque" ? (
-                  choix.atteignable ? (
-                    <p class="verdict">Le portefeuille le plus rentable avec au plus <b>{pct(e.volMax, 0, false)}</b> de volatilité attend
-                      <b> {pct(choix.point.rendement, 1, false)}</b> par an (volatilité <b>{pct(choix.point.volatilite, 0, false)}</b>).</p>
-                  ) : (
-                    <div class="note warn">Aucun portefeuille n'est aussi calme avec ces titres : le moins volatil possible est à
-                      <b> {pct(choix.point.volatilite, 0, false)}</b>. Portefeuille affiché : celui-là.</div>
-                  )
-                ) : choix.atteignable ? (
-                  <p class="verdict">Le portefeuille le moins risqué qui vise <b>{pct(e.cible, 0, false)}</b> par an attend
-                    <b> {pct(choix.point.rendement, 1, false)}</b> avec une volatilité de <b>{pct(choix.point.volatilite, 0, false)}</b>.</p>
-                ) : (
-                  <div class="note warn">
-                    {pct(e.cible, 0, false)} par an n'est pas atteignable sans dépasser 20 % par titre.
-                    Maximum estimé : <b>{pct(choix.max, 1, false)}</b> par an. Portefeuille affiché : le plus rentable possible.
-                  </div>
-                )}
-                {proj && (
-                  <>
-                    <h3 class="h3">Dans {h.label}, pour {num(e.capital, 0)} € investis</h3>
-                    <div class="stats">
-                      <Stat label={`Scénario bas (${queue})`} value={`${num(proj.bas, 0)} €`} tone={proj.bas < e.capital ? "bad" : "good"} />
-                      <Stat label="Médian" value={`${num(proj.median, 0)} €`} tone={proj.median >= e.capital ? "good" : "bad"} />
-                      <Stat label={`Scénario haut (${pct(1 - (1 - params.confiance) / 2, 0, false)})`} value={`${num(proj.haut, 0)} €`} tone="good" />
-                    </div>
-                    <div class="stats">
-                      <Stat label="Probabilité de perte" value={pct(proj.probPerte, 0, false)}
-                        tone={proj.probPerte > 0.3 ? "bad" : proj.probPerte > 0.15 ? "neutral" : "good"} />
-                      <Stat label="Atteindre l'objectif" value={pct(proj.probObjectif, 0, false)} sub={`≥ ${num(proj.valeurObjectif, 0)} €`}
-                        tone={proj.probObjectif >= 0.5 ? "good" : proj.probObjectif >= 0.35 ? "neutral" : "bad"} />
-                      <Stat label="Volatilité" value={pct(choix.point.volatilite, 0, false)} tone={toneOf("volatility", choix.point.volatilite)}
-                        sub={volIA ? "prévue par l'IA" : "historique 3 ans"} />
-                    </div>
-                    <div class="stats">
-                      <Stat label="Rendement / risque" value={num(choix.point.rendement / Math.max(choix.point.volatilite, 1e-9), 2)}
-                        sub="rendement attendu ÷ volatilité" tone={choix.point.rendement / choix.point.volatilite >= 0.6 ? "good" : "neutral"} />
-                      {choix.point.sharpe != null && <Stat label="Sharpe" value={num(choix.point.sharpe, 2)}
-                        sub="au-delà du taux sans risque" tone={toneOf("sharpe", choix.point.sharpe)} />}
-                    </div>
-                  </>
-                )}
-                <Details summary="Voir la frontière efficiente (tous les compromis risque / rendement)">
-                  <Frontiere frontiere={frontiere} choisi={choix.point.rendement} cible={e.cible} />
-                </Details>
-              </Card>
+          {/* 2. Synthèse : la réponse en un coup d'œil */}
+          <Card title="Mon portefeuille en un coup d'œil" class={`edge-${choix.atteignable ? "good" : "bad"}`} id="synthese">
+            {!choix.atteignable && (
+              <div class="note warn">{e.mode === "risque"
+                ? <>Aucun portefeuille n'est aussi calme avec ces titres : le plus calme possible est à <b>{pct(choix.point.volatilite, 0, false)}</b>.</>
+                : <>{pct(e.cible, 0, false)} par an n'est pas atteignable (20 % max par titre) : maximum <b>{pct(choix.max, 1, false)}</b>. Portefeuille affiché : le plus rentable.</>}</div>
+            )}
+            <div class="stats">
+              <Stat label="Titres" value={String(lignes.length)} sub={`${num(e.capital, 0)} € investis`} />
+              <Stat label="Rentabilité attendue" value={`${pct(choix.point.rendement, 1, false)}/an`} tone="good" />
+              <Stat label="Rendement / risque" value={<>{ratioPct(choix.point.rendement, choix.point.volatilite)}<Info>
+                Pour 1 point de volatilité supporté, {num(choix.point.rendement / choix.point.volatilite, 2)} point de rentabilité attendue par an.
+                Plus c'est haut, mieux le risque est payé.</Info></>} />
+            </div>
+            <JaugeRisque vol={choix.point.volatilite} source={volIA ? "prévision IA" : "historique 3 ans"} />
+            {proj && (
+              <>
+                <h3 class="h3">Dans {h.label}, tes {num(e.capital, 0)} € deviendraient</h3>
+                <div class="stats">
+                  <Stat label={`Mauvais cas (${queue})`} value={`${num(proj.bas, 0)} €`} tone={proj.bas < e.capital ? "bad" : "good"} />
+                  <Stat label="Cas médian" value={`${num(proj.median, 0)} €`} tone={proj.median >= e.capital ? "good" : "bad"} />
+                  <Stat label={`Bon cas (${queue})`} value={`${num(proj.haut, 0)} €`} tone="good" />
+                </div>
+                <div class="barre-proba"><span>Risque de finir en perte</span><b class={proj.probPerte > 0.3 ? "down" : ""}>{pct(proj.probPerte, 0, false)}</b></div>
+                <div class="jauge-simple"><div style={{ width: `${Math.min(100, proj.probPerte * 100)}%` }} /></div>
+              </>
+            )}
+            {frais && <p class="hint">Frais à l'achat : <b>{num(frais.totalFrais, 2)} €</b> ({pct(frais.partFrais, 2, false)}) pour {frais.nbOrdres} ordres.</p>}
+            <Verifier href="#/parametres/calculs/risque" />
+          </Card>
 
-              <Card title={`Titres sélectionnés (${lignes.length})`}>
-                <table class="table">
-                  <thead><tr><th>Titre</th><th>Poids</th><th>Volatilité<br /><small>3 ans · IA</small></th><th>Montant</th></tr></thead>
-                  <tbody>{lignes.map((l) => {
-                    const t = reco.data?.titres?.[l.symbol];
-                    const maxP = Math.max(...lignes.map((x) => x.poids));
-                    return (
-                      <tr>
-                        <td><b>{l.symbol}</b><br /><small class="muted">{t?.nom ?? ""}{t?.secteur ? ` · ${t.secteur}` : ""}</small>
-</td>
-                        <td><div class="wbar"><div style={{ width: `${(l.poids / maxP) * 100}%` }} /></div>{pct(l.poids, 1, false)}</td>
-                        <td class="nowrap">{pct(volHistDe.get(l.symbol), 0, false)}
-                          {volIADe.get(l.symbol) != null && <> · <b class={(volIADe.get(l.symbol) ?? 0) > (volHistDe.get(l.symbol) ?? 0) ? "down" : "up"}>{pct(volIADe.get(l.symbol), 0, false)}</b></>}</td>
-                        <td><b>{num(l.poids * e.capital, 2)} €</b></td>
-                      </tr>
-                    );
-                  })}</tbody>
-                </table>
-                <Details summary="Comment ces titres sont choisis">
-                  <p>{reco.data?.methode}</p>
-                  <p class="hint">Mis à jour {ilYA(reco.data?.updated_at)}. Les titres changent quand le marché change :
-                    en buy and hold, garde ton portefeuille et ne suis pas chaque mise à jour.</p>
-                </Details>
-              </Card>
+          {/* 3. Les titres */}
+          <Card title={`Les ${lignes.length} titres`} repliable id="titres">
+            <table class="table">
+              <thead><tr><th>Titre</th><th>Part</th><th>Risque<br /><small>3 ans · IA</small></th><th>Montant</th></tr></thead>
+              <tbody>{lignes.map((l) => {
+                const t = reco.data?.titres?.[l.symbol];
+                const maxP = Math.max(...lignes.map((x) => x.poids));
+                const vi = volIADe.get(l.symbol), vh = volHistDe.get(l.symbol);
+                return (
+                  <tr>
+                    <td><a href={`#/titre/${l.symbol}`}><b>{l.symbol}</b></a>{e.imposes.includes(l.symbol) && <small class="accent"> imposé</small>}
+                      <br /><small class="muted">{t?.nom ?? ""}</small></td>
+                    <td><div class="wbar"><div style={{ width: `${(l.poids / maxP) * 100}%` }} /></div>{pct(l.poids, 1, false)}</td>
+                    <td class="nowrap">{pct(vh, 0, false)}{vi != null && <> · <b class={(vi ?? 0) > (vh ?? 0) ? "down" : "up"}>{pct(vi, 0, false)}</b></>}</td>
+                    <td><b>{num(l.poids * e.capital, 2)} €</b></td>
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+            <p class="hint">Risque = volatilité annuelle. La seconde valeur est la prévision de l'IA pour les 6 prochains mois
+              (verte si plus calme que l'historique). Touche un titre pour sa fiche.</p>
+            <h3 class="h3">Tous les compromis possibles</h3>
+            <Frontiere frontiere={frontiere} choisi={choix.point.rendement} cible={e.cible} />
+            <p class="hint">Chaque point est le meilleur portefeuille pour un niveau de risque (frontière efficiente). Le point orange est le tien.</p>
+            <Verifier href="#/parametres/calculs/rendement" />
+          </Card>
 
-              <Card>
-                <Details paresseux summary={`Simulation Monte-Carlo sur ${h.label} (option)`}>
-                  <MonteCarlo lignes={lignes} capital={e.capital} annees={h.annees} volCible={choix.point.volatilite}
-                    source={volIA ? "prévue par l'IA" : "historique 3 ans"} />
-                </Details>
-              </Card>
+          {/* 4. Ajuster */}
+          {u && <AjusterTitres u={u} e={e} maj={maj} retenus={lignes.map((l) => l.symbol)} volHistDe={volHistDe} />}
 
-              <PlanAchat capital={e.capital} lignes={lignes} prix={prix} eurusd={ov.data?.eurusd ?? null} annees={h.annees} />
-            </>
-          )}
+          {/* 5. Simulation */}
+          <Card title={`Simulation sur ${h.label}`} repliable ouvert={false}>
+            <MonteCarlo lignes={lignes} capital={e.capital} annees={h.annees} volCible={choix.point.volatilite}
+              source={volIA ? "prévue par l'IA" : "historique 3 ans"} />
+            <Verifier href="#/parametres/calculs/projection" />
+          </Card>
+
+          {/* 6. Passer à l'action */}
+          <PlanAchat capital={e.capital} lignes={lignes} prix={prix} eurusd={ov.data?.eurusd ?? null} annees={h.annees} />
+
+          <Card title="Réglages du calcul" repliable ouvert={false}>
+            <p class="hint" style={{ marginTop: 0 }}>Les réglages qui changent ce portefeuille. Tous les autres sont dans les <a href="#/parametres">Paramètres</a>.</p>
+            <ReglageNombre label="Plafond par titre" valeur={params.poidsMax} min={0.05} max={1} pas={0.01} pctAff onChange={(v) => ecrireParametres({ poidsMax: v })} />
+            <ReglageNombre label="Nombre maximal de titres" valeur={params.nMaxLignes} min={1} max={40} pas={1} onChange={(v) => ecrireParametres({ nMaxLignes: v })} />
+            <ReglageNombre label="Frais par ordre (€)" valeur={params.fraisOrdre} min={0} max={10} pas={0.5} onChange={(v) => ecrireParametres({ fraisOrdre: v })} />
+            <p class="hint">Mis à jour {ilYA(reco.data?.updated_at)} · {reco.data?.methode}</p>
+          </Card>
         </>
       )}
     </div>
+  );
+}
+
+/** Jauge visuelle du risque : calme ↔ agité, avec le repère du S&P 500 (~18 %). */
+function JaugeRisque({ vol, source }: { vol: number; source: string }) {
+  const pos = (v: number) => `${Math.max(0, Math.min(100, ((v - 0.05) / 0.35) * 100))}%`;
+  const mot = vol < 0.12 ? "calme" : vol < 0.2 ? "comme le marché" : vol < 0.28 ? "agité" : "très agité";
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div class="barre-proba"><span>Risque : <b>{pct(vol, 0, false)}</b> de volatilité par an ({source})</span><b>{mot}</b></div>
+      <div class="jauge"><span class="curseur" style={{ left: pos(vol) }} /><span class="spx" style={{ left: pos(0.18) }}>S&P 500</span></div>
+      <div class="jauge-labels"><span>calme</span><span>agité</span></div>
+    </div>
+  );
+}
+
+/** Ajuster les titres : exclure ou imposer parmi les candidats ; même calcul derrière. */
+function AjusterTitres({ u, e, maj, retenus, volHistDe }: {
+  u: Univers; e: Etat; maj: (p: Partial<Etat>) => void; retenus: string[]; volHistDe: Map<string, number>;
+}) {
+  const reco = useData(api.portefeuilleReco);
+  const etat = (s: string) => (e.exclus.includes(s) ? "exclu" : e.imposes.includes(s) ? "impose" : "auto");
+  const regler = (s: string, v: "exclu" | "auto" | "impose") => maj({
+    exclus: v === "exclu" ? [...e.exclus.filter((x) => x !== s), s] : e.exclus.filter((x) => x !== s),
+    imposes: v === "impose" ? [...e.imposes.filter((x) => x !== s), s] : e.imposes.filter((x) => x !== s),
+  });
+  const tri = [...u.symbols].sort((a, b) => Number(retenus.includes(b)) - Number(retenus.includes(a)) || a.localeCompare(b));
+  return (
+    <Card title="Ajuster les titres" repliable ouvert={false} class="ajuster">
+      <p class="hint" style={{ marginTop: 0 }}>Exclus un titre que tu ne veux pas, ou impose un titre que tu veux garder.
+        Le portefeuille est recalculé avec exactement la même méthode et tes réglages.</p>
+      {(e.exclus.length > 0 || e.imposes.length > 0) && <button class="link" onClick={() => maj({ exclus: [], imposes: [] })}>↺ Revenir au conseil</button>}
+      <ul>{tri.map((s) => {
+        const t = reco.data?.titres?.[s];
+        const v = etat(s);
+        return (
+          <li><span class="nom"><b>{s}</b>{retenus.includes(s) && <small class="accent"> · retenu</small>}
+            <small>{t?.nom ?? ""} · risque {pct(volHistDe.get(s), 0, false)}</small></span>
+            <span class="tri" role="group" aria-label={`Réglage ${s}`}>
+              <button class={v === "exclu" ? "on" : ""} onClick={() => regler(s, "exclu")}>Exclure</button>
+              <button class={v === "auto" ? "on" : ""} onClick={() => regler(s, "auto")}>Auto</button>
+              <button class={v === "impose" ? "on" : ""} onClick={() => regler(s, "impose")}>Imposer</button>
+            </span></li>
+        );
+      })}</ul>
+    </Card>
+  );
+}
+
+/** Backtest de la volatilité IA, à côté du choix (replié). */
+function BacktestVol() {
+  const bt = useData(api.backtestVol);
+  const v = bt.data?.diagnostics?.variantes;
+  if (!v) return null;
+  return (
+    <details class="details">
+      <summary>Qu'aurait donné chaque choix depuis 2013 ?</summary>
+      <div class="details-body">
+        <table class="table small">
+          <thead><tr><th>Risque mesuré</th><th>Risque réel</th><th>Rentab. / an</th><th>Rend. / risque</th></tr></thead>
+          <tbody>{([["hist_3a", "Historique 3 ans"], ["ia", "Prévision IA"]] as const).map(([k, nom]) => v[k] && (
+            <tr><td>{nom}</td><td>{pct(v[k].vol_reelle, 1, false)}</td><td>{pct(v[k].rendement_annuel, 1, false)}</td>
+              <td><b>{ratioPct(v[k].rendement_annuel, v[k].vol_reelle)}</b></td></tr>
+          ))}</tbody>
+        </table>
+        <p class="hint">Portefeuille reconstruit chaque mois sur {bt.data.diagnostics.n_mois} mois. L'IA donne un portefeuille plus calme
+          ({pct(bt.data.diagnostics.ia_vs_hist_3a?.part_mois_moins_risque, 0, false)} des mois), pour un rendement un peu plus faible.</p>
+        <BarreSeuil t={-(bt.data.diagnostics.ia_vs_hist_3a?.t ?? 0)} seuil={2.5} />
+      </div>
+    </details>
+  );
+}
+
+function ReglageNombre({ label, valeur, min, max, pas, pctAff, onChange }: {
+  label: string; valeur: number; min: number; max: number; pas: number; pctAff?: boolean; onChange: (v: number) => void;
+}) {
+  return (
+    <label class="field" style={{ marginTop: 8 }}>
+      <span>{label} : <b>{pctAff ? pct(valeur, 0, false) : num(valeur, pas < 1 ? 1 : 0)}</b></span>
+      <input type="range" min={min} max={max} step={pas} value={valeur} onInput={(ev) => onChange(Number((ev.target as HTMLInputElement).value))} />
+    </label>
   );
 }
 

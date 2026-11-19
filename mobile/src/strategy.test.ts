@@ -63,3 +63,14 @@ describe("niveau de confiance", () => {
     expect(zConfiance(0.8)).toBeCloseTo(1.2816, 3);
   });
 });
+
+describe("indices en %", () => {
+  it("formate corrélations, spreads et rendement / risque", async () => {
+    const { corr, pb, ratioPct } = await import("./format");
+    expect(corr(0.077)).toBe("7,7 %");
+    expect(corr(-0.45, 0)).toBe("-45 %");
+    expect(pb(305)).toBe("3,05 %");
+    expect(ratioPct(0.06, 0.105)).toBe("57 %");
+    expect(corr(null)).toBe("—");
+  });
+});

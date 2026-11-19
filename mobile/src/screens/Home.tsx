@@ -1,7 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, lirePositions, type Position, surChangementSession, utilisateurCourant } from "../api";
-import { Card, Details, Loading, OfflineNote, RangeBar, ReglagesButton, RefreshButton, Stat, toneOf, useData, ZoneBadge } from "../components";
-import { dateFr, ilYA, num, pct } from "../format";
+import { Card, Details, Info, Loading, OfflineNote, RangeBar, ReglagesButton, RefreshButton, Stat, toneOf, useData, Verifier, ZoneBadge } from "../components";
+import { dateFr, ilYA, num, pb, pct, ratioPct } from "../format";
 import { zoneIndex } from "../ranges";
 import { useParametres } from "../settings";
 import { usePortefeuilleCible } from "./Portfolio";
@@ -109,8 +109,10 @@ function Conseil({ go }: { go: (h: string) => void }) {
         {" "}{lignes.length} titres, rentabilité attendue <b>{pct(pt.rendement, 1, false)}</b> par an.</p>
       <div class="stats">
         <Stat label="Volatilité" value={pct(pt.volatilite, 0, false)} sub={volIA ? "prévue par l'IA" : "historique 3 ans"} tone={toneOf("volatility", pt.volatilite)} />
-        <Stat label="Rendement / risque" value={num(pt.rendement / Math.max(pt.volatilite, 1e-9), 2)} tone={pt.rendement / pt.volatilite >= 0.6 ? "good" : "neutral"} />
+        <Stat label="Rendement / risque" value={<>{ratioPct(pt.rendement, pt.volatilite)}<Info>Pour 1 point de volatilité supporté,
+          {" "}{num(pt.rendement / pt.volatilite, 2)} point de rentabilité attendue par an.</Info></>} tone={pt.rendement / pt.volatilite >= 0.6 ? "good" : "neutral"} />
       </div>
+      <Verifier href="#/parametres/calculs/risque" />
     </Card>
   );
 }
@@ -130,11 +132,11 @@ function Humeur({ o, go }: { o: any; go: (h: string) => void }) {
         <RangeBar k="vix" v={o.vix} />
         <div class="stats">
           <Stat label="Titres > MM200" value={`${Math.round(o.pct_above_ma200 ?? 0)} %`} sub="tendance long terme" />
-          <Stat label="Crédit High Yield" value={`${Math.round(o.hy_spread_bp ?? 0)} pb`} sub={<><ZoneBadge k="spread_pct" v={o.hy_pct_10y} /></>} />
+          <Stat label="Crédit High Yield" value={pb(o.hy_spread_bp)} sub={<><ZoneBadge k="spread_pct" v={o.hy_pct_10y} /></>} />
         </div>
         <p class="hint">VIX : volatilité attendue du S&P 500 (indice de la peur). MM200 : moyenne des 200 derniers jours.
-          High Yield : surcoût d'emprunt des entreprises les plus fragiles, en points de base (pb, 1 pb = 0,01 %).</p>
-        <button class="link" onClick={() => go("#/risque")}>Analyse détaillée ›</button>
+          High Yield : surcoût d'emprunt des entreprises les plus fragiles par rapport à l'État américain, par an.</p>
+        <Verifier href="#/risque" label="Voir le détail" />
       </Details>
     </Card>
   );
