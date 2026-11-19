@@ -119,7 +119,8 @@ export function PlanAchat({ capital, lignes, prix, eurusd, annees, mode = "hold"
         )}
       </Card>
 
-      <Card title="Comment passer les ordres">
+      <Card>
+        <Details summary="Comment passer les ordres (type d'ordre, horaires, fractions, change)">
         <ol class="etapes">
           <li><b>Type d'ordre : « à cours limité »</b>, au prix limite indiqué (dernier cours + {num((r.margeLimite ?? 0) * 100, 1)} %).
             Tu ne paieras jamais plus que ce prix. S'il n'est pas exécuté dans la journée, relève-le légèrement le lendemain.</li>
@@ -136,6 +137,7 @@ export function PlanAchat({ capital, lignes, prix, eurusd, annees, mode = "hold"
             <li><b>Ensuite</b> : ne touche plus au portefeuille. Une fois par an, rééquilibre si une ligne dépasse {pct(params.seuilReequilibrage, 0, false)}.</li>
           )}
         </ol>
+        </Details>
       </Card>
 
       <Card title="Coût des frais">

@@ -63,6 +63,11 @@ export function RefreshButton() {
   );
 }
 
+/** Bouton d'en-tête : ouvre les Paramètres (hypothèses, frais, risque…). */
+export function ReglagesButton() {
+  return <a class="help-btn reglages" href="#/parametres" aria-label="Paramètres">⚙</a>;
+}
+
 export function Loading({ label = "Chargement…" }: { label?: string }) {
   return <div class="loading" role="status"><span class="spinner" />{label}</div>;
 }
