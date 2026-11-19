@@ -22,7 +22,7 @@ export function CourtTerme({ capital, eurusd }: { capital: number; eurusd: numbe
     .slice(0, p.ctNbTitres);
   if (!retenus.length) {
     return <div class="note">Aucun titre classé par le modèle 1 mois avec un score ≥ {pct(p.ctScoreMin, 0, false)} : relance le calcul
-      (Risque &amp; IA) ou baisse le score minimal dans Réglages.</div>;
+      (Analyse › Modèles IA) ou baisse le score minimal dans les Paramètres.</div>;
   }
   // Poids inversement proportionnels à la volatilité (un titre agité pèse moins), plafonnés
   const inv = retenus.map((s) => 1 / (infos.get(s.symbol)!.volatility as number));
