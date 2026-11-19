@@ -335,6 +335,7 @@ def publier_valorisation_sec(snap: pd.DataFrame, force: bool = False) -> int:
         print("[PUBLISH][WARN] SEC_USER_AGENT absent : valorisation SEC non mise à jour.")
         return 0
     cli = db.get_client()
+    force = force or os.environ.get("SEC_FORCER") == "1"   # lancement manuel « forcer les comptes SEC »
     if not force:
         d = cli.table("titres_snapshot").select("sec_maj").not_.is_("sec_maj", "null") \
             .order("sec_maj", desc=True).limit(1).execute().data
