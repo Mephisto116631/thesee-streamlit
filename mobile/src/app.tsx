@@ -7,6 +7,8 @@ import { Stock } from "./screens/Stock";
 import { Portfolio } from "./screens/Portfolio";
 import { Risk } from "./screens/Risk";
 import { Calculs } from "./screens/Calculs";
+import { Analyse } from "./screens/Analyse";
+import { CourtTermeEcran, MesTitresEcran, PositionsEcran } from "./screens/EcransSecondaires";
 import { Progression } from "./screens/Progression";
 import { Settings } from "./screens/Settings";
 import { MiseAJourDialogue, verifierAuLancement } from "./screens/MiseAJourDialogue";
@@ -27,10 +29,9 @@ const go = (h: string) => { location.hash = h; };
 
 const TABS = [
   { h: "#/", label: "Accueil", icon: "M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" },
-  { h: "#/marche", label: "Marché", icon: "M3 17l5-5 4 4 8-8M15 8h5v5" },
   { h: "#/portefeuille", label: "Portefeuille", icon: "M12 3v9l7 4A9 9 0 1 1 12 3zM15 3.5A9 9 0 0 1 20.5 9H15z" },
-  { h: "#/risque", label: "Risque & IA", icon: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" },
-  { h: "#/parametres", label: "Réglages", icon: "M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1M15 4v4M9 10v4M17 16v4" },
+  { h: "#/positions", label: "Positions", icon: "M4 7h16v12H4zM9 7V5h6v2M4 12h16" },
+  { h: "#/analyse", label: "Analyse", icon: "M3 17l5-5 4 4 8-8M15 8h5v5" },
 ];
 
 export function App() {
@@ -52,11 +53,17 @@ export function App() {
     case "marche": screen = <Market go={go} />; break;
     case "titre": screen = <Stock symbol={decodeURIComponent(arg)} go={go} />; break;
     case "portefeuille": screen = <Portfolio />; break;
+    case "positions": screen = <PositionsEcran />; break;
+    case "analyse": screen = <Analyse />; break;
+    case "court": screen = <CourtTermeEcran />; break;
+    case "titres": screen = <MesTitresEcran />; break;
     case "risque": screen = <Risk tab={arg === "ia" ? "ia" : "credit"} go={go} />; break;
     case "parametres": screen = arg === "calculs" ? <Calculs /> : <Settings />; break;
     default: screen = <Home go={go} />;
   }
-  const active = route === "titre" ? "#/marche" : `#/${route ?? ""}`;
+  // Onglet actif : les écrans d'analyse (marché, risque, réglages…) sont rangés sous « Analyse »
+  const ANALYSE = ["marche", "titre", "risque", "court", "titres", "parametres", "analyse"];
+  const active = ANALYSE.includes(route ?? "") ? "#/analyse" : `#/${route ?? ""}`;
 
   return (
     <div class="app">

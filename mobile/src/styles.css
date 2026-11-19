@@ -423,3 +423,16 @@ input[type="range"] { width: 100%; margin: 10px 0 2px; accent-color: var(--accen
 .form-position .more { margin-top: 10px; }
 .link.down { color: var(--down); }
 .nowrap { white-space: nowrap; }
+
+/* ---- Refonte : bouton réglages, hub Analyse ------------------------------ */
+.reglages { font-size: 18px; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+.hub { display: grid; gap: 10px; }
+.hub a { display: flex; gap: 12px; align-items: center; text-decoration: none; color: var(--text);
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+.hub a .ic { font-size: 22px; width: 32px; text-align: center; flex: none; }
+.hub a b { display: block; font-size: 15px; }
+.hub a small { color: var(--muted); font-size: 12.5px; line-height: 1.35; display: block; margin-top: 2px; }
+.hub a .fl { margin-left: auto; color: var(--muted); font-size: 18px; }
+.badge-exp { font-size: 10.5px; font-weight: 700; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 1px 6px; margin-left: 6px; vertical-align: 2px; }
+.humeur { display: flex; align-items: center; gap: 10px; }
+.humeur .pastille { width: 12px; height: 12px; border-radius: 50%; flex: none; }

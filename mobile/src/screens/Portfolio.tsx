@@ -1,30 +1,25 @@
 import { useCallback, useMemo, useState } from "preact/hooks";
 import { api } from "../api";
-import { Card, ChartBox, Chip, cssVar, Details, HelpButton, Loading, OfflineNote, RefreshButton, Stat, toneOf, useData } from "../components";
+import { Card, ChartBox, cssVar, Details, HelpButton, Loading, OfflineNote, RefreshButton, ReglagesButton, Stat, toneOf, useData } from "../components";
 import { frontiere as calculerFrontiere, type Univers } from "../optim";
 import { nbModifies, useParametres } from "../settings";
 import { ilYA, num, pct } from "../format";
 import { choisirPoint, choisirPointRisque, HORIZON_DEFAUT, HORIZONS, projection } from "../strategy";
-import { CourtTerme } from "./CourtTerme";
-import { MesTitres } from "./MesTitres";
 import { MonteCarlo } from "./MonteCarlo";
-import { Positions } from "./Positions";
 import { PlanAchat } from "./PlanAchat";
 
 const KEY = "thesee:objectif:v1";
-type Onglet = "objectif" | "court" | "titres" | "positions";
-const ONGLETS: { k: Onglet; label: string }[] = [
-  { k: "objectif", label: "Hold" }, { k: "court", label: "Court" }, { k: "titres", label: "Titres" }, { k: "positions", label: "Positions" },
-];
 // Hold : horizons de 6 mois et plus (en dessous, c'est le mode court terme)
 const HORIZONS_HOLD = HORIZONS.filter((x) => x.annees >= 0.5);
-interface Etat { onglet: Onglet; capital: number; cible: number; horizon: string; mode: "rendement" | "risque"; volMax: number }
-const DEFAUT: Etat = { onglet: "objectif", capital: 200, cible: 0.08, horizon: HORIZON_DEFAUT, mode: "rendement", volMax: 0.15 };
+export interface Etat { capital: number; cible: number; horizon: string; mode: "rendement" | "risque"; volMax: number }
+const DEFAUT: Etat = { capital: 200, cible: 0.08, horizon: HORIZON_DEFAUT, mode: "rendement", volMax: 0.15 };
 const charger = (): Etat => {
   try { return { ...DEFAUT, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") }; } catch { return DEFAUT; }
 };
 
-export function Portfolio() {
+/** Objectif de l'utilisateur et portefeuille conseillé qui en découle : partagé par l'accueil,
+ *  le portefeuille et les positions (l'objectif est gardé sur le téléphone). */
+export function usePortefeuilleCible() {
   const [e, setE] = useState<Etat>(charger());
   const maj = (p: Partial<Etat>) => {
     const n = { ...e, ...p };
@@ -36,10 +31,6 @@ export function Portfolio() {
   const snap = useData(api.snapshot);
 
   const h = HORIZONS_HOLD.find((x) => x.k === e.horizon) ?? HORIZONS_HOLD.find((x) => x.k === "1a")!;
-  // Score IA du modèle horizon le plus proche (6 mois ou 1 an) pour chaque titre retenu
-  const horizonIA = h.annees <= 0.5 ? "6m" : "1a";
-  const scoresIA = useData(() => api.scores(horizonIA), [horizonIA]);
-  const scoreDe = new Map((scoresIA.data ?? []).map((x) => [x.symbol, x.score]));
   const params = useParametres();
   const u = reco.data?.univers as Univers | undefined;
   // Frontière recalculée sur le téléphone avec les hypothèses de la page Paramètres
@@ -52,6 +43,11 @@ export function Portfolio() {
   const volHistDe = new Map((u?.symbols ?? []).map((sy, i) => [sy, Math.sqrt(Math.max(u!.cov[i][i], 0))]));
   const volIADe = new Map((u?.symbols ?? []).map((sy, i) => [sy, u?.vol_ia?.[i] ?? null]));
   const lignes = choix?.point.lignes ?? [];
+  return { e, maj, reco, ov, snap, h, params, u, frontiere, modifies, choix, volIA, volHistDe, volIADe, lignes };
+}
+
+export function Portfolio() {
+  const { e, maj, reco, ov, snap, h, params, frontiere, modifies, choix, volIA, volHistDe, volIADe, lignes } = usePortefeuilleCible();
   const prix: Record<string, number | null | undefined> = {
     ...Object.fromEntries(Object.entries(reco.data?.titres ?? {}).map(([k, v]) => [k, v.prix])),
     ...Object.fromEntries((snap.data ?? []).map((x) => [x.symbol, x.close])),
@@ -66,29 +62,24 @@ export function Portfolio() {
         <HelpButton keys={["sharpe", "volatility", "max_drawdown"]} intro={<>
           <p><b>Objectif</b> : tu fixes la rentabilité visée par an et ton horizon. L'appli choisit, parmi les meilleurs titres du moment,
             le portefeuille <b>le moins risqué</b> qui l'atteint en théorie (frontière efficiente de Markowitz, 20 % max par titre).</p>
-          <p>Toutes les hypothèses (taux sans risque, prime de risque, plafonds, frais…) se règlent dans l'onglet <b>Réglages</b>.</p>
+          <p>Toutes les hypothèses (taux sans risque, prime de risque, plafonds, frais…) se règlent dans les <b>Paramètres</b> (roue dentée ⚙ en haut à droite).</p>
           <p><b>Rentabilité attendue</b> : estimée surtout par le modèle CAPM (taux sans risque + prime de risque selon la sensibilité
             du titre au marché), et seulement à 10 % par l'historique. Les titres ont été choisis parce qu'ils ont monté : leur passé
             surestime l'avenir. Ce n'est pas une promesse, c'est une estimation volontairement prudente (≈ 8 à 12 %/an pour des actions).</p>
           <p><b>Fourchette</b> : 90 % des scénarios simulés finissent entre la valeur basse et la valeur haute (modèle log-normal).</p>
-          <p><b>Mes titres</b> : tu choisis toi-même les titres ; l'appli calcule les poids (Markowitz ou parts égales).</p>
         </>} />
         <RefreshButton />
+        <ReglagesButton />
       </header>
       {modifies > 0 && <div class="note">Calculé avec {modifies} hypothèse(s) personnalisée(s) — <a href="#/parametres">voir les Paramètres</a>.</div>}
 
-      <div class="seg full" role="tablist">
-        {ONGLETS.map((o) => (
-          <button role="tab" aria-selected={e.onglet === o.k} class={e.onglet === o.k ? "on" : ""} onClick={() => maj({ onglet: o.k })}>{o.label}</button>
-        ))}
-      </div>
 
-      {e.onglet !== "positions" && <Card title="Mon objectif" class="tint-accent">
+      <Card title="Mon objectif" class="tint-accent">
         <label class="field">Capital à investir (€)
           <input type="number" inputMode="numeric" min={50} step={50} value={e.capital}
             onChange={(ev) => maj({ capital: Math.max(50, Number((ev.target as HTMLInputElement).value) || 200) })} />
         </label>
-        {e.onglet !== "court" && (
+        {(
           <>
             <div class="field" style={{ marginTop: 10 }}>Horizon de placement
               <div class="chips wrap" role="group" aria-label="Horizon">
@@ -98,7 +89,7 @@ export function Portfolio() {
             <p class="hint" style={{ marginTop: 4 }}>{h.conseil}</p>
           </>
         )}
-        {e.onglet === "objectif" && (
+        {(
           <>
             <div class="seg full" role="group" aria-label="Ce que je fixe" style={{ marginTop: 12 }}>
               <button class={e.mode === "rendement" ? "on" : ""} onClick={() => maj({ mode: "rendement" })}>Je vise une rentabilité</button>
@@ -123,15 +114,9 @@ export function Portfolio() {
             )}
           </>
         )}
-      </Card>}
+      </Card>
 
-      {e.onglet === "positions" ? (
-        <Positions cible={lignes} />
-      ) : e.onglet === "court" ? (
-        <CourtTerme capital={e.capital} eurusd={ov.data?.eurusd ?? null} />
-      ) : e.onglet === "titres" ? (
-        <MesTitres capital={e.capital} depart={lignes.map((l) => l.symbol)} eurusd={ov.data?.eurusd ?? null} />
-      ) : (
+      {(
         <>
           <OfflineNote res={reco.res} />
           {reco.loading && !reco.data ? <Loading /> : !choix ? (
@@ -180,7 +165,9 @@ export function Portfolio() {
                     </div>
                   </>
                 )}
-                <Frontiere frontiere={frontiere} choisi={choix.point.rendement} cible={e.cible} />
+                <Details summary="Voir la frontière efficiente (tous les compromis risque / rendement)">
+                  <Frontiere frontiere={frontiere} choisi={choix.point.rendement} cible={e.cible} />
+                </Details>
               </Card>
 
               <Card title={`Titres sélectionnés (${lignes.length})`}>
@@ -192,7 +179,7 @@ export function Portfolio() {
                     return (
                       <tr>
                         <td><b>{l.symbol}</b><br /><small class="muted">{t?.nom ?? ""}{t?.secteur ? ` · ${t.secteur}` : ""}</small>
-                          {scoreDe.has(l.symbol) && <div class="mchips"><Chip k="proba_hausse" v={scoreDe.get(l.symbol)} label={`IA ${horizonIA === "6m" ? "6 mois" : "1 an"}`} value={pct(scoreDe.get(l.symbol), 0, false)} /></div>}</td>
+</td>
                         <td><div class="wbar"><div style={{ width: `${(l.poids / maxP) * 100}%` }} /></div>{pct(l.poids, 1, false)}</td>
                         <td class="nowrap">{pct(volHistDe.get(l.symbol), 0, false)}
                           {volIADe.get(l.symbol) != null && <> · <b class={(volIADe.get(l.symbol) ?? 0) > (volHistDe.get(l.symbol) ?? 0) ? "down" : "up"}>{pct(volIADe.get(l.symbol), 0, false)}</b></>}</td>
