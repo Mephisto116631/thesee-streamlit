@@ -226,9 +226,6 @@ export function Info({ children }: { children: ComponentChildren }) {
   );
 }
 
-const fr1 = (x: number) => x.toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-
-/** Barre « hasard ↔ probant » : position du t par rapport au seuil exigé. */
 /** Force de la preuve en % du seuil : 100 % = juste assez pour exclure le hasard (t = seuil). */
 export function forcePreuve(t: number | null | undefined, seuil: number | null | undefined): number | null {
   return t == null || seuil == null || seuil <= 0 ? null : t / seuil;
