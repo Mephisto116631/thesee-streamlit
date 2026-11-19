@@ -221,4 +221,66 @@ nettement moins bien.
 
 ## 6. Résultats de l'examen approfondi (PR #26)
 
-*Rempli à partir des essais `examen_*` du laboratoire.*
+Essais `examen_*` lancés le 19/11/2026 :
+- **Données** : historique depuis 1998, test du 20/02/2008 à 2026 (919 dates hebdomadaires), membres du S&P 500 à chaque date.
+- **Règles** : celles du § 4.8, fixées avant les essais.
+
+### 6.1 Contre les méthodes reconnues : **règle 1 déclenchée (bascule sur HAR)**
+
+| Méthode | QLIKE (plus bas = mieux) | IC (ordre des titres) |
+|---|---|---|
+| **HAR** | **0,332** | 74,9 % |
+| GARCH(1,1) | 0,374 | 76,8 % |
+| IA | 0,425 | **78,3 %** |
+| Volatilité 3 mois | 0,449 | 75,4 % |
+| EWMA | 0,493 | 72,7 % |
+
+- **Niveau du risque (QLIKE)** : l'IA ne bat pas HAR ; c'est l'inverse (force de la preuve −37 %). Elle ne bat pas non plus GARCH (−43 %). Elle bat presque EWMA (95 % du seuil).
+- **Ordre des titres (IC)** : l'IA reste la meilleure (78,3 %, contre 74,9 % pour HAR).
+- **Pourquoi l'écart** : la perte QLIKE punit beaucoup plus une sous-estimation du risque qu'une surestimation. HAR surestime en médiane (+27 %, § 6.2) et évite ainsi les fortes sous-estimations. L'IA est juste en médiane, mais sous-estime lourdement certaines dates de choc.
+  - Hors crises, l'IA fait mieux que HAR sur 68 % des dates, mais elle perd en moyenne à cause de ces dates.
+- **Conséquence** : HAR prévoit mieux le **niveau** du risque (ce que l'appli affiche, et la limite du mode « Je limite le risque »). L'IA prévoit mieux l'**ordre** (ce qui compte le plus pour composer le portefeuille).
+
+### 6.2 Calibration du niveau : IA calibrée en médiane, mais trop dispersée
+- **Biais médian prévu / réel** : IA −1 % (calibrée), volatilité 3 mois −1 %, EWMA −4 %, GARCH +10 %, HAR +27 %.
+- **Par décile, l'IA est trop dispersée** : elle sous-estime les titres calmes (−21 % pour le 1er décile) et surestime les plus agités (+43 % pour le dernier). Il lui manque un retour vers la moyenne.
+
+### 6.3 Crises : l'IA est moins bonne en niveau pendant les chocs
+- **Contre HAR, en QLIKE**, l'IA est meilleure dans une seule crise sur 6 (2015-2016). Elle n'a été meilleure que sur 5 % des dates du Covid et 17 % des dates de 2008.
+- **En ordre des titres (IC)**, elle reste comparable ou meilleure, sauf en 2008 (84,5 % contre 85,4 %).
+- **VIX** : en marché nerveux (VIX > 25), l'IA n'est meilleure que sur 48 % des dates.
+- **Secteurs et tailles** : l'IC de l'IA est meilleur presque partout, sauf l'énergie (78,1 % contre 78,8 %).
+
+### 6.4 Placebo : **règle 3 déclenchée** (|IC| avec cible mélangée = 8,8 % > 2 %)
+- **Cible mélangée** : IC de −8,8 %. Le signe est **négatif** : une fuite du futur donnerait un IC positif et élevé.
+- **Fuite volontaire** : IC de 95,7 %. Le test détecte bien une fuite quand il y en a une.
+- **Facteur aléatoire** : classé dernier sur 15, importance 0.
+- **Interprétation probable** : avec une cible mélangée, le modèle ajuste du bruit. Comme la volatilité est très persistante d'une semaine à l'autre, ce bruit garde le même signe sur toutes les dates. Un seul tirage ne suffit donc pas.
+- **À confirmer** par la moyenne de plusieurs tirages avant de conclure, comme le prévoit la règle 3.
+
+### 6.5 Sensibilité et autre marché : réussis
+- **Gain d'IC sur la volatilité 3 mois** : positif avec les 4 réglages (+2,7 à +3,1 points, t de 4,6 à 7,2).
+- **S&P MidCap 400**, 397 titres jamais vus : IC de 78,3 % contre 77,3 %, gain +1,0 point (t 2,3). Même signe : le modèle se généralise.
+
+### 6.6 Backtest réel 2006-2026 : **règle 5 déclenchée (PBO 85 %)**, frais très lourds
+- **Rééquilibrage chaque mois** vers la nouvelle recommandation, comme si l'on suivait l'appli à la lettre. Capital de 5 000 €, 1 € par ordre, 0,1 % d'écart de prix.
+
+| Portefeuille | Rendement brut | Rendement net de frais | Volatilité | Ordres / an | Frais / an |
+|---|---|---|---|---|---|
+| Sharpe max, volatilité historique | 11,4 % | 8,3 % | 21,0 % | 171 | 238 € |
+| Sharpe max, IA | 8,6 % | 4,0 % | 19,8 % | 190 | 266 € |
+| Variance min, volatilité historique | 6,7 % | 4,1 % | 14,3 % | 143 | 171 € |
+| Variance min, IA | 7,0 % | 1,9 % | 14,6 % | 195 | 256 € |
+
+- **Frais** : suivre chaque mois la nouvelle recommandation parmi 500 titres change presque tout le portefeuille, avec environ 170 à 190 ordres par an. Les frais coûtent alors 3 à 5 points de rendement par an : c'est **le problème pratique n° 1**.
+- **Promesse « Je limite le risque »** :
+  - avec la volatilité IA, la limite de 15 % est dépassée **61 %** des semestres, et celle de 12 % **68 %** des semestres ;
+  - avec la volatilité historique : 34 % et 51 %.
+
+  Les deux dépassent la règle 2 (30 %) : l'appli doit le dire.
+- **Fourchette à 1 an** : le « mauvais cas 5 % » a été touché **10,8 %** des fois avec la volatilité IA, et 5,6 % avec la volatilité historique.
+- **PBO de 85 %** : parmi les 16 variantes testées, celle qui gagne sur une moitié de la période finit le plus souvent dans la moitié basse sur l'autre. Le choix de variante n'est pas robuste.
+
+### 6.7 Décisions
+L'**IA de volatilité garde sa place pour l'ordre des titres**, qu'elle prévoit mieux que toutes les références.
+Les règles 1, 3 et 5, ainsi que les constats sur la promesse de risque et sur les frais, appellent des décisions de l'utilisateur. Elles sont consignées ici quand elles sont prises.
