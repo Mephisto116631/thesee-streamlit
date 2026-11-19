@@ -170,6 +170,28 @@ très bien la volatilité future) : seul ce gain est testé.
   5. Sensibilité (gain positif avec les 4 réglages), autre marché (S&P MidCap 400, même signe), PBO < 50 % : en cas d'échec, c'est documenté et la décision revient à l'utilisateur.
 - **Résultats** : § 6.
 
+### 4.9 Après l'examen : hybride IA + HAR, révision semestrielle, marge de sécurité (PR #27)
+- **Décisions de l'utilisateur** (§ 6.7) :
+  - hybride : l'IA donne l'ordre des titres, HAR le niveau ;
+  - révision du portefeuille 1 à 2 fois par an ;
+  - marge de sécurité sur la limite « Je limite le risque ».
+- **Hybride** : le rang prédit par l'IA est converti en niveau avec les quantiles des **niveaux HAR** du jour, au lieu des
+  volatilités 3 mois. On garde ainsi l'ordre de l'IA, et le niveau suit HAR : retour vers la moyenne, prudence en crise.
+- **Règles de décision, fixées AVANT les essais** :
+  1. L'hybride est publié si, en walk-forward 2008-2026, (a) il n'est pas nettement moins bon que HAR en QLIKE (force de
+     la preuve en faveur de HAR < 100 %), et (b) son IC bat la volatilité 3 mois avec une force ≥ 100 %. C'est le 4ᵉ
+     essai de la famille « références » (seuil corrigé pour 4). En cas d'échec, on publie **HAR seul**.
+  2. Révision par défaut tous les 6 mois, réglable sur 12 mois. Entre deux révisions, on ne touche au portefeuille que si
+     une ligne dépasse le seuil de rééquilibrage. Le backtest avec frais compare les rythmes mensuel, semestriel et
+     annuel : c'est un constat, pas une condition.
+  3. Marge de sécurité m = 1 / quantile 70 % du rapport risque réel / risque prévu par semestre, apprise sur le passé
+     seulement. La limite visée devient limite × m, et doit être respectée au moins 70 % des semestres au backtest ;
+     sinon c'est documenté, et l'appli l'affiche.
+  4. Placebo : 10 tirages de cible mélangée ; |moyenne des IC| < 2 %, sinon on arrête et on cherche une fuite.
+  5. Fourchette à 1 an : si, avec les niveaux hybrides, le « mauvais cas 5 % » est touché plus de 7,5 % des fois, la
+     projection passe à une loi de Student à 5 degrés de liberté.
+- **Résultats** : § 7.
+
 ## 5. Résultats du backtest de la base large (PR #25)
 
 Expérience `backtest_base_large`, lancée le 19/11/2026 :
@@ -293,3 +315,7 @@ l'utilisateur. Décisions du 19/11/2026 :
 | Limite « Je limite le risque » dépassée de 34 à 68 % des semestres | **Marge de sécurité** apprise sur le passé, et fréquence réelle de dépassement affichée | PR #27 |
 | Règle 3 : placebo, un seul tirage à −8,8 % | Confirmer avec plusieurs tirages, comme prévu par la règle | PR #27 |
 | Règle 5 : PBO de 85 % | Ne plus choisir parmi des variantes : une seule méthode, fixée à l'avance | Conséquence des décisions ci-dessus |
+
+## 7. Hybride, révision et marge (PR #27)
+
+*Rempli à partir des essais du laboratoire, après leur lancement.*
