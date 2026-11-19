@@ -321,3 +321,6 @@ do $$ begin
         create policy "lecture publique" on experiences for select to anon, authenticated using (true);
     end if;
 end $$;
+
+-- V10 — Volatilité prévue par l'IA de risque (6 mois) pour chaque titre suivi
+alter table titres_snapshot add column if not exists vol_ia double precision;

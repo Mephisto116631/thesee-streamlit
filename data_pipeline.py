@@ -767,7 +767,7 @@ def comparer_seuils_neutres(df: pd.DataFrame, feat: list[str], seuils: list[floa
 # ------------------------------------------------------------------------------
 # 5. POINT D'ENTREE UNIQUE — a appeler depuis chaque page Streamlit
 # ------------------------------------------------------------------------------
-def get_all_data(univers_etendu: list[str] = None, telecharger: bool = False):
+def get_all_data(univers_etendu: list[str] = None, telecharger: bool = False, entrainer_1j: bool = True):
     """
     Retourne un dict avec toutes les donnees necessaires aux pages.
     univers_etendu : si fourni, les PRIX (Yahoo) sont synchronisés pour cette
@@ -812,12 +812,16 @@ def get_all_data(univers_etendu: list[str] = None, telecharger: bool = False):
     market_etf = market_data_raw[market_data_raw["symbol"].isin(symboles_etf)] if not market_data_raw.empty else market_data_raw
 
     market_data_clean = build_features(market_actions, macro_data_raw, utils.dict_secteurs, fonda_data_clean)
-    cache_key = f"{len(market_data_clean)}_{market_data_clean['date'].max() if not market_data_clean.empty else 'empty'}"
-    model_result = train_ia(cache_key, market_data_clean, features=utils.FEATURES_DEFAUT)
-
     market_etf_clean = build_features_etf(market_etf, macro_data_raw)
-    cache_key_etf = f"{len(market_etf_clean)}_{market_etf_clean['date'].max() if not market_etf_clean.empty else 'empty'}"
-    model_result_etf = train_ia(cache_key_etf, market_etf_clean, features=utils.FEATURES_ETF)
+    vide = {"model": None, "features": [], "accuracy": None, "diagnostics": None}
+    if entrainer_1j:
+        # Ancien modèle « hausse demain » (XGBoost, conservé) : non probant, désactivé dans le cron de l'appli mobile
+        cache_key = f"{len(market_data_clean)}_{market_data_clean['date'].max() if not market_data_clean.empty else 'empty'}"
+        model_result = train_ia(cache_key, market_data_clean, features=utils.FEATURES_DEFAUT)
+        cache_key_etf = f"{len(market_etf_clean)}_{market_etf_clean['date'].max() if not market_etf_clean.empty else 'empty'}"
+        model_result_etf = train_ia(cache_key_etf, market_etf_clean, features=utils.FEATURES_ETF)
+    else:
+        model_result, model_result_etf = dict(vide), dict(vide)
 
     etape.empty()
 

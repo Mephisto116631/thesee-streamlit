@@ -1,12 +1,11 @@
 import { HelpButton, ReglagesButton } from "../components";
 
 // Espace « Analyse » : tout ce qui sert à comprendre ou à vérifier, mais pas à décider au quotidien.
-const ENTREES: { h: string; titre: string; txt: string; exp?: boolean }[] = [
+const ENTREES: { h: string; titre: string; txt: string }[] = [
   { h: "#/parametres/calculs", titre: "Vérifier les calculs de mon portefeuille", txt: "Chaque chiffre, formule par formule, avec sa définition et tes valeurs." },
   { h: "#/risque/ia", titre: "Le modèle IA est-il fiable ?", txt: "Ce que prédisent les modèles, leurs tests et les essais du laboratoire." },
   { h: "#/risque", titre: "Le marché est-il nerveux ?", txt: "Volatilité attendue (VIX), crédit, santé financière des entreprises." },
   { h: "#/marche", titre: "Tous les titres suivis", txt: "Par secteur, avec leurs indicateurs ; touche un titre pour sa fiche." },
-  { h: "#/court", titre: "Mode court terme", txt: "Rotation mensuelle selon les scores IA de rendement, qui ne sont pas probants.", exp: true },
   { h: "#/parametres", titre: "Paramètres", txt: "Toutes les hypothèses, les frais, le courtier, les mises à jour." },
 ];
 
@@ -22,7 +21,7 @@ export function Analyse() {
       <nav class="hub">
         {ENTREES.map((x) => (
           <a href={x.h}>
-            <span><b>{x.titre}{x.exp && <span class="badge-exp">expérimental</span>}</b><small>{x.txt}</small></span>
+            <span><b>{x.titre}</b><small>{x.txt}</small></span>
             <span class="fl" aria-hidden="true">›</span></a>
         ))}
       </nav>

@@ -20,6 +20,10 @@ import fred                  # noqa: E402
 import publish               # noqa: E402
 import universe              # noqa: E402
 
+# Ancien modèle IA « hausse demain » (XGBoost) : non probant, retiré de l'appli. Le code est
+# conservé ; passer à True pour le recalculer (environ 40 s de plus par passage).
+MODELE_1J = False
+
 
 def main(log_id):
     t0 = time.time()
@@ -33,12 +37,12 @@ def main(log_id):
 
     # --- 2. Pipeline complet en mode écriture (prix incrémentaux, fondamentaux, Z-Score, modèles) ---
     db.progression(5, "Cours de bourse")
-    data = dp.get_all_data(univers_etendu=tickers_univers, telecharger=True)
+    data = dp.get_all_data(univers_etendu=tickers_univers, telecharger=True, entrainer_1j=MODELE_1J)
     n_prix = data["market_data_raw"]["symbol"].nunique() if not data["market_data_raw"].empty else 0
     print(
         f"[CRON] Pipeline terminé — {n_prix} tickers (prix), "
         f"{len(data['fonda_data_clean'])} fondamentaux, {len(data['zscore_df'])} Z-Scores, "
-        f"accuracy actions: {data['model_result']['accuracy']}%, ETF: {data['model_result_etf']['accuracy']}%"
+        f"modèle 1 jour : {'calculé' if MODELE_1J else 'désactivé'}"
     )
 
     # --- 3. Spreads de crédit FRED ---

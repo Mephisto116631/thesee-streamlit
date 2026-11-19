@@ -269,15 +269,17 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
     raw = data["market_data_raw"]
     macro = data["macro_data_raw"]
 
-    # Features AVEC la dernière séance (le signal du jour porte sur demain)
-    feats_actions = dp.build_features(raw[~raw["symbol"].isin(symboles_etf)], macro,
-                                      utils.dict_secteurs, data["fonda_data_clean"], garder_dernier=True)
-    feats_etf = dp.build_features_etf(raw[raw["symbol"].isin(symboles_etf)], macro, garder_dernier=True)
-
-    sig = pd.concat([
-        signaux_du_jour(data["model_result"], feats_actions, "actions"),
-        signaux_du_jour(data["model_result_etf"], feats_etf, "etf"),
-    ], ignore_index=True)
+    modele_1j = data["model_result"].get("model") is not None
+    sig = pd.DataFrame()
+    if modele_1j:
+        # Features AVEC la dernière séance (le signal du jour porte sur demain)
+        feats_actions = dp.build_features(raw[~raw["symbol"].isin(symboles_etf)], macro,
+                                          utils.dict_secteurs, data["fonda_data_clean"], garder_dernier=True)
+        feats_etf = dp.build_features_etf(raw[raw["symbol"].isin(symboles_etf)], macro, garder_dernier=True)
+        sig = pd.concat([
+            signaux_du_jour(data["model_result"], feats_actions, "actions"),
+            signaux_du_jour(data["model_result_etf"], feats_etf, "etf"),
+        ], ignore_index=True)
 
     snap = construire_snapshot(data, univers_df, sig)
     med = construire_medianes(snap) if not snap.empty else pd.DataFrame()
@@ -286,9 +288,10 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
     db.upsert_rows("titres_snapshot", _records(snap), on_conflict="symbol")
     db.delete_where_not_in("titres_snapshot", "symbol", snap["symbol"].tolist() if not snap.empty else [])
     db.upsert_rows("sector_medians", _records(med), on_conflict="secteur")
-    db.upsert_rows("signals", _records(sig), on_conflict="symbol")
-    db.upsert_rows("model_runs", [ligne_model_run(data["model_result"], "actions"),
-                                  ligne_model_run(data["model_result_etf"], "etf")], on_conflict="kind")
+    if modele_1j:
+        db.upsert_rows("signals", _records(sig), on_conflict="symbol")
+        db.upsert_rows("model_runs", [ligne_model_run(data["model_result"], "actions"),
+                                      ligne_model_run(data["model_result_etf"], "etf")], on_conflict="kind")
     db.upsert_rows("market_overview", [overview], on_conflict="id")
 
     # Modèles « horizon » (1 mois, 6 mois, 1 an) : classement relatif des titres
@@ -330,6 +333,9 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
                 for s, t in (reco.get("titres") or {}).items():
                     if s in vol_ia and pd.notna(vol_ia[s]):
                         t["vol_ia"] = float(vol_ia[s])
+                # Aussi pour tous les titres suivis (écran Marché, fiche d'un titre)
+                db.upsert_rows("titres_snapshot", [{"symbol": s, "vol_ia": float(v)} for s, v in vol_ia.dropna().items()],
+                               on_conflict="symbol")
                 print(f"[PUBLISH] Volatilité IA : {len(vol_ia)} titres")
             except Exception as e:
                 print(f"[PUBLISH][WARN] Volatilité IA non calculée : {e}")

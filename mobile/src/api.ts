@@ -19,6 +19,7 @@ export interface Snapshot {
   high_52w: number | null; low_52w: number | null;
   roe: number | null; margin: number | null; ev_ebitda: number | null; debt_eq: number | null;
   z_score: number | null; rating_sp: string | null; proba_hausse: number | null;
+  vol_ia?: number | null;   // volatilité prévue par l'IA de risque (6 mois)
 }
 export interface SectorMedian {
   secteur: string; n: number; chg_20d: number | null; chg_1y: number | null; rsi_14: number | null;

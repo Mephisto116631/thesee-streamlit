@@ -14,9 +14,9 @@ const charger = (): Pick<Reglages, "tranches" | "frequence"> => {
 const EURUSD_SECOURS = 1.08;
 
 /** Plan d'achat : combien acheter de chaque titre, à quel prix, quand, et ce que coûtent les frais. */
-export function PlanAchat({ capital, lignes, prix, eurusd, annees, mode = "hold" }: {
+export function PlanAchat({ capital, lignes, prix, eurusd, annees }: {
   capital: number; lignes: { symbol: string; poids: number }[];
-  prix: Record<string, number | null | undefined>; eurusd: number | null; annees: number; mode?: "hold" | "court";
+  prix: Record<string, number | null | undefined>; eurusd: number | null; annees: number;
 }) {
   const params = useParametres();
   const [etal, setEtal] = useState(charger());
@@ -130,12 +130,7 @@ export function PlanAchat({ capital, lignes, prix, eurusd, annees, mode = "hold"
           <li><b>Fractions</b> : beaucoup de courtiers n'acceptent que des ordres « au marché » pour les fractions.
             Dans ce cas, passe-les dans le même créneau calme, jamais à l'ouverture.</li>
           <li><b>Change</b> : les actions US se paient en dollars. Les frais de change s'appliquent à l'achat et de nouveau à la revente.</li>
-          {mode === "court" ? (
-            <li><b>Ensuite</b> : à chaque rotation ({params.ctRotation === "semaine" ? "chaque semaine" : "chaque mois"}), revends les titres
-              sortis de la sélection et achète les nouveaux, puis réajuste les montants. Mêmes règles d'ordres et de créneau.</li>
-          ) : (
             <li><b>Ensuite</b> : ne touche plus au portefeuille. Une fois par an, rééquilibre si une ligne dépasse {pct(params.seuilReequilibrage, 0, false)}.</li>
-          )}
         </ol>
         </Details>
       </Card>
@@ -148,9 +143,7 @@ export function PlanAchat({ capital, lignes, prix, eurusd, annees, mode = "hold"
             tone={plan.partFrais > 0.02 ? "bad" : plan.partFrais > 0.005 ? "neutral" : "good"} />
         </div>
         <p class="hint">
-          {mode === "court"
-            ? <>Frais de cette première mise en place ; ceux des rotations suivantes sont estimés plus haut.</>
-            : <>Sur l'horizon choisi, les frais (entrée + change à la revente) retirent environ <b>{pct(coutAn, 2, false)} par an</b> à la rentabilité.</>}
+          {<>Sur l'horizon choisi, les frais (entrée + change à la revente) retirent environ <b>{pct(coutAn, 2, false)} par an</b> à la rentabilité.</>}
           {plan.nonInvesti > 0.5 && <> {num(plan.nonInvesti, 2)} € restent non investis (actions entières).</>}
           {plan.partFrais > 0.02 && <> Au-delà de 2 %, réduis le nombre de lignes ou de tranches.</>}
         </p>

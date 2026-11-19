@@ -8,7 +8,7 @@ import { Portfolio } from "./screens/Portfolio";
 import { Risk } from "./screens/Risk";
 import { Calculs } from "./screens/Calculs";
 import { Analyse } from "./screens/Analyse";
-import { CourtTermeEcran, PositionsEcran } from "./screens/EcransSecondaires";
+import { PositionsEcran } from "./screens/EcransSecondaires";
 import { Progression } from "./screens/Progression";
 import { Settings } from "./screens/Settings";
 import { MiseAJourDialogue, verifierAuLancement } from "./screens/MiseAJourDialogue";
@@ -55,7 +55,7 @@ export function App() {
     case "portefeuille": screen = <Portfolio />; break;
     case "positions": screen = <PositionsEcran />; break;
     case "analyse": screen = <Analyse />; break;
-    case "court": screen = <CourtTermeEcran />; break;
+    case "court": screen = <Portfolio />; break;   // mode court terme retiré (non probant)
     case "titres": screen = <Portfolio />; break;   // « Composer » fusionné dans Portefeuille
     case "risque": screen = <Risk tab={arg === "ia" ? "ia" : "credit"} go={go} />; break;
     case "parametres": screen = arg.startsWith("calculs") ? <Calculs section={arg.split("/")[1]} /> : <Settings />; break;
