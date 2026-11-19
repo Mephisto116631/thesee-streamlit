@@ -5,7 +5,7 @@ name: Laboratoire — essais du modèle
 # Lancé à la main (onglet Actions) ou automatiquement sur une PR qui modifie le modèle.
 on:
   pull_request:
-    paths: ["experiences.py", "modele_horizon.py", "modele_risque.py", "backtest_risque.py", "modele_regime.py", "fondamentaux_sec.py", ".github/workflows/experiences.yml"]
+    paths: ["experiences.py", "modele_horizon.py", "modele_risque.py", "backtest_risque.py", "modele_regime.py", "modele_cnn.py", "fondamentaux_sec.py", ".github/workflows/experiences.yml"]
   workflow_dispatch:
     inputs:
       experiences:
@@ -28,12 +28,14 @@ jobs:
           python-version: "3.11"
           cache: "pip"
       - run: pip install -r requirements.txt
+      # PyTorch (version processeur, plus légère) : seulement pour le CNN du laboratoire
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Essais
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           # Sur une PR : seulement le dernier essai ajouté (les autres sont déjà dans la table)
-          EXPERIENCES: ${{ inputs.experiences || 'ensemble' }}
+          EXPERIENCES: ${{ inputs.experiences || 'cnn' }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python experiences.py
