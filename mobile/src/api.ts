@@ -140,6 +140,15 @@ export const api = {
     return (data ?? []) as Experience[];
   }, []),
 
+  /** Examen approfondi de l'IA de volatilité : dernier résultat de chaque essai « examen_* ». */
+  examen: () => cached<{ nom: string; verdict: string; diagnostics: any; cree_le: string }[]>("examen", async () => {
+    const { data, error } = await sb!.from("experiences").select("nom,verdict,diagnostics,cree_le")
+      .like("nom", "examen_%").order("id", { ascending: false }).limit(40);
+    if (error) throw new Error(error.message);
+    const vus = new Set<string>();
+    return (data ?? []).filter((r: any) => (vus.has(r.nom) ? false : (vus.add(r.nom), true)));
+  }, []),
+
   /** Dernier backtest du portefeuille Hold (volatilité historique / 3 mois / IA). */
   backtestVol: () => cached<any | null>("backtest-vol", async () => {
     const { data, error } = await sb!.from("experiences").select("diagnostics,cree_le")

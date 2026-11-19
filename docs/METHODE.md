@@ -18,6 +18,12 @@ Règle d'or : un chiffre ne sert à décider dans l'appli que s'il est **prouvé
 | **Force de la preuve** | t / seuil, en %. 100 % = probant (affiché ainsi dans l'appli depuis la PR #23). |
 | **Probant** | IC > 3 %, au moins 8 périodes indépendantes (`MIN_PERIODES_SIGNAL`), et force de la preuve ≥ 100 %. |
 | **Walk-forward** | 4 fenêtres de test successives ; le modèle n'est entraîné que sur le passé, avec un embargo de la durée de l'horizon. |
+| **QLIKE** | Perte d'une prévision de volatilité : r/p − log(r/p) − 1 sur les variances (p prévue, r réalisée). 0 si parfaite ; robuste aux erreurs de mesure (Patton, 2011). |
+| **Diebold-Mariano** | Test de l'écart de perte moyen entre deux prévisions, avec un écart-type de Newey-West (les prévisions à 6 mois se chevauchent). |
+| **EWMA** | Moyenne mobile exponentielle des rendements² (λ = 0,94, méthode RiskMetrics des banques). |
+| **GARCH(1,1)** | Variance de demain = ω + α·rendement² d'aujourd'hui + β·variance d'aujourd'hui : la volatilité vient par vagues, puis revient vers son niveau de long terme. |
+| **HAR** | Régression de la variance future sur les variances du dernier jour, de la semaine, du mois et du trimestre (Corsi, 2009) ; réputée très dure à battre. |
+| **PBO** | Probability of Backtest Overfitting (Bailey et López de Prado) : probabilité que la meilleure variante d'un backtest ne soit bonne que par chance. |
 | **Biais du survivant** | Évité : à chaque date, seuls les membres du S&P 500 **de cette date** (`data/sp500_historique.csv`). |
 
 Familles d'essais (chacune a son propre seuil corrigé) : rendement, risque, portefeuille, régime de marché.
@@ -145,6 +151,25 @@ très bien la volatilité future) : seul ce gain est testé.
 
 ---
 
+### 4.8 Examen approfondi de l'IA de volatilité (PR #26)
+- **Pourquoi** : l'IA de volatilité est le seul modèle probant et elle pilote le risque du portefeuille. Mais sa preuve avait des angles morts :
+  - **référence facile** : la seule comparaison était la volatilité des 3 derniers mois ;
+  - **ordre seulement** : le test portait sur l'ordre des titres, pas sur le niveau, alors que l'appli annonce « 15 % de risque » ;
+  - **pas de 2008** : la crise n'était pas dans la période de test ;
+  - **aucun placebo** ;
+  - **backtest sans frais**.
+- **Données** : historique depuis 1998, membres du S&P 500 à chaque date. La période de test (dernier tiers des dates, 4 fenêtres) couvre 2008.
+  Limite connue : Yahoo n'a pas les titres disparus de la cote, donc un biais du survivant partiel subsiste.
+- **Règles de décision, fixées AVANT les essais** :
+  1. L'IA reste si elle bat la **meilleure** des trois références (EWMA, GARCH, HAR) en QLIKE, avec une force de preuve ≥ 100 % (Diebold-Mariano, seuil corrigé pour 3 comparaisons). Sinon, l'appli bascule sur cette référence, plus simple et explicable, avec le même garde-fou.
+  2. Biais de niveau médian > 10 % → facteur de correction appris sur le passé seulement.
+     « Je limite le risque » dépassé plus de 30 % des semestres → l'appli l'écrit en clair.
+     Fourchette « mauvais cas 5 % » touchée beaucoup plus de 5 % du temps → projection à queues épaisses (loi de Student).
+  3. Placebo : avec une cible mélangée, |IC| < 2 % ; avec une fuite volontaire, l'IC doit exploser (le test sait voir une fuite). Sinon, on arrête tout et on cherche la fuite.
+  4. Crises, VIX, secteurs, tailles : on rapporte les résultats. Si l'IA est nettement moins bonne en crise, l'appli le dit.
+  5. Sensibilité (gain positif avec les 4 réglages), autre marché (S&P MidCap 400, même signe), PBO < 50 % : en cas d'échec, c'est documenté et la décision revient à l'utilisateur.
+- **Résultats** : § 6.
+
 ## 5. Résultats du backtest de la base large (PR #25)
 
 Expérience `backtest_base_large`, lancée le 19/11/2026 :
@@ -193,3 +218,7 @@ nettement moins bien.
 | Risque attendu (volatilité) | 20,6 % | 15,5 % |
 | Rentabilité de long terme (hypothèse CAPM) | 14,1 % | 12,2 % |
 | Données publiées pour l'appli | covariance 40 x 40 | 494 titres, 20 facteurs, 83 Ko |
+
+## 6. Résultats de l'examen approfondi (PR #26)
+
+*Rempli à partir des essais `examen_*` du laboratoire.*

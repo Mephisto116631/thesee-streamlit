@@ -107,6 +107,7 @@ function Models() {
     <>
       <OfflineNote res={models.res} />
       <FiabiliteRisque />
+      <ExamenApprofondi />
       <h2 class="h3">Prévoir le rendement : en test</h2>
       <p class="hint" style={{ marginTop: 0 }}>Ces classements par rendement futur restent au laboratoire : aucun n'a passé le test,
         ils ne servent à aucune décision dans l'appli (Accueil, Portefeuille, Positions, Marché).</p>
@@ -170,6 +171,55 @@ function FiabiliteRisque() {
       )}
       <p class="hint">Prochain re-test automatique : <b>{dateFr(f.prochainTest.toISOString())}</b>. Si le modèle cesse d'être probant,
         l'appli le retire d'elle-même.</p>
+    </Card>
+  );
+}
+
+/** Examen approfondi : épreuves plus dures que le test habituel (règles fixées avant les tests). */
+function ExamenApprofondi() {
+  const r = useData(api.examen);
+  const par = new Map((r.data ?? []).map((x) => [x.nom, x]));
+  if (!par.size) return null;
+  const ligne = (nom: string, titre: string, ton: (v: string, d: any) => string, detail: (d: any) => any) => {
+    const x = par.get(nom);
+    if (!x) return null;
+    return (
+      <li class="ligne-labo">
+        <div class="tete"><b>{titre}</b><span class={`badge ${ton(x.verdict, x.diagnostics)}`}>{x.verdict}</span></div>
+        <p class="hint" style={{ marginTop: 4 }}>{detail(x.diagnostics ?? {})}</p>
+      </li>
+    );
+  };
+  const q = (v: number | undefined) => (v == null ? "—" : num(v, 3));
+  return (
+    <Card title="Examen approfondi" repliable ouvert={false} id="examen">
+      <p class="hint" style={{ marginTop: 0 }}>Des épreuves plus dures que le test habituel, avec des règles de décision fixées
+        avant de lancer les essais (journal : docs/METHODE.md).</p>
+      <ul class="liste-labo">
+        {ligne("examen_references", "Contre les méthodes reconnues", (v) => (v.startsWith("l'IA") ? "good" : "bad"), (d) => <>
+          Perte QLIKE (plus bas = mieux) : IA {q(d.qlike?.ia)} · EWMA {q(d.qlike?.ewma)} · GARCH {q(d.qlike?.garch)} · HAR {q(d.qlike?.har)} ·
+          volatilité 3 mois {q(d.qlike?.vol_3m)}. Contre la meilleure ({String(d.meilleure_reference ?? "").toUpperCase()}) :
+          force de la preuve <b>{pct(d.dm?.[d.meilleure_reference]?.force, 0, false)}</b> du seuil.</>)}
+        {ligne("examen_calibration", "Le niveau prévu est-il juste ?", (v) => (v === "calibrée" ? "good" : "neutral"), (d) => <>
+          Écart médian prévu / réel : IA {pct(d.ia?.biais_median, 0)} ; HAR {pct(d.har?.biais_median, 0)} ; volatilité 3 mois {pct(d.vol_3m?.biais_median, 0)}.</>)}
+        {ligne("examen_crises", "Pendant les crises", () => "neutral", (d) => <>
+          {Object.entries(d.crises ?? {}).map(([k, v]: [string, any]) => `${k} : ${v.gain_qlike > 0 ? "IA meilleure" : "IA moins bonne"}`).join(" · ")}
+          {d.hors_crises && <> · hors crises : IA meilleure {pct(d.hors_crises.part_dates_gagnantes, 0, false)} des dates</>}</>)}
+        {ligne("examen_placebo", "Contrôle anti-fuite (placebo)", (v) => (v === "réussi" ? "good" : "bad"), (d) => <>
+          Cible mélangée : IC {pct(d.ic_cible_melangee, 1)} (doit être ≈ 0) · fuite volontaire : IC {pct(d.ic_fuite_volontaire, 0)} (doit exploser) ·
+          facteur aléatoire classé {d.importance_rang_facteur_aleatoire}ᵉ sur {d.n_facteurs}.</>)}
+        {ligne("examen_sensibilite", "Selon les réglages du modèle", (v) => (v.startsWith("réussi") ? "good" : "neutral"), (d) => <>
+          Gain d'IC sur la référence : {Object.entries(d).map(([k, v]: [string, any]) => `${k} ${pct(v.gain, 1)}`).join(" · ")}.</>)}
+        {ligne("examen_midcap", "Sur un autre marché (S&P MidCap 400)", (v) => (v === "même résultat" ? "good" : "neutral"), (d) => <>
+          IC de l'IA {pct(d.ic_ia, 1)} contre {pct(d.ic_ref, 1)} pour la volatilité 3 mois, sur {d.n_titres} titres jamais vus.</>)}
+        {ligne("examen_backtest_reel", "Portefeuille avec frais réels", (_, d) => ((d.pbo?.pbo ?? 1) < 0.5 ? "good" : "bad"), (d) => {
+          const s = d.reel?.sharpe_max_ia, r15 = d.reel?.risque_15_ia, c = d.couverture?.ia;
+          return <>Conseillé (IA) : {pct(s?.rendement_net, 1, false)}/an net de frais ({pct(s?.rendement_brut, 1, false)} brut),
+            {" "}{num(s?.ordres_par_an, 0)} ordres par an. « Risque max 15 % » dépassé {pct(r15?.part_semestres_au_dessus, 0, false)} des semestres.
+            Fourchette « mauvais cas 5 % » touchée {pct(c?.part_sous_mauvais_cas, 0, false)} des fois. Probabilité de sur-ajustement (PBO) :
+            {" "}{pct(d.pbo?.pbo, 0, false)}.</>;
+        })}
+      </ul>
     </Card>
   );
 }
