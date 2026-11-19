@@ -50,3 +50,24 @@ describe("optimisation", () => {
     expect(frontiere(u, { ...h, poidsMax: 0.05, nMaxLignes: 12 })).toEqual([]); // 12 x 5 % < 100 % : impossible
   });
 });
+
+describe("volatilité prévue par l'IA", () => {
+  it("garde les corrélations, remplace les volatilités", async () => {
+    const { avecVolIA, volHistorique } = await import("./optim");
+    const u = { symbols: ["A", "B"], mu_hist: [0.1, 0.1], beta: [1, 1], jours: 756,
+      cov: [[0.04, 0.012], [0.012, 0.09]], vol_ia: [0.1, null] };
+    const v = avecVolIA(u);
+    expect(volHistorique(v)[0]).toBeCloseTo(0.1, 9);          // 20 % -> 10 % prévu
+    expect(volHistorique(v)[1]).toBeCloseTo(0.3, 9);          // pas de prévision : historique
+    const corr = (c: number[][]) => c[0][1] / Math.sqrt(c[0][0] * c[1][1]);
+    expect(corr(v.cov)).toBeCloseTo(corr(u.cov), 9);
+  });
+  it("choisit le plus rentable sous le plafond de volatilité", async () => {
+    const { choisirPointRisque } = await import("./strategy");
+    const f = [0.08, 0.12, 0.2].map((vol, i) => ({ rendement: 0.05 + i * 0.02, volatilite: vol, sharpe: null, lignes: [] }));
+    expect(choisirPointRisque(f, 0.15)!.point.volatilite).toBe(0.12);
+    const trop = choisirPointRisque(f, 0.05)!;
+    expect(trop.atteignable).toBe(false);
+    expect(trop.point.volatilite).toBe(0.08);
+  });
+});

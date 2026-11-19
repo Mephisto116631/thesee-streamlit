@@ -108,3 +108,28 @@ def entrainer_risque(market_raw: pd.DataFrame, symboles: list[str], nom: str, ge
                                for f, v in zip(mh.FEATURES, mh._importances(m, config))],
                               key=lambda d: -d["importance"])
     return ev
+
+
+def predire_volatilite(market_raw: pd.DataFrame, symboles: list[str], composition: pd.DataFrame | None = None,
+                       nom: str = "6m") -> pd.Series:
+    """Volatilité annuelle PRÉVUE par l'IA pour chaque titre, à la dernière date connue.
+    Le modèle classe les titres ; le rang prédit est converti en niveau avec la distribution
+    actuelle des volatilités 3 mois (même méthode que le backtest, validée sur 2013-2026)."""
+    h = mh.HORIZONS[nom]
+    px, X = mh.caracteristiques(market_raw, symboles)
+    if X.empty:
+        return pd.Series(dtype=float)
+    Y = cible_risque(px, pd.DatetimeIndex(X["date"].unique()), h, "volatilite")
+    data = X.merge(Y, on=["date", "symbol"]).dropna(subset=mh.FEATURES + ["y"])
+    if composition is not None:
+        filtre = mh.membres_a_date(data, composition)
+        if not filtre.empty:
+            data = filtre
+    config, _ = mh.choisir_config(data, h)
+    m = mh._modele(config).fit(data[mh.FEATURES], data["y"])
+    derniere = X["date"].max()
+    auj = X[X["date"] == derniere].dropna(subset=mh.FEATURES).set_index("symbol")
+    rang = pd.Series(m.predict(auj[mh.FEATURES]), index=auj.index).rank(pct=True)
+    vol_3m = px.pct_change().iloc[-63:].std() * np.sqrt(252)
+    niveaux = np.sort(vol_3m.reindex(auj.index).dropna().values)
+    return pd.Series(np.quantile(niveaux, rang.values), index=rang.index)

@@ -7,7 +7,10 @@
 // par gradient projeté accéléré (FISTA). Chaque λ donne un point de la frontière.
 // Puis épuration : au plus N lignes d'au moins p %, en ré-optimisant sur les lignes gardées.
 
-export interface Univers { symbols: string[]; mu_hist: number[]; beta: number[]; cov: number[][]; jours: number }
+export interface Univers {
+  symbols: string[]; mu_hist: number[]; beta: number[]; cov: number[][]; jours: number;
+  vol_ia?: (number | null)[];   // volatilité annuelle prévue par l'IA de risque (6 mois)
+}
 
 export interface HypothesesModele {
   tauxSansRisque: number;   // 0.0435
@@ -16,6 +19,20 @@ export interface HypothesesModele {
   poidsMax: number;         // 0.20
   nMaxLignes: number;       // 12
   poidsMin: number;         // 0.03
+  sourceVol?: "historique" | "ia"; // volatilités utilisées : 3 ans d'historique, ou prévues par l'IA
+}
+
+/** Volatilité historique (3 ans) de chaque titre : racine de la diagonale de la covariance. */
+export const volHistorique = (u: Univers) => u.cov.map((r, i) => Math.sqrt(Math.max(r[i], 0)));
+
+/** Covariance avec les volatilités prévues par l'IA et les corrélations historiques (3 ans).
+ *  Titre sans prévision : volatilité historique conservée. */
+export function avecVolIA(u: Univers): Univers {
+  if (!u.vol_ia?.length) return u;
+  const sdH = volHistorique(u);
+  const sd = sdH.map((v, i) => (u.vol_ia![i] != null && u.vol_ia![i]! > 0 ? u.vol_ia![i]! : v));
+  const cov = u.cov.map((r, i) => r.map((c, j) => (sdH[i] > 0 && sdH[j] > 0 ? (c / (sdH[i] * sdH[j])) * sd[i] * sd[j] : c)));
+  return { ...u, cov };
 }
 
 export interface Point { rendement: number; volatilite: number; sharpe: number; lignes: { symbol: string; poids: number }[] }
@@ -83,7 +100,8 @@ function resoudreEpure(u: Univers, mu: number[], lambda: number, h: HypothesesMo
   return { idx, w };
 }
 
-export function frontiere(u: Univers, h: HypothesesModele, nPoints = 18): Point[] {
+export function frontiere(u0: Univers, h: HypothesesModele, nPoints = 18): Point[] {
+  const u = h.sourceVol === "ia" ? avecVolIA(u0) : u0;
   const n = u.symbols.length;
   if (n === 0 || h.poidsMax * Math.min(n, h.nMaxLignes) < 1 - 1e-9) return [];
   const mu = rendementsAttendus(u, h);

@@ -44,7 +44,8 @@ export function Settings() {
   const reco = useData(api.portefeuilleReco);
   const sync = useData(api.lastSync);
   const u = reco.data?.univers as Univers | undefined;
-  const apercu = useMemo(() => (u ? frontiere(u, p, 10) : []), [u, p.tauxSansRisque, p.primeRisque, p.poidsHistorique, p.poidsMax, p.nMaxLignes, p.poidsMin]);
+  const apercu = useMemo(() => (u ? frontiere(u, p, 10) : []), [u, p.tauxSansRisque, p.primeRisque, p.poidsHistorique, p.poidsMax, p.nMaxLignes, p.poidsMin, p.sourceVol]);
+  const bt = useData(api.backtestVol);
   const impossible = p.poidsMax * p.nMaxLignes < 1 - 1e-9;
   const [maj, setMaj] = useState<{ etat: "idle" | "cherche" | "ok" | "erreur"; msg?: string }>({ etat: "idle" });
   const [auto, setAuto] = useState(telechargementAuto());
@@ -94,6 +95,36 @@ export function Settings() {
           aide="Au-delà, trop de petits ordres pour un petit capital (frais, suivi)." />
         <Champ p={p} k="poidsMin" label="Poids minimal d'une ligne" min={0} max={20} pas={0.5} decimales={1}
           aide="Les lignes plus petites sont supprimées et le portefeuille est ré-optimisé sans elles." />
+      </Card>
+
+      <Card title="Risque du portefeuille">
+        <div class="field">Volatilité utilisée pour construire le portefeuille
+          <div class="seg full" role="group" aria-label="Source de volatilité">
+            <button class={p.sourceVol !== "ia" ? "on" : ""} onClick={() => ecrireParametres({ sourceVol: "historique" })}>Historique 3 ans</button>
+            <button class={p.sourceVol === "ia" ? "on" : ""} disabled={!u?.vol_ia?.length}
+              onClick={() => ecrireParametres({ sourceVol: "ia" })}>Prévue par l'IA</button>
+          </div>
+        </div>
+        <p class="hint">L'IA de risque prévoit la volatilité des 6 prochains mois de chaque titre (corrélations : 3 ans d'historique).
+          {!u?.vol_ia?.length && " Disponible après la prochaine synchronisation du serveur."}
+          {" "}Les deux volatilités restent affichées dans la liste des titres du portefeuille Hold.</p>
+        {bt.data?.diagnostics?.variantes && (
+          <>
+            <h3 class="h3">Ce qu'aurait donné chaque choix (backtest {bt.data.diagnostics.n_mois} mois depuis 2013)</h3>
+            <table class="table small">
+              <thead><tr><th>Volatilité</th><th>Risque réel</th><th>Rendement / an</th><th>Rendement / risque</th></tr></thead>
+              <tbody>{([["hist_3a", "Historique 3 ans"], ["naif_3m", "3 derniers mois"], ["ia", "IA"]] as const).map(([k, nom]) => {
+                const v = bt.data.diagnostics.variantes[k];
+                return v && <tr><td>{nom}</td><td>{pct(v.vol_reelle, 1, false)}</td><td>{pct(v.rendement_annuel, 1, false)}</td>
+                  <td><b>{num(v.rendement_annuel / v.vol_reelle, 2)}</b></td></tr>;
+              })}</tbody>
+            </table>
+            <p class="hint">Portefeuille Hold reconstruit chaque mois avec les règles de l'appli, mesuré le mois suivant.
+              L'IA donne un portefeuille <b>plus calme</b> ({pct(bt.data.diagnostics.ia_vs_hist_3a?.part_mois_moins_risque, 0, false)} des mois
+              moins risqués), mais le rendement baisse presque autant : le rapport rendement / risque reste proche.
+              Choisis l'IA si tu préfères la stabilité.</p>
+          </>
+        )}
       </Card>
 
       <Card title="Passage des ordres" right={<button class="link" onClick={() => ecrireParametres(PRESET_TRADE_REPUBLIC)}>Préréglage Trade Republic</button>}>

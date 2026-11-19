@@ -16,6 +16,7 @@ import pandas as pd
 import data_pipeline as dp
 import db
 import modele_horizon
+import modele_risque
 import portefeuille
 import universe
 import utils
@@ -317,6 +318,21 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
         db.progression(95, "Portefeuille recommandé")
         reco = portefeuille.portefeuille_recommande(raw, snap)
         if reco:
+            # Volatilité prévue par l'IA de risque (6 mois), affichée à côté de l'historique ;
+            # l'appli peut s'en servir pour le portefeuille (option « IA » dans Paramètres).
+            try:
+                db.progression(97, "Volatilité prévue par l'IA")
+                vol_ia = modele_risque.predire_volatilite(raw_horizon, snap["symbol"].tolist(), composition)
+                syms = reco.get("univers", {}).get("symbols", [])
+                if syms:
+                    reco["univers"]["vol_ia"] = [float(vol_ia[s]) if s in vol_ia and pd.notna(vol_ia[s]) else None
+                                                 for s in syms]
+                for s, t in (reco.get("titres") or {}).items():
+                    if s in vol_ia and pd.notna(vol_ia[s]):
+                        t["vol_ia"] = float(vol_ia[s])
+                print(f"[PUBLISH] Volatilité IA : {len(vol_ia)} titres")
+            except Exception as e:
+                print(f"[PUBLISH][WARN] Volatilité IA non calculée : {e}")
             db.upsert_rows("portefeuille_recommande", [_clean({
                 "id": 1, "date": snap["date"].max(), **reco,
                 "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),

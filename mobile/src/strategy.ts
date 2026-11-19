@@ -36,6 +36,15 @@ export function choisirPoint(frontiere: PointFrontiere[], cible: number) {
   return { point: ok ?? tri[tri.length - 1], atteignable: Boolean(ok), max: tri[tri.length - 1].rendement, min: tri[0].rendement };
 }
 
+/** Le portefeuille le plus rentable dont la volatilité ne dépasse pas volMax. */
+export function choisirPointRisque(frontiere: PointFrontiere[], volMax: number) {
+  if (!frontiere.length) return null;
+  const tri = [...frontiere].sort((a, b) => a.volatilite - b.volatilite);
+  const ok = tri.filter((p) => p.volatilite <= volMax + 1e-9);
+  const point = ok.length ? ok.reduce((b, p) => (p.rendement > b.rendement ? p : b)) : tri[0];
+  return { point, atteignable: ok.length > 0, max: tri[tri.length - 1].rendement, min: tri[0].rendement, volMin: tri[0].volatilite };
+}
+
 // ---------------------------------------------------------------------------
 // Projection à l'horizon (modèle log-normal) : fourchette et probabilités.
 // ---------------------------------------------------------------------------

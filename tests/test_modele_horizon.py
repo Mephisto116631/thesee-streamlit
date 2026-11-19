@@ -185,6 +185,10 @@ def test_modele_risque_bat_la_reference():
     assert ev["gain"] > -0.05                                     # pas pire que la référence
     dd = mr.entrainer_risque(raw, syms, "6m", "perte_max")
     assert dd["ic_moyen"] > 0.3
+    vol = mr.predire_volatilite(raw, syms)
+    assert len(vol) == len(syms) and vol.between(0.05, 1.0).all()
+    # Le risque propre croît avec l'indice du titre : la prévision doit le retrouver
+    assert vol.rank().corr(pd.Series(range(len(syms)), index=syms).rank()) > 0.7
 
 
 def test_backtest_risque():

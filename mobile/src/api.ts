@@ -53,7 +53,7 @@ export interface PortefeuilleReco {
   stats: { rendement_1y: number; volatilite: number; sharpe: number | null; perte_max: number; poids_secteur_max: number; secteur_principal: string;
     rendement_attendu?: number; volatilite_attendue?: number };
   frontiere?: { cible: number; rendement: number; volatilite: number; sharpe: number | null; lignes: { symbol: string; poids: number }[] }[];
-  titres?: Record<string, { nom: string; secteur: string | null; prix: number | null; rendement_1y: number; volatilite: number }>;
+  titres?: Record<string, { nom: string; secteur: string | null; prix: number | null; rendement_1y: number; volatilite: number; vol_ia?: number }>;
   univers?: { symbols: string[]; mu_hist: number[]; beta: number[]; cov: number[][]; jours: number };
 }
 export interface ScoreHorizon { symbol: string; horizon: "court" | "6m" | "1a"; score: number; date: string }
@@ -131,6 +131,14 @@ export const api = {
     if (error) throw new Error(error.message);
     return (data ?? []) as Experience[];
   }, []),
+
+  /** Dernier backtest du portefeuille Hold (volatilité historique / 3 mois / IA). */
+  backtestVol: () => cached<any | null>("backtest-vol", async () => {
+    const { data, error } = await sb!.from("experiences").select("diagnostics,cree_le")
+      .eq("nom", "backtest_volatilite_sharpe_max").order("id", { ascending: false }).limit(1).maybeSingle();
+    if (error) throw new Error(error.message);
+    return data ?? null;
+  }, null),
 
   lastSync: () => cached<SyncLog | null>("sync", async () => {
     const { data, error } = await sb!.from("sync_log").select("*").order("started_at", { ascending: false }).limit(1).maybeSingle();
