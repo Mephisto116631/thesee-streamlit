@@ -130,7 +130,7 @@ def entrainer_risque(market_raw: pd.DataFrame, symboles: list[str], nom: str, ge
 
 
 def predire_volatilite(market_raw: pd.DataFrame, symboles: list[str], composition: pd.DataFrame | None = None,
-                       nom: str = "6m") -> pd.Series:
+                       nom: str = "6m", niveaux: str = "vol_3m") -> pd.Series:
     """Volatilité annuelle PRÉVUE par l'IA pour chaque titre, à la dernière date connue.
     Le modèle classe les titres ; le rang prédit est converti en niveau avec la distribution
     actuelle des volatilités 3 mois (même méthode que le backtest, validée sur 2013-2026)."""
@@ -149,9 +149,31 @@ def predire_volatilite(market_raw: pd.DataFrame, symboles: list[str], compositio
     derniere = X["date"].max()
     auj = X[X["date"] == derniere].dropna(subset=mh.FEATURES).set_index("symbol")
     rang = pd.Series(m.predict(auj[mh.FEATURES]), index=auj.index).rank(pct=True)
-    vol_3m = px.pct_change().iloc[-63:].std() * np.sqrt(252)
-    niveaux = np.sort(vol_3m.reindex(auj.index).dropna().values)
-    return pd.Series(np.quantile(niveaux, rang.values), index=rang.index)
+    if niveaux in ("har", "har_seul"):
+        lvl = niveaux_har_du_jour(px, data, auj.index)
+        if niveaux == "har_seul":
+            return lvl.reindex(auj.index)
+        base = np.sort(lvl.reindex(auj.index).dropna().values)   # hybride : ordre de l'IA, niveaux HAR
+    else:
+        vol_3m = px.pct_change().iloc[-63:].std() * np.sqrt(252)
+        base = np.sort(vol_3m.reindex(auj.index).dropna().values)
+    return pd.Series(np.quantile(base, rang.values), index=rang.index)
+
+
+def niveaux_har_du_jour(px: pd.DataFrame, data: pd.DataFrame, symboles) -> pd.Series:
+    """Volatilité prévue par HAR (Corsi) à la dernière date, régression ajustée sur toutes les dates
+    dont la volatilité future est déjà connue (`data` contient la cible réalisée `brut`)."""
+    import examen_risque as ex
+    entrees = ex.har_entrees(px.pct_change())
+    lignes = []
+    for nom_e, t in entrees.items():
+        st = t.reindex(pd.DatetimeIndex(data["date"].unique())).stack(future_stack=True).rename(nom_e)
+        st.index.names = ["date", "symbol"]
+        lignes.append(st)
+    hist = data[["date", "symbol", "brut"]].merge(pd.concat(lignes, axis=1).reset_index(), on=["date", "symbol"]).dropna()
+    coef = ex.har_ajuster(hist)
+    auj = pd.DataFrame({k: t.iloc[-1] for k, t in entrees.items()}).reindex(list(symboles))
+    return pd.Series(ex.har_prevoir(auj, coef), index=auj.index)
 
 
 # ------------------------------------------------------------------------------

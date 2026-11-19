@@ -3,7 +3,7 @@ import { api, getFavoris, lirePositions, type Position, type SectorMedian, type 
 import { Card, ChartBox, cssVar, HelpButton, Loading, RangeBar, Stat, useData, Verifier } from "../components";
 import { dateFr, num, pct, prix, signClass } from "../format";
 import { BadgeTeste, usePortefeuilleCible } from "./Portfolio";
-import { useFiabiliteVol } from "../fiabilite";
+import { libelleSource, useFiabiliteVol } from "../fiabilite";
 import { coursVC, enPerte, per } from "../valorisation";
 
 const FONDA = ["roe", "margin", "ev_ebitda", "debt_eq"] as const;
@@ -81,7 +81,7 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
       <Card title="Quel risque ?">
         <div class="stats">
           <Stat label="Risque des 3 dernières années" value={pct(s.volatility, 0, false)} sub="volatilité par an" />
-          {volIA != null && <Stat label={<>Risque prévu par l'IA <BadgeTeste /></>} value={pct(volIA, 0, false)} sub="6 prochains mois"
+          {volIA != null && <Stat label={<>Risque prévu ({libelleSource(fiab.source)}) <BadgeTeste /></>} value={pct(volIA, 0, false)} sub="6 prochains mois"
             tone={s.volatility == null ? "" : volIA < s.volatility ? "good" : "bad"} />}
         </div>
         <p class="hint">La volatilité dit de combien le cours s'écarte en général sur un an.

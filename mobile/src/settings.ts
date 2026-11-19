@@ -13,6 +13,7 @@ export interface Parametres extends HypothesesModele {
   // Projection et suivi
   confiance: number;      // part des scénarios dans la fourchette affichée (0.8 / 0.9 / 0.95)
   seuilReequilibrage: number; // rééquilibrer si une ligne dépasse ce poids
+  rythmeRevision: 6 | 12;     // le portefeuille conseillé n'est révisé que tous les 6 ou 12 mois
 }
 
 // Valeurs par défaut = celles du serveur (portefeuille.py) et d'un courtier sans frais.
@@ -30,6 +31,7 @@ export const PARAMETRES_DEFAUT: Parametres = {
   deviseOrdres: "EUR",
   confiance: 0.9,
   seuilReequilibrage: 0.25,
+  rythmeRevision: 6,
   sourceVol: "historique",
 };
 

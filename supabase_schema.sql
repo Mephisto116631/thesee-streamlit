@@ -361,3 +361,21 @@ alter table sector_medians add column if not exists part_encaissee double precis
 -- V13 — Univers du portefeuille sous forme factorielle (~500 titres du S&P 500). Nouvelle colonne :
 -- les anciennes versions de l'appli lisent `univers` (vide désormais) et affichent la frontière du serveur.
 alter table portefeuille_recommande add column if not exists univers_facteurs jsonb;
+
+-- V14 — Révisions du portefeuille (1 à 2 fois par an, docs/METHODE.md § 4.9) : l'univers (titres, covariance
+-- factorielle, volatilité prévue) est figé à chaque révision ; l'appli construit le portefeuille conseillé
+-- à partir de la dernière révision de son rythme (6 ou 12 mois) au lieu de l'univers du jour.
+create table if not exists revisions_portefeuille (
+    date              date primary key,
+    univers_facteurs  jsonb not null,
+    titres            jsonb,
+    methode           text,
+    cree_le           timestamptz not null default now()
+);
+alter table revisions_portefeuille enable row level security;
+do $$ begin
+    if not exists (select 1 from pg_policies where schemaname = 'public'
+                   and tablename = 'revisions_portefeuille' and policyname = 'lecture publique') then
+        create policy "lecture publique" on revisions_portefeuille for select to anon, authenticated using (true);
+    end if;
+end $$;

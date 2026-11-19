@@ -365,6 +365,28 @@ def publier_valorisation_sec(snap: pd.DataFrame, force: bool = False) -> int:
     return len(valo)
 
 
+def semestre(d) -> tuple[int, int]:
+    d = pd.Timestamp(d)
+    return d.year, (d.month - 1) // 6
+
+
+def enregistrer_revision(reco: dict, date_marche) -> bool:
+    """Fige l'univers du portefeuille une fois par semestre (janvier, juillet) : l'appli ne change le
+    portefeuille conseillé qu'à ces révisions (docs/METHODE.md § 4.9). Retourne True si une révision est écrite."""
+    u = reco.get("univers_facteurs")
+    if not u:
+        return False
+    cli = db.get_client()
+    der = cli.table("revisions_portefeuille").select("date").order("date", desc=True).limit(1).execute().data
+    if der and semestre(der[0]["date"]) == semestre(date_marche):
+        return False
+    db.upsert_rows("revisions_portefeuille", [_clean({
+        "date": pd.Timestamp(date_marche).date().isoformat(), "univers_facteurs": u,
+        "titres": reco.get("titres"), "methode": reco.get("methode")})], on_conflict="date")
+    print(f"[PUBLISH] Révision du portefeuille enregistrée au {pd.Timestamp(date_marche).date()}")
+    return True
+
+
 def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
     """Calcule et écrit toutes les tables d'affichage. Retourne un résumé (logs)."""
     symboles_etf = set(universe.ETFS_SECTORIELS.keys())
@@ -432,7 +454,21 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
         lab = db.get_client().table("experiences").select("nom,horizon,verdict,t_stat,seuil_t_global,diagnostics,cree_le") \
             .eq("nom", modele_risque.NOM_LABO).eq("horizon", "6m").order("cree_le", desc=True).limit(1).execute().data
         fiab = modele_risque.verdict_labo(lab)
-        vol_ia = modele_risque.predire_volatilite(raw_horizon, snap["symbol"].tolist(), composition)
+        # Source de la prévision (docs/METHODE.md § 4.9) : l'examen « examen_hybride » décide entre
+        # l'hybride (ordre de l'IA, niveaux HAR) et HAR seul ; sans examen, l'IA seule (ancien comportement).
+        ex_h = db.get_client().table("experiences").select("diagnostics->decision,cree_le") \
+            .eq("nom", "examen_hybride").order("id", desc=True).limit(1).execute().data
+        decision = (ex_h[0].get("decision") if ex_h else None) or "ia"
+        # Règle 6 (§ 4.9) : si l'IA ne bat pas HAR sur l'ordre des titres, HAR seul
+        ex_r = db.get_client().table("experiences").select("diagnostics->decision") \
+            .eq("nom", "examen_ia_contre_har").order("id", desc=True).limit(1).execute().data
+        if ex_r and ex_r[0].get("decision") == "har":
+            decision = "har"
+        fiab["source"] = {"hybride": "hybride", "har": "har"}.get(decision, "ia")
+        niveaux = {"hybride": "har", "har": "har_seul"}.get(fiab["source"], "vol_3m")
+        vol_ia = modele_risque.predire_volatilite(raw_horizon, snap["symbol"].tolist(), composition, niveaux=niveaux)
+        if fiab["source"] == "har":
+            fiab["probant"] = True       # HAR : méthode de référence retenue par l'examen, sans dépendre de l'IA
         vol_publiee = filtrer_vol_ia(vol_ia, fiab)
         if vol_publiee is None:
             # Preuve tombée : on efface les anciennes valeurs, l'appli revient à l'historique
@@ -441,8 +477,8 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
         else:
             db.upsert_rows("titres_snapshot", [{"symbol": s, "vol_ia": float(v)} for s, v in vol_publiee.items()],
                            on_conflict="symbol")
-            print(f"[PUBLISH] Volatilité IA : {len(vol_publiee)} titres (test t {fiab.get('t_stat', 0):.1f} "
-                  f"> seuil {fiab.get('seuil', 0):.1f})")
+            print(f"[PUBLISH] Volatilité prévue ({fiab['source']}) : {len(vol_publiee)} titres "
+                  f"(test t {fiab.get('t_stat') or 0:.1f} > seuil {fiab.get('seuil') or 0:.1f})")
         bilan = suivre_volatilite(vol_ia, raw, snap["date"].max(), fiab)
         print(f"[PUBLISH] Bilan réel : {bilan.get('verdict', 'en attente')} "
               f"({bilan.get('n_dates', 0)} dates jugées, premier bilan {bilan.get('premier_bilan')})")
@@ -462,6 +498,7 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
                 for s, t in (reco.get("titres") or {}).items():
                     if s in vol_publiee:
                         t["vol_ia"] = float(vol_publiee[s])
+            enregistrer_revision(reco, snap["date"].max())
             db.upsert_rows("portefeuille_recommande", [_clean({
                 "id": 1, "date": snap["date"].max(), **reco,
                 "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),

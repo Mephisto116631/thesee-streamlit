@@ -80,6 +80,10 @@ EXPERIENCES_EXAMEN = {
     "examen_sensibilite": "Gain de l'IA avec chacun des 4 réglages du modèle",
     "examen_midcap": "IA entraînée sur le S&P 500, appliquée telle quelle au S&P MidCap 400",
     "examen_backtest_reel": "Portefeuille avec frais réels, promesse « Je limite le risque », fourchette à 1 an, PBO",
+    # PR #27 (docs/METHODE.md § 4.9) : décisions de l'utilisateur après l'examen
+    "examen_hybride": "Hybride : ordre des titres par l'IA, niveau par HAR ; publié s'il vaut HAR en niveau et bat la volatilité 3 mois en ordre",
+    "examen_ia_contre_har": "L'IA bat-elle HAR sur l'ordre des titres ? Sinon : HAR seul. Backtest hybride contre HAR seul (frais, révision 6 mois)",
+    "examen_marge": "Marge de sécurité apprise sur le passé ; rythmes de révision mensuel, semestriel, annuel avec frais ; fourchette avec l'hybride",
 }
 DEBUT_EXAMEN = "1998-01-01"
 
@@ -140,13 +144,14 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
     print(f"[LABO] Examen : {data['symbol'].nunique()} titres, {data['date'].nunique()} dates depuis "
           f"{pd.Timestamp(data['date'].min()).date()}")
     t = None
-    if {"examen_references", "examen_calibration", "examen_crises"} & set(noms):
+    if {"examen_references", "examen_calibration", "examen_crises", "examen_hybride", "examen_ia_contre_har"} & set(noms):
         try:
             t = ex.walk_forward(data, ret)
             print(f"[LABO] Examen : test de {pd.Timestamp(t['date'].min()).date()} à {pd.Timestamp(t['date'].max()).date()}")
         except Exception as e:
             print(f"[LABO][ERREUR] walk-forward de l'examen : {type(e).__name__} : {e}")
-            echecs += [n for n in noms if n in ("examen_references", "examen_calibration", "examen_crises")]
+            echecs += [n for n in noms if n in ("examen_references", "examen_calibration", "examen_crises", "examen_hybride",
+                                                "examen_ia_contre_har")]
     for nom in noms:
         try:
             if nom == "examen_references" and t is not None:
@@ -174,7 +179,7 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
                 v = f"IA meilleure dans {gagnees}/{len(c['crises'])} crises"
                 _inserer(cli, lot, nom, v, c, ic=gagnees / max(1, len(c["crises"])))
             elif nom == "examen_placebo":
-                c = ex.placebo(data, ret)
+                c = ex.placebo(data, ret)        # 10 tirages : règle 4 de la PR #27, |moyenne| < 2 %
                 ok = abs(c["ic_cible_melangee"] or 0) < 0.02 and (c["ic_fuite_volontaire"] or 0) > 0.5
                 _inserer(cli, lot, nom, "réussi" if ok else "ÉCHEC : chercher une fuite", c, ic=c["ic_cible_melangee"])
             elif nom == "examen_sensibilite":
@@ -189,6 +194,49 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
                 c = ex.autre_marche(data, data_m)
                 _inserer(cli, lot, nom, "même résultat" if c["gain"] > 0 else "ne se généralise pas", c,
                          ic=c["gain"], t=c["t"])
+            elif nom == "examen_hybride" and t is not None:
+                c = ex.comparer_hybride(t)
+                c["debut_test"] = str(pd.Timestamp(t["date"].min()).date())
+                v = "publié" if c["publie"] else "HAR seul"
+                _inserer(cli, lot, nom, v, c, ic=c["ic"]["hybride"], t=c["t_ic"], seuil=c["seuil"], n_essais=4)
+            elif nom == "examen_ia_contre_har" and t is not None:
+                c = ex.ia_contre_har(t)
+                tous = {"sharpe_max": None, "risque_15": 0.15}
+                res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",
+                                  variantes=["hybride", "har"], secteurs=secteurs, portefeuilles=tous, garder_poids=True)
+                px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
+                c["backtest"] = {f"{pf_}_{v}": bt.backtest_reel(res, px, pf_, v, revision_mois=6)
+                                 for pf_ in tous for v in ["hybride", "har"]}
+                v = "l'IA reste (hybride)" if c["ia_reste"] else "HAR seul"
+                _inserer(cli, lot, nom, v, c, ic=c["gain"], t=c["t"], seuil=c["seuil"], n_essais=5)
+            elif nom == "examen_marge":
+                tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
+                res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",
+                                  variantes=["hist_3a", "hybride"], secteurs=secteurs, portefeuilles=tous,
+                                  garder_poids=True, garder_frontieres=True)
+                px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
+                c = {"marges": {}, "rythmes": {}, "couverture": {}}
+                for lim in [0.10, 0.12, 0.15, 0.18]:
+                    c["marges"][f"{int(lim * 100)}"] = bt.marge_walk_forward(res, px, lim, "hybride", revision_mois=6)
+                for rythme in [1, 6, 12]:
+                    for nom_pf in ["sharpe_max", "risque_15"]:
+                        c["rythmes"][f"{nom_pf}_{rythme}m"] = bt.backtest_reel(res, px, nom_pf, "hybride", revision_mois=rythme)
+                c["couverture"] = {var: bt.couverture_fourchette(res, px, "sharpe_max", var) for var in ["hist_3a", "hybride"]}
+                # Règle 5 : loi de Student à 5 degrés (90 % des scénarios dans ±2,015 σ), revérifiée
+                c["couverture"]["hybride_student5"] = bt.couverture_fourchette(res, px, "sharpe_max", "hybride", z=2.015)
+                c["debut"] = str(pd.Timestamp(res["date"].min()).date())
+                parts = [m["part_respectee_avec_marge"] for m in c["marges"].values() if m["part_respectee_avec_marge"] is not None]
+                ok = bool(parts) and min(parts) >= 0.70                 # règle 3 : au moins 70 % des semestres
+                m15 = c["marges"]["15"]
+                # Publication de la marge pour l'appli (lue dans model_runs, kind « marge_risque »)
+                cli.table("model_runs").upsert(_clean({
+                    "kind": "marge_risque", "trained_at": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "verdict": "respectée" if ok else "insuffisante",
+                    "diagnostics": {"marge": m15["marge_actuelle"], "marges": c["marges"],
+                                    "part_respectee": m15["part_respectee_avec_marge"], "depuis": c["debut"]},
+                }), on_conflict="kind").execute()
+                v = (f"limite tenue {min(parts):.0%} des semestres au moins" if parts else "non calculable")
+                _inserer(cli, lot, nom, v, c, ic=m15["marge_actuelle"])
             elif nom == "examen_backtest_reel":
                 tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
                 res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base=bt.BASES,

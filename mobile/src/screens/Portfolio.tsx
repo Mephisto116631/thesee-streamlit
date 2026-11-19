@@ -3,9 +3,10 @@ import { api } from "../api";
 import { BarreSeuil, Card, ChartBox, cssVar, HelpButton, Info, Loading, OfflineNote, RefreshButton, ReglagesButton, Stat, toneOf, useData, Verifier } from "../components";
 import { frontiere as calculerFrontiere, sousUnivers, variance, type Univers } from "../optim";
 import { ecrireParametres, nbModifies, useParametres } from "../settings";
-import { ilYA, num, pct, ratioPct } from "../format";
+import { dateFr, ilYA, num, pct, ratioPct } from "../format";
 import { choisirPoint, choisirPointRisque, HORIZON_DEFAUT, HORIZONS, planAchat, projection } from "../strategy";
-import { univers as universFiable, useFiabiliteVol, type FiabiliteVol } from "../fiabilite";
+import { libelleSource, univers as universFiable, useFiabiliteVol, type FiabiliteVol } from "../fiabilite";
+import { choisirRevision, prochaineRevision } from "../revision";
 import { MonteCarlo } from "./MonteCarlo";
 import { PlanAchat } from "./PlanAchat";
 
@@ -38,26 +39,42 @@ export function usePortefeuilleCible() {
   const params = useParametres();
   // La prévision IA n'entre dans le calcul que si son dernier test est probant
   const fiab = useFiabiliteVol();
-  const u = universFiable((reco.data?.univers_facteurs ?? reco.data?.univers ?? undefined) as Univers | undefined, fiab);
+  // Univers figé à la dernière révision de mon rythme (6 ou 12 mois) ; sinon celui du jour
+  const revs = useData(api.revisions);
+  const revision = choisirRevision(revs.data, params.rythmeRevision ?? 6);
+  const u = universFiable((revision?.univers_facteurs ?? reco.data?.univers_facteurs ?? reco.data?.univers ?? undefined) as Univers | undefined, fiab);
+  // Marge de sécurité du mode « Je limite le risque », apprise sur le passé par le laboratoire
+  const runs = useData(api.models);
+  const margeRun = runs.data?.find((r) => r.kind === "marge_risque");
+  const marge = Math.min(1.5, Math.max(0.5, Number(margeRun?.diagnostics?.marge) || 1));
   // Frontière recalculée sur le téléphone avec les hypothèses de la page Paramètres
   // (repli : celle du serveur si l'univers n'est pas encore publié).
   // Titres exclus / imposés par l'utilisateur : même optimiseur, sur le sous-univers
   const frontiere = useMemo(() => (u ? calculerFrontiere(sousUnivers(u, e.exclus), { ...params, imposes: e.imposes }) : reco.data?.frontiere ?? []),
-    [u, reco.data?.frontiere, params.tauxSansRisque, params.primeRisque, params.poidsHistorique, params.poidsMax, params.nMaxLignes,
+    [u, revision?.date, reco.data?.frontiere, params.tauxSansRisque, params.primeRisque, params.poidsHistorique, params.poidsMax, params.nMaxLignes,
       params.poidsMin, params.sourceVol, fiab.probant, e.exclus.join(","), e.imposes.join(",")]);
   const modifies = nbModifies(params);
-  const choix = e.mode === "risque" ? choisirPointRisque(frontiere, e.volMax) : choisirPoint(frontiere, e.cible);
+  const choix = e.mode === "risque" ? choisirPointRisque(frontiere, e.volMax * marge) : choisirPoint(frontiere, e.cible);
   const volIA = params.sourceVol === "ia" && Boolean(u?.vol_ia?.length);
   const volHistDe = new Map((u?.symbols ?? []).map((sy, i) => [sy, Math.sqrt(Math.max(variance(u!, i), 0))]));
   const volIADe = new Map((u?.symbols ?? []).map((sy, i) => [sy, u?.vol_ia?.[i] ?? null]));
   const lignes = choix?.point.lignes ?? [];
   // Meilleure rentabilité de long terme possible pour le risque du portefeuille choisi (frontière)
   const maxAuRisque = choix ? Math.max(...frontiere.filter((f) => f.volatilite <= choix.point.volatilite + 0.0025).map((f) => f.rendement)) : null;
-  return { e, maj, reco, ov, snap, h, params, u, frontiere, modifies, choix, volIA, volHistDe, volIADe, lignes, fiab, maxAuRisque };
+  const revisionInfo = { date: revision?.date ?? null, prochaine: prochaineRevision(params.rythmeRevision ?? 6) };
+  // Part des semestres où la limite a été tenue, pour la limite testée la plus proche (10, 12, 15, 18 %)
+  const marges = (margeRun?.diagnostics?.marges ?? {}) as Record<string, { part_respectee_avec_marge?: number; marge_actuelle?: number }>;
+  const cle = Object.keys(marges).sort((a, b) => Math.abs(+a / 100 - e.volMax) - Math.abs(+b / 100 - e.volMax))[0];
+  const margeInfo = { m: marge, part: cle ? marges[cle]?.part_respectee_avec_marge : undefined, limiteTestee: cle ? +cle / 100 : undefined,
+    depuis: margeRun?.diagnostics?.depuis as string | undefined, connue: Boolean(margeRun) };
+  return { e, maj, reco, ov, snap, h, params, u, frontiere, modifies, choix, volIA, volHistDe, volIADe, lignes, fiab, maxAuRisque,
+    revisionInfo, margeInfo };
 }
 
 export function Portfolio() {
-  const { e, maj, reco, ov, snap, h, params, u, frontiere, modifies, choix, volIA, volHistDe, volIADe, lignes, fiab, maxAuRisque } = usePortefeuilleCible();
+  const { e, maj, reco, ov, snap, h, params, u, frontiere, modifies, choix, volIA, volHistDe, volIADe, lignes, fiab, maxAuRisque,
+    revisionInfo, margeInfo } = usePortefeuilleCible();
+  const nomPrev = `prévu (${libelleSource(fiab.source)})`;
   const prix: Record<string, number | null | undefined> = {
     ...Object.fromEntries(Object.entries(reco.data?.titres ?? {}).map(([k, v]) => [k, v.prix])),
     ...Object.fromEntries((snap.data ?? []).map((x) => [x.symbol, x.close])),
@@ -119,6 +136,13 @@ export function Portfolio() {
             <input type="range" min={0.08} max={0.35} step={0.01} value={e.volMax} aria-label="Volatilité maximale par an"
               onInput={(ev) => maj({ volMax: Number((ev.target as HTMLInputElement).value) })} />
             <div class="range-labels"><span>8 % calme</span><span>≈ 18 % S&P 500</span><span>35 % agité</span></div>
+            {margeInfo.connue ? (
+              <p class="hint">Visé : <b>{pct(e.volMax * margeInfo.m, 1, false)}</b> pour tenir ta limite de {pct(e.volMax, 0, false)}
+                {margeInfo.part != null && <> · une limite de {pct(margeInfo.limiteTestee, 0, false)} a été tenue <b class={margeInfo.part < 0.7 ? "down" : ""}>{pct(margeInfo.part, 0, false)}</b> des semestres depuis {String(margeInfo.depuis ?? "").slice(0, 4)}</>}.
+                <Info>Le risque réel varie plus que prévu. L'appli vise donc un peu en dessous de ta limite (marge apprise sur le passé
+                  seulement). Même ainsi, une limite basse est souvent dépassée : avec 12 titres au plus, le portefeuille ne peut pas être
+                  aussi calme qu'un indice, et les crises font grimper le risque de tous les titres en même temps.</Info></p>
+            ) : <p class="hint">Par le passé, cette limite a souvent été dépassée : le risque réel varie plus que prévu.</p>}
           </div>
         )}
         <ChoixSourceVol volIA={volIA} dispo={Boolean(u?.vol_ia?.length)} fiab={fiab} />
@@ -146,7 +170,7 @@ export function Portfolio() {
                 Pour 1 point de volatilité supporté, {num(choix.point.rendement / choix.point.volatilite, 2)} point de rentabilité de long terme par an (hypothèse).
                 Plus c'est haut, mieux le risque est payé.</Info></>} />
             </div>
-            <JaugeRisque vol={choix.point.volatilite} source={volIA ? "prévu par l'IA" : "historique 3 ans"} teste={volIA} />
+            <JaugeRisque vol={choix.point.volatilite} source={volIA ? nomPrev : "historique 3 ans"} teste={volIA} />
             {maxAuRisque != null && (
               <p class="hint">Avec ce risque ({pct(choix.point.volatilite, 0, false)} {volIA ? "prévu" : "mesuré"}), la rentabilité de long terme
                 maximale est <b>{pct(maxAuRisque, 1, false)}/an</b> (hypothèse).
@@ -162,10 +186,13 @@ export function Portfolio() {
                 </div>
                 <div class="barre-proba"><span>Risque de finir en perte</span><b class={proj.probPerte > 0.3 ? "down" : ""}>{pct(proj.probPerte, 0, false)}</b></div>
                 <div class="jauge-simple"><div style={{ width: `${Math.min(100, proj.probPerte * 100)}%` }} /></div>
-                <p class="hint">La largeur de la fourchette vient du risque ({volIA ? "prévu par l'IA, testé" : "mesuré sur 3 ans"}) ;
+                <p class="hint">La largeur de la fourchette vient du risque ({volIA ? `${nomPrev}, testé` : "mesuré sur 3 ans"}) ;
                   son centre vient de l'hypothèse de rentabilité de long terme.</p>
               </>
             )}
+            <p class="hint">{revisionInfo.date ? <>Portefeuille révisé le <b>{dateFr(revisionInfo.date)}</b>
+              {" "}· prochaine révision le <b>{dateFr(revisionInfo.prochaine.toISOString())}</b></> : <>Prochaine révision le <b>{dateFr(revisionInfo.prochaine.toISOString())}</b></>}
+              {" "}(tous les {params.rythmeRevision ?? 6} mois, réglable dans les Paramètres). Entre deux révisions, on garde les titres.</p>
             {frais && <p class="hint">Frais à l'achat : <b>{num(frais.totalFrais, 2)} €</b> ({pct(frais.partFrais, 2, false)}) pour {frais.nbOrdres} ordres.</p>}
             <Verifier href="#/parametres/calculs/risque" />
           </Card>
@@ -229,7 +256,7 @@ export function BadgeTeste({ texte = "testée" }: { texte?: string }) {
 }
 
 /** Choix de la volatilité : la prévision de l'IA n'est proposée que si elle est prouvée. */
-export function ChoixSourceVol({ volIA, dispo, fiab, libelleIA = "Prévision de l'IA" }: {
+export function ChoixSourceVol({ volIA, dispo, fiab, libelleIA }: {
   volIA: boolean; dispo: boolean; fiab: FiabiliteVol; libelleIA?: string;
 }) {
   if (!fiab.probant) {
@@ -242,9 +269,9 @@ export function ChoixSourceVol({ volIA, dispo, fiab, libelleIA = "Prévision de 
     <div class="field" style={{ marginTop: 6 }}>Risque mesuré avec
       <div class="seg full" role="group" aria-label="Source de volatilité">
         <button class={!volIA ? "on" : ""} onClick={() => ecrireParametres({ sourceVol: "historique" })}>Historique 3 ans</button>
-        <button class={volIA ? "on" : ""} disabled={!dispo} onClick={() => ecrireParametres({ sourceVol: "ia" })}>{libelleIA}</button>
+        <button class={volIA ? "on" : ""} disabled={!dispo} onClick={() => ecrireParametres({ sourceVol: "ia" })}>{libelleIA ?? `Prévision ${libelleSource(fiab.source)}`}</button>
       </div>
-      <small class="muted">Prévision de l'IA sur 6 mois <BadgeTeste />{!dispo && " · disponible après la prochaine synchronisation"}</small>
+      <small class="muted">{fiab.source === "hybride" ? "Prévision sur 6 mois : ordre des titres par l'IA, niveau par HAR" : fiab.source === "har" ? "Prévision HAR sur 6 mois" : "Prévision de l'IA sur 6 mois"} <BadgeTeste />{!dispo && " · disponible après la prochaine synchronisation"}</small>
     </div>
   );
 }
