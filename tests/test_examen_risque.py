@@ -157,3 +157,14 @@ def test_dates_revision():
     r6 = bt.dates_revision(d, 6)
     assert all(x.month in (1, 2, 7, 8) for x in r6) and len(r6) == len({(x.year, (x.month - 1) // 6) for x in d})
     assert len(bt.dates_revision(d, 12)) == len({x.year for x in d})
+
+
+def test_ia_contre_har_et_variante_har():
+    raw, syms = _donnees_examen()
+    data, ret = ex.preparer(raw, syms, None)
+    t = ex.walk_forward(data, ret, forcer_config="xgb_prudent")
+    c = ex.ia_contre_har(t)
+    assert c["decision"] in ("hybride", "har") and c["seuil"] > 0 and -1 <= c["gain"] <= 1
+    res = bt.backtest(raw, syms, None, debut="2011-01-01", pas_semaines=8, base="sp500", variantes=["har"],
+                      portefeuilles={"sharpe_max": None}, garder_poids=True)
+    assert (res["variante"] == "har").any()

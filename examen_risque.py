@@ -282,6 +282,21 @@ def comparer_hybride(t: pd.DataFrame, h: int = H) -> dict:
             "publie": publie, "decision": "hybride" if publie else "har"}
 
 
+def ia_contre_har(t: pd.DataFrame, h: int = H) -> dict:
+    """Règle 6 de la PR #27 : l'IA reste dans l'hybride seulement si elle bat HAR sur l'ORDRE des titres
+    (écart d'IC par date hybride − HAR, force de la preuve ≥ 100 %, seuil corrigé pour 5 essais)."""
+    tt = t.assign(rel=t["brut"]).dropna(subset=["lvl_hybride", "lvl_har"])
+    ic_h, ic_r = mh._ic_par_date(tt, "lvl_hybride"), mh._ic_par_date(tt, "lvl_har")
+    g = (ic_h - ic_r).dropna()
+    n_eff = max(1.0, len(g) * mh.PAS_ECHANTILLON / h)
+    seuil = mh.seuil_t(n_eff, n_candidats=5)
+    t_ic = float(g.mean() / g.std() * np.sqrt(n_eff)) if g.std() > 0 else 0.0
+    force = t_ic / seuil
+    return {"ic_hybride": float(ic_h.mean()), "ic_har": float(ic_r.mean()), "gain": float(g.mean()),
+            "part_dates_gagnantes": float((g > 0).mean()), "t": t_ic, "seuil": seuil, "force": force,
+            "n_effectif": n_eff, "ia_reste": bool(force >= 1.0), "decision": "hybride" if force >= 1.0 else "har"}
+
+
 def par_periode(t: pd.DataFrame, vix: pd.Series | None = None, ref: str = "lvl_har") -> dict:
     """Gain de l'IA (QLIKE de la référence − QLIKE de l'IA : > 0 = IA meilleure) et IC, par sous-groupe."""
     t = t.assign(rel=t["brut"])

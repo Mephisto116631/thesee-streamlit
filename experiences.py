@@ -82,6 +82,7 @@ EXPERIENCES_EXAMEN = {
     "examen_backtest_reel": "Portefeuille avec frais réels, promesse « Je limite le risque », fourchette à 1 an, PBO",
     # PR #27 (docs/METHODE.md § 4.9) : décisions de l'utilisateur après l'examen
     "examen_hybride": "Hybride : ordre des titres par l'IA, niveau par HAR ; publié s'il vaut HAR en niveau et bat la volatilité 3 mois en ordre",
+    "examen_ia_contre_har": "L'IA bat-elle HAR sur l'ordre des titres ? Sinon : HAR seul. Backtest hybride contre HAR seul (frais, révision 6 mois)",
     "examen_marge": "Marge de sécurité apprise sur le passé ; rythmes de révision mensuel, semestriel, annuel avec frais ; fourchette avec l'hybride",
 }
 DEBUT_EXAMEN = "1998-01-01"
@@ -143,13 +144,14 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
     print(f"[LABO] Examen : {data['symbol'].nunique()} titres, {data['date'].nunique()} dates depuis "
           f"{pd.Timestamp(data['date'].min()).date()}")
     t = None
-    if {"examen_references", "examen_calibration", "examen_crises", "examen_hybride"} & set(noms):
+    if {"examen_references", "examen_calibration", "examen_crises", "examen_hybride", "examen_ia_contre_har"} & set(noms):
         try:
             t = ex.walk_forward(data, ret)
             print(f"[LABO] Examen : test de {pd.Timestamp(t['date'].min()).date()} à {pd.Timestamp(t['date'].max()).date()}")
         except Exception as e:
             print(f"[LABO][ERREUR] walk-forward de l'examen : {type(e).__name__} : {e}")
-            echecs += [n for n in noms if n in ("examen_references", "examen_calibration", "examen_crises", "examen_hybride")]
+            echecs += [n for n in noms if n in ("examen_references", "examen_calibration", "examen_crises", "examen_hybride",
+                                                "examen_ia_contre_har")]
     for nom in noms:
         try:
             if nom == "examen_references" and t is not None:
@@ -197,6 +199,16 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
                 c["debut_test"] = str(pd.Timestamp(t["date"].min()).date())
                 v = "publié" if c["publie"] else "HAR seul"
                 _inserer(cli, lot, nom, v, c, ic=c["ic"]["hybride"], t=c["t_ic"], seuil=c["seuil"], n_essais=4)
+            elif nom == "examen_ia_contre_har" and t is not None:
+                c = ex.ia_contre_har(t)
+                tous = {"sharpe_max": None, "risque_15": 0.15}
+                res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",
+                                  variantes=["hybride", "har"], secteurs=secteurs, portefeuilles=tous, garder_poids=True)
+                px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
+                c["backtest"] = {f"{pf_}_{v}": bt.backtest_reel(res, px, pf_, v, revision_mois=6)
+                                 for pf_ in tous for v in ["hybride", "har"]}
+                v = "l'IA reste (hybride)" if c["ia_reste"] else "HAR seul"
+                _inserer(cli, lot, nom, v, c, ic=c["gain"], t=c["t"], seuil=c["seuil"], n_essais=5)
             elif nom == "examen_marge":
                 tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
                 res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",

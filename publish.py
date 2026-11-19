@@ -459,6 +459,11 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
         ex_h = db.get_client().table("experiences").select("diagnostics->decision,cree_le") \
             .eq("nom", "examen_hybride").order("id", desc=True).limit(1).execute().data
         decision = (ex_h[0].get("decision") if ex_h else None) or "ia"
+        # Règle 6 (§ 4.9) : si l'IA ne bat pas HAR sur l'ordre des titres, HAR seul
+        ex_r = db.get_client().table("experiences").select("diagnostics->decision") \
+            .eq("nom", "examen_ia_contre_har").order("id", desc=True).limit(1).execute().data
+        if ex_r and ex_r[0].get("decision") == "har":
+            decision = "har"
         fiab["source"] = {"hybride": "hybride", "har": "har"}.get(decision, "ia")
         niveaux = {"hybride": "har", "har": "har_seul"}.get(fiab["source"], "vol_3m")
         vol_ia = modele_risque.predire_volatilite(raw_horizon, snap["symbol"].tolist(), composition, niveaux=niveaux)

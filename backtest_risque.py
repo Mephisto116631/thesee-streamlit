@@ -102,7 +102,7 @@ def backtest(market_raw: pd.DataFrame, symboles: list[str], composition: pd.Data
     dates_rebal = toutes[::pas_semaines]
     besoin_ia = bool({"ia", "hybride"} & set(variantes))
     preds = _predictions_ia(data, dates_rebal, h) if besoin_ia else pd.DataFrame(columns=["date", "symbol", "rang_ia"])
-    har = (_niveaux_har(data, px_tout.pct_change(), dates_rebal, h) if "hybride" in variantes
+    har = (_niveaux_har(data, px_tout.pct_change(), dates_rebal, h) if {"hybride", "har"} & set(variantes)
            else pd.DataFrame(columns=["date", "symbol", "lvl_har"]))
     frontieres = {}
 
@@ -140,6 +140,8 @@ def backtest(market_raw: pd.DataFrame, symboles: list[str], composition: pd.Data
                 # Hybride : ordre de l'IA, niveaux de HAR (docs/METHODE.md § 4.9)
                 "hybride": lambda: _vol_ia(p.reindex(cand).fillna(0.5), lh.reindex(membres).dropna()
                                             if lh.notna().sum() > 20 else vol_3m).values,
+                # HAR seul : niveau ET ordre donnés par HAR (repli : volatilité historique si HAR manque)
+                "har": lambda: lh.reindex(cand).fillna(pd.Series(sd_hist, index=cand)).values,
             }
             futur = ret.iloc[i + 1:i + TENUE + 1][cand].fillna(0.0)
             for variante in variantes:
