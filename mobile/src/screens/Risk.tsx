@@ -126,7 +126,7 @@ const VERDICT_H: Record<string, { ton: string; nom: string; txt: string }> = {
 };
 
 const LIBELLES_CONFIG: Record<string, string> = {
-  xgb_prudent: "XGB prudent", xgb_standard: "XGB standard", xgb_riche: "XGB riche", lineaire: "Linéaire",
+  ensemble: "Ensemble", xgb_prudent: "XGB prudent", xgb_standard: "XGB standard", xgb_riche: "XGB riche", lineaire: "Linéaire",
 };
 // Sens de lecture des facteurs surveillés : [valeur élevée, valeur faible]
 const SENS: Record<string, [string, string, string]> = {
@@ -241,6 +241,7 @@ const NOMS_LABO: Record<string, string> = {
   risque_perte_max: "IA de risque : perte maximale", backtest_volatilite_sharpe_max: "Portefeuille avec la volatilité IA",
   backtest_volatilite_variance_min: "Portefeuille le plus calme avec la volatilité IA",
   risque_perte_max_comptes: "IA de risque : perte maximale + comptes", risque_volatilite_comptes: "IA de risque : volatilité + comptes",
+  ensemble: "Ensemble XGBoost + linéaire (cours + comptes)",
   regime_logistique: "Baisse du marché > 10 % en 6 mois (logistique)", regime_xgboost: "Baisse du marché > 10 % en 6 mois (XGBoost)",
 };
 

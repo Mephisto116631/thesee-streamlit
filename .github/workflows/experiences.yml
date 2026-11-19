@@ -33,7 +33,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           # Sur une PR : seulement le dernier essai ajouté (les autres sont déjà dans la table)
-          EXPERIENCES: ${{ inputs.experiences || 'regime_logistique,regime_xgboost' }}
+          EXPERIENCES: ${{ inputs.experiences || 'ensemble' }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python experiences.py

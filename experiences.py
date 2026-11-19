@@ -39,6 +39,8 @@ EXPERIENCES = {
     "fondamentaux": ("alpha_secteur", [], "Alpha sectoriel, cours + fondamentaux SEC", True),
     "fondamentaux_seuls": ("alpha_secteur", list(mh.FEATURES),
                            "Alpha sectoriel, fondamentaux SEC uniquement (aucun facteur de cours)", True),
+    # Algorithme 3 : ensemble XGBoost prudent + linéaire, cours + comptes, alpha sectoriel
+    "ensemble": ("alpha_secteur", [], "Ensemble XGBoost + linéaire, cours + comptes, alpha sectoriel", True, "ensemble"),
 }
 # Famille distincte : prédire le RISQUE (et non le rendement), jugé sur son gain par
 # rapport à la référence naïve (volatilité des 3 derniers mois). C'est une autre question
@@ -211,10 +213,11 @@ def main(noms: list[str]):
     for nom in [n for n in noms if n in EXPERIENCES]:
         mode, exclus, description, *opt = EXPERIENCES[nom]
         avec_sec = bool(opt and opt[0])
+        forcer = opt[1] if len(opt) > 1 else None
         for h in HORIZONS_TEST:
             try:
                 ligne, _ = mh.entrainer_horizon(raw, snap["symbol"].tolist(), h, compo, secteurs, mode, exclus,
-                                                faits_sec if avec_sec else None, splits if avec_sec else None)
+                                                faits_sec if avec_sec else None, splits if avec_sec else None, forcer)
             except Exception as e:   # une variante en échec ne doit pas empêcher les autres
                 print(f"[LABO][ERREUR] {nom} {h} : {type(e).__name__} : {e}")
                 echecs.append(f"{nom} {h}")
