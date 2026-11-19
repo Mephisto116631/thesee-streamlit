@@ -140,6 +140,14 @@ export const api = {
     return (data ?? []) as Experience[];
   }, []),
 
+  /** Révisions figées du portefeuille (1 à 2 fois par an), les plus récentes d'abord. */
+  revisions: () => cached<import("./revision").Revision[]>("revisions", async () => {
+    const { data, error } = await sb!.from("revisions_portefeuille").select("date,univers_facteurs,titres,methode")
+      .order("date", { ascending: false }).limit(3);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as any;
+  }, []),
+
   /** Examen approfondi de l'IA de volatilité : dernier résultat de chaque essai « examen_* ». */
   examen: () => cached<{ nom: string; verdict: string; diagnostics: any; cree_le: string }[]>("examen", async () => {
     const { data, error } = await sb!.from("experiences").select("nom,verdict,diagnostics,cree_le")

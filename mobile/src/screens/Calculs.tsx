@@ -24,7 +24,7 @@ function Etape({ titre, formule, definition, calcul, children }: {
 
 /** Fiche de calculs : chaque chiffre du portefeuille affiché, recalculé pas à pas (même portefeuille que l'onglet Portefeuille). */
 export function Calculs({ section }: { section?: string }) {
-  const { e, h, u: u0, choix, params: p, reco, ov, volIA } = usePortefeuilleCible();
+  const { e, h, u: u0, choix, params: p, reco, ov, volIA, fiab } = usePortefeuilleCible();
   const models = useData(api.models);
   // Ouvre et montre la section demandée par un lien « Vérifier ce calcul »
   useEffect(() => {
@@ -69,7 +69,7 @@ export function Calculs({ section }: { section?: string }) {
         <a class="back" href={section ? "#/portefeuille" : "#/analyse"} aria-label="Retour">‹</a>
         <div class="grow"><h1>Fiche de calculs</h1>
           <p class="sub">Ton portefeuille · {num(e.capital, 0)} € · {e.mode === "risque" ? `risque max ${pct(e.volMax, 0, false)}` : `objectif ${pct(e.cible, 0, false)}/an`} · {h.label}
-            {volIA ? " · risque prévu par l'IA" : ""}{e.exclus.length ? ` · ${e.exclus.length} exclu(s)` : ""}</p></div>
+            {volIA ? ` · risque prévu (${fiab.source === "hybride" ? "IA + HAR" : fiab.source === "har" ? "HAR" : "IA"})` : ""}{e.exclus.length ? ` · ${e.exclus.length} exclu(s)` : ""}</p></div>
       </header>
 
       <Card title="1. Rentabilité attendue de chaque titre" repliable id="calc-rendement" ouvert={!section || section === "rendement"}>

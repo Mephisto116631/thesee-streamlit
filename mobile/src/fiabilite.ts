@@ -19,7 +19,11 @@ export interface FiabiliteVol {
   probant: boolean; verdict: string; t: number | null; seuil: number | null; date: string | null;
   ic: number | null; icBase: number | null; gain: number | null; part: number | null;
   reel: BilanReel | null; prochainTest: Date; connu: boolean;
+  source: "ia" | "hybride" | "har";   // méthode publiée (docs/METHODE.md § 4.9)
 }
+
+/** Nom court de la méthode qui prévoit le risque. */
+export const libelleSource = (s: FiabiliteVol["source"]) => (s === "hybride" ? "IA + HAR" : s === "har" ? "HAR" : "IA");
 
 /** Re-test automatique : le 2 de chaque mois (workflow experiences.yml). */
 export function prochainReTest(maintenant = new Date()): Date {
@@ -31,12 +35,15 @@ export function prochainReTest(maintenant = new Date()): Date {
 /** Statut à partir du dernier essai du laboratoire et du bilan publié. Sans test connu : non probant. */
 export function lireFiabilite(labo: LaboVol | null | undefined, run: ModelRun | null | undefined, maintenant = new Date()): FiabiliteVol {
   const reel = (run?.diagnostics?.reel ?? null) as BilanReel | null;
+  const source = (run?.diagnostics?.labo?.source as FiabiliteVol["source"]) ?? "ia";
   return {
-    probant: labo?.verdict === "probant",
+    // HAR seul (décision de l'examen) : méthode de référence, publiée sans dépendre du test de l'IA
+    probant: source === "har" ? Boolean(run?.diagnostics?.vol_ia_publiee) : labo?.verdict === "probant",
     verdict: labo?.verdict ?? "jamais testé",
     t: labo?.t_stat ?? null, seuil: labo?.seuil_t_global ?? null, date: labo?.cree_le ?? null,
     ic: labo?.ic ?? null, icBase: labo?.ic_base ?? null, gain: labo?.gain ?? null, part: labo?.part ?? null,
     reel, prochainTest: prochainReTest(maintenant), connu: Boolean(labo),
+    source,
   };
 }
 

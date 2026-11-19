@@ -38,8 +38,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          # Sur une PR et chaque mois : le re-test de l'IA de volatilité (seul modèle publié)
-          EXPERIENCES: ${{ inputs.experiences || 'risque_volatilite' }}
+          # Sur une PR et chaque mois : re-test de l'IA de volatilité et de l'hybride IA + HAR (docs/METHODE.md § 4.9)
+          EXPERIENCES: ${{ inputs.experiences || 'risque_volatilite,examen_hybride' }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python experiences.py

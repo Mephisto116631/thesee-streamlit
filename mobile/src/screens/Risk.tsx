@@ -200,13 +200,23 @@ function ExamenApprofondi() {
           Perte QLIKE (plus bas = mieux) : IA {q(d.qlike?.ia)} · EWMA {q(d.qlike?.ewma)} · GARCH {q(d.qlike?.garch)} · HAR {q(d.qlike?.har)} ·
           volatilité 3 mois {q(d.qlike?.vol_3m)}. Contre la meilleure ({String(d.meilleure_reference ?? "").toUpperCase()}) :
           force de la preuve <b>{pct(d.dm?.[d.meilleure_reference]?.force, 0, false)}</b> du seuil.</>)}
+        {ligne("examen_hybride", "Hybride : ordre par l'IA, niveau par HAR", (v) => (v === "publié" ? "good" : "neutral"), (d) => <>
+          QLIKE : hybride {q(d.qlike?.hybride)} · HAR {q(d.qlike?.har)} · IA {q(d.qlike?.ia)}. IC : hybride {pct(d.ic?.hybride, 1, false)} contre
+          {" "}{pct(d.ic?.vol_3m, 1, false)} pour la volatilité 3 mois (force de la preuve {pct(d.force_ic, 0, false)} du seuil).
+          {d.publie ? " Publié : c'est la prévision utilisée dans l'appli." : " Non retenu : l'appli utilise HAR seul."}</>)}
+        {ligne("examen_marge", "Marge de sécurité et rythme de révision", (v) => (v.startsWith("limite tenue") ? "good" : "neutral"), (d) => {
+          const m = d.marges?.["15"], r1 = d.rythmes?.sharpe_max_1m, r6 = d.rythmes?.sharpe_max_6m;
+          return <>Limite 15 % : marge {num(m?.marge_actuelle, 2)}, tenue {pct(m?.part_respectee_avec_marge, 0, false)} des semestres
+            (sans marge : {pct(m?.part_respectee_sans_marge, 0, false)}). Révision tous les 6 mois : {num(r6?.ordres_par_an, 0)} ordres/an,
+            {" "}{pct(r6?.rendement_net, 1, false)}/an net, contre {num(r1?.ordres_par_an, 0)} ordres et {pct(r1?.rendement_net, 1, false)} chaque mois.</>;
+        })}
         {ligne("examen_calibration", "Le niveau prévu est-il juste ?", (v) => (v === "calibrée" ? "good" : "neutral"), (d) => <>
           Écart médian prévu / réel : IA {pct(d.ia?.biais_median, 0)} ; HAR {pct(d.har?.biais_median, 0)} ; volatilité 3 mois {pct(d.vol_3m?.biais_median, 0)}.</>)}
         {ligne("examen_crises", "Pendant les crises", () => "neutral", (d) => <>
           {Object.entries(d.crises ?? {}).map(([k, v]: [string, any]) => `${k} : ${v.gain_qlike > 0 ? "IA meilleure" : "IA moins bonne"}`).join(" · ")}
           {d.hors_crises && <> · hors crises : IA meilleure {pct(d.hors_crises.part_dates_gagnantes, 0, false)} des dates</>}</>)}
         {ligne("examen_placebo", "Contrôle anti-fuite (placebo)", (v) => (v === "réussi" ? "good" : "bad"), (d) => <>
-          Cible mélangée : IC {pct(d.ic_cible_melangee, 1)} (doit être ≈ 0) · fuite volontaire : IC {pct(d.ic_fuite_volontaire, 0)} (doit exploser) ·
+          Cible mélangée{d.ic_tirages ? ` (moyenne de ${d.ic_tirages.length} tirages)` : ""} : IC {pct(d.ic_cible_melangee, 1)} (doit être ≈ 0) · fuite volontaire : IC {pct(d.ic_fuite_volontaire, 0)} (doit exploser) ·
           facteur aléatoire classé {d.importance_rang_facteur_aleatoire}ᵉ sur {d.n_facteurs}.</>)}
         {ligne("examen_sensibilite", "Selon les réglages du modèle", (v) => (v.startsWith("réussi") ? "good" : "neutral"), (d) => <>
           Gain d'IC sur la référence : {Object.entries(d).map(([k, v]: [string, any]) => `${k} ${pct(v.gain, 1)}`).join(" · ")}.</>)}

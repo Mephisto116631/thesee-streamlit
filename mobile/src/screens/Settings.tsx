@@ -156,7 +156,16 @@ export function Settings() {
             95 % = fourchette plus large, plus prudente.</small>
         </div>
         <Champ p={p} k="seuilReequilibrage" label="Seuil de rééquilibrage" min={10} max={60} pas={1} decimales={0}
-          aide="En hold, rééquilibrer (une fois par an) dès qu'une ligne dépasse ce poids à cause de sa hausse." />
+          aide="Entre deux révisions, rééquilibrer seulement si une ligne dépasse ce poids à cause de sa hausse." />
+        <div class="param">
+          <span class="param-tete"><span>Révision du portefeuille conseillé</span></span>
+          <div class="seg full" role="group" aria-label="Rythme de révision">
+            {([6, 12] as const).map((r) => <button class={(p.rythmeRevision ?? 6) === r ? "on" : ""}
+              onClick={() => ecrireParametres({ rythmeRevision: r })}>{r === 6 ? "Tous les 6 mois" : "Tous les ans"}</button>)}
+          </div>
+          <small>Le portefeuille conseillé ne change qu'à ces dates (janvier, et juillet si 6 mois). Suivre chaque mois la
+            recommandation du jour coûtait environ 180 ordres par an, soit 3 à 5 points de rendement en frais (backtest 2006-2026).</small>
+        </div>
       </Card>
 
       <Card title="Quand un indicateur est-il bon ou mauvais ?" repliable ouvert={false}>
