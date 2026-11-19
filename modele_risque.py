@@ -14,6 +14,7 @@
 import numpy as np
 import pandas as pd
 
+import fondamentaux_sec as fsec
 import modele_horizon as mh
 
 CIBLES_RISQUE = {
@@ -78,6 +79,7 @@ def evaluer_risque(data: pd.DataFrame, h: int, feats: list[str] | None = None) -
     n_eff = max(1.0, len(gain) / max(1.0, h / mh.PAS_ECHANTILLON))
     t_gain = float(gain.mean() / gain.std() * np.sqrt(n_eff)) if gain.std() > 0 else 0.0
     return {
+        "controles": mh.sens_facteurs(t, feats),
         "horizon_jours": h, "ic_moyen": float(ic_m.mean()), "ic_base": float(ic_b.mean()),
         "gain": float(gain.mean()), "t_stat": t_gain, "n_effectif": float(n_eff),
         "part_dates_gagnantes": float((gain > 0).mean()), "fenetres": fenetres,
@@ -86,26 +88,43 @@ def evaluer_risque(data: pd.DataFrame, h: int, feats: list[str] | None = None) -
 
 
 def entrainer_risque(market_raw: pd.DataFrame, symboles: list[str], nom: str, genre: str,
-                     composition: pd.DataFrame | None = None) -> dict:
+                     composition: pd.DataFrame | None = None, faits_sec: pd.DataFrame | None = None,
+                     splits: pd.DataFrame | None = None) -> dict:
+    """Évalue l'IA de risque. Avec `faits_sec` : ajoute les comptes publiés des entreprises
+    (endettement, rentabilité, accruals, émissions…) aux facteurs de cours."""
     h = mh.HORIZONS[nom]
     px, X = mh.caracteristiques(market_raw, symboles)
     if X.empty:
         return {}
+    feats = list(mh.FEATURES)
+    couverture = None
+    if faits_sec is not None:
+        fd = fsec.caracteristiques_fondamentales(faits_sec, px, splits, pd.DatetimeIndex(X["date"].unique()))
+        couverture = {f: float(fd[f].notna().mean()) for f in fsec.FEATURES_FD}
+        for f in fsec.FEATURES_FD:
+            fd[f] = fd.groupby("date")[f].rank(pct=True).fillna(0.5)
+        fd["date"] = fd["date"].astype(X["date"].dtype)
+        X = X.merge(fd, on=["date", "symbol"], how="left")
+        X[fsec.FEATURES_FD] = X[fsec.FEATURES_FD].fillna(0.5)
+        feats += fsec.FEATURES_FD
     Y = cible_risque(px, pd.DatetimeIndex(X["date"].unique()), h, genre)
     data = X.merge(Y, on=["date", "symbol"]).dropna(subset=mh.FEATURES + ["y"])
     if composition is not None:
-        filtre = mh.membres_a_date(data, composition)
+        filtre = mh.membres_a_date(data, composition, False, feats)
         if not filtre.empty:
             data = filtre
-    ev = evaluer_risque(data, h)
+    ev = evaluer_risque(data, h, feats)
     if not ev:
         return {}
-    config, _ = mh.choisir_config(data, h)
-    m = mh._modele(config).fit(data[mh.FEATURES], data["y"])
+    config, _ = mh.choisir_config(data, h, feats)
+    m = mh._modele(config).fit(data[feats], data["y"])
     ev["config"] = config
     ev["cible"] = genre
+    ev["facteurs_utilises"] = feats
+    if couverture is not None:
+        ev["couverture_fondamentaux"] = couverture
     ev["importance"] = sorted([{"feature": f, "label": mh.LABELS[f], "importance": float(v)}
-                               for f, v in zip(mh.FEATURES, mh._importances(m, config))],
+                               for f, v in zip(feats, mh._importances(m, config))],
                               key=lambda d: -d["importance"])
     return ev
 

@@ -13,10 +13,6 @@ export interface Parametres extends HypothesesModele {
   // Projection et suivi
   confiance: number;      // part des scénarios dans la fourchette affichée (0.8 / 0.9 / 0.95)
   seuilReequilibrage: number; // rééquilibrer si une ligne dépasse ce poids
-  // Mode court terme
-  ctNbTitres: number;     // nombre de titres retenus
-  ctScoreMin: number;     // score IA minimal (rang 0..1)
-  ctRotation: "semaine" | "mois";
 }
 
 // Valeurs par défaut = celles du serveur (portefeuille.py) et d'un courtier sans frais.
@@ -34,9 +30,6 @@ export const PARAMETRES_DEFAUT: Parametres = {
   deviseOrdres: "EUR",
   confiance: 0.9,
   seuilReequilibrage: 0.25,
-  ctNbTitres: 8,
-  ctScoreMin: 0.8,
-  ctRotation: "mois",
   sourceVol: "historique",
 };
 

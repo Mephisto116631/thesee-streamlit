@@ -3,10 +3,10 @@ import { api, getFavoris, type Snapshot } from "../api";
 import { Chip, HelpButton, Loading, OfflineNote, useData, RefreshButton } from "../components";
 import { pct, prix, signClass } from "../format";
 
-type Tri = "symbol" | "chg_1d" | "chg_20d" | "chg_1y" | "rsi_14" | "proba_hausse";
+type Tri = "symbol" | "chg_1d" | "chg_20d" | "chg_1y" | "vol_ia" | "vol_ia_calme";
 const TRIS: { k: Tri; label: string }[] = [
-  { k: "symbol", label: "A → Z" }, { k: "chg_1d", label: "Var. jour" }, { k: "chg_20d", label: "1 mois" },
-  { k: "chg_1y", label: "1 an" }, { k: "rsi_14", label: "RSI" }, { k: "proba_hausse", label: "Signal IA" },
+  { k: "chg_1d", label: "Aujourd'hui" }, { k: "chg_20d", label: "1 mois" }, { k: "chg_1y", label: "1 an" },
+  { k: "vol_ia_calme", label: "Les plus calmes (IA)" }, { k: "vol_ia", label: "Les plus agités (IA)" }, { k: "symbol", label: "A → Z" },
 ];
 
 export function Market({ go }: { go: (h: string) => void }) {
@@ -29,8 +29,8 @@ export function Market({ go }: { go: (h: string) => void }) {
       (secteur === "Tous" || r.secteur === secteur) &&
       (indice === "Tous" || r.indice === indice) &&
       (!favOnly || favoris.includes(r.symbol)));
-    out = [...out].sort((a, b) => tri === "symbol" ? a.symbol.localeCompare(b.symbol)
-      : ((b[tri] as number | null) ?? -Infinity) - ((a[tri] as number | null) ?? -Infinity));
+    const val = (r: Snapshot) => (tri === "vol_ia_calme" ? -(r.vol_ia ?? Infinity) : ((r as any)[tri] as number | null) ?? -Infinity);
+    out = [...out].sort((a, b) => tri === "symbol" ? a.symbol.localeCompare(b.symbol) : val(b) - val(a));
     return out;
   }, [rows, q, secteur, indice, tri, favOnly]);
 
@@ -39,10 +39,12 @@ export function Market({ go }: { go: (h: string) => void }) {
   return (
     <div class="screen">
       <header class="screen-head">
-        <div><h1>Marché</h1><p class="sub">{rows.length} titres · S&P 500, Nasdaq-100, ETF</p></div>
+        <div><h1>Quels titres bougent ?</h1><p class="sub">{rows.length} titres suivis · S&P 500, Nasdaq-100, ETF</p></div>
         <RefreshButton />
-        <HelpButton keys={["chg_20d", "rsi_14", "volatility", "proba_hausse"]}
-          intro={<p>Chaque carte montre le prix, la variation du jour (bord gauche <span class="up">vert</span> = hausse, <span class="down">rouge</span> = baisse) et <b>4 étiquettes</b> : performance 1 mois · RSI · volatilité · signal IA. <span class="badge good">vert</span> favorable, <span class="badge neutral">gris</span> neutre, <span class="badge bad">rouge</span> défavorable, <span class="badge info">bleu</span> excès à surveiller.</p>} />
+        <HelpButton keys={["chg_20d", "rsi_14", "volatility"]}
+          intro={<p>Chaque ligne montre le prix et la variation du jour (bord gauche <span class="up">vert</span> = hausse,
+            <span class="down"> rouge</span> = baisse), puis : la performance sur 1 mois, le RSI (élan récent, « Relative Strength Index »)
+            et le <b>risque</b> : volatilité des 3 dernières années et, en gras, celle que prévoit l'IA pour les 6 prochains mois.</p>} />
       </header>
       <OfflineNote res={snap.res} />
 
@@ -84,8 +86,7 @@ function Row({ r, go, fav }: { r: Snapshot; go: (h: string) => void; fav: boolea
           <div class="mchips">
             <Chip k="chg_20d" v={r.chg_20d} label="1 mois" value={pct(r.chg_20d, 0)} />
             <Chip k="rsi_14" v={r.rsi_14} label="RSI" />
-            <Chip k="volatility" v={r.volatility} label="Vol" />
-            <Chip k="proba_hausse" v={r.proba_hausse} label="IA" />
+            <Chip k="volatility" v={r.vol_ia ?? r.volatility} label={r.vol_ia != null ? "Risque IA" : "Risque"} />
           </div>
         </div>
         <div class="row-side"><span>{prix(r.close)}</span><span class={signClass(r.chg_1d)}>{pct(r.chg_1d)}</span></div>

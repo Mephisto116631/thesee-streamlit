@@ -24,6 +24,7 @@ import fondamentaux_sec as fsec  # noqa: E402
 import modele_horizon as mh  # noqa: E402
 import modele_risque as mr   # noqa: E402
 import backtest_risque as bt  # noqa: E402
+import modele_regime as mreg  # noqa: E402
 from publish import _clean   # noqa: E402
 
 # nom -> (mode de cible, facteurs retirés, description[, fondamentaux SEC])
@@ -45,10 +46,18 @@ EXPERIENCES = {
 EXPERIENCES_RISQUE = {
     "risque_volatilite": ("volatilite", "IA de risque : volatilité future, comparée à la volatilité passée"),
     "risque_perte_max": ("perte_max", "IA de risque : perte maximale future, comparée à la volatilité passée"),
+    # Algorithme 1 : le risque de chute vient souvent des bilans fragiles -> comptes SEC publiés à chaque date
+    "risque_perte_max_comptes": ("perte_max", "IA de risque : perte maximale future, avec les comptes des entreprises (SEC)", True),
+    "risque_volatilite_comptes": ("volatilite", "IA de risque : volatilité future, avec les comptes des entreprises (SEC)", True),
 }
 # Famille « portefeuille » : backtest mensuel du portefeuille construit avec la volatilité IA
 EXPERIENCES_PORTEFEUILLE = {
     "backtest_volatilite": "Portefeuille rééquilibré chaque mois avec la volatilité IA, comparé à l'historique 3 ans et aux 3 derniers mois",
+}
+# Famille « régime de marché » : probabilité d'une baisse du S&P 500 de plus de 10 % en 6 mois
+EXPERIENCES_REGIME = {
+    "regime_logistique": ("logistique", "Régime de marché : régression logistique (coefficients lisibles)"),
+    "regime_xgboost": ("xgboost", "Régime de marché : XGBoost prudent"),
 }
 HORIZONS_TEST = ["6m", "1a"]
 
@@ -92,12 +101,56 @@ def verdict_labo(ic, t, n_eff, seuil) -> str:
 def main(noms: list[str]):
     t0 = time.time()
     cli = db.get_client()
+    lot = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M")
+    deja = cli.table("experiences").select("nom,horizon").execute().data or []
+    echecs = []
+
+    # Régime de marché : séries de marché seules (S&P 500, VIX, FRED), pas besoin des 500 titres
+    regime = [n for n in noms if n in EXPERIENCES_REGIME]
+    if regime:
+        n_regime = len({r["nom"] for r in deja if r["nom"] in EXPERIENCES_REGIME} | set(regime))
+        try:
+            d = mreg.telecharger()
+            m = mreg.mensuel(mreg.caracteristiques(d), mreg.cible(d))
+            print(f"[LABO] Régime : {len(m)} mois depuis {m.index.min().date()}, baisses > 10 % : {int(m['y'].sum())}")
+        except Exception as e:
+            print(f"[LABO][ERREUR] données régime : {type(e).__name__} : {e}")
+            echecs += regime
+            regime = []
+        for nom in regime:
+            modele, description = EXPERIENCES_REGIME[nom]
+            try:
+                ev = mreg.evaluer(m, modele)
+                ev["explication"] = mreg.explication(m, modele)
+                ev["aujourdhui"] = mreg.probabilite_du_jour(d, modele)
+            except Exception as e:
+                print(f"[LABO][ERREUR] {nom} : {type(e).__name__} : {e}")
+                echecs.append(nom)
+                continue
+            seuil = mh.seuil_t(ev.get("n_effectif"), n_candidats=n_regime)
+            v = ("probant" if ev.get("auc", 0) > 0.6 and ev.get("gain_logloss", 0) > 0
+                 and ev.get("n_effectif", 0) >= mh.MIN_PERIODES_SIGNAL and ev.get("t_stat", 0) > seuil else "non probant")
+            cli.table("experiences").insert(_clean({
+                "lot": lot, "nom": nom, "horizon": "6m", "description": description,
+                "ic": ev.get("auc"), "t_stat": ev.get("t_stat"), "seuil_t_global": seuil,
+                "n_essais": n_regime, "verdict": v, "diagnostics": ev,
+            })).execute()
+            print(f"[LABO] {nom} : AUC {ev.get('auc', 0):.3f}, gain log-loss {ev.get('gain_logloss', 0):+.4f}, "
+                  f"t {ev.get('t_stat', 0):.2f} (seuil {seuil:.2f}) -> {v} ; aujourd'hui {ev['aujourdhui']['proba']:.1%}")
+    noms = [n for n in noms if n not in EXPERIENCES_REGIME]
+    if not noms:
+        print(f"[LABO] Terminé en {time.time() - t0:.0f} s")
+        if echecs:
+            sys.exit(f"Variantes en échec : {', '.join(echecs)}")
+        return
+
     snap = pd.DataFrame(cli.table("titres_snapshot").select("symbol,secteur").execute().data)
     symboles = sorted(set(snap["symbol"]) | {mh.INDICE})
     print(f"[LABO] {len(symboles)} titres, essais : {', '.join(noms)} × {', '.join(HORIZONS_TEST)}")
     raw, splits = charger_cours(symboles)
     faits_sec = None
-    if any(n in EXPERIENCES and len(EXPERIENCES[n]) > 3 and EXPERIENCES[n][3] for n in noms):
+    if any((n in EXPERIENCES and len(EXPERIENCES[n]) > 3 and EXPERIENCES[n][3])
+           or (n in EXPERIENCES_RISQUE and len(EXPERIENCES_RISQUE[n]) > 2 and EXPERIENCES_RISQUE[n][2]) for n in noms):
         t1 = time.time()
         faits_sec = fsec.telecharger([s for s in symboles if s != mh.INDICE])
         print(f"[LABO] SEC : {len(faits_sec)} chiffres publiés, {faits_sec['symbol'].nunique()} entreprises, "
@@ -105,13 +158,10 @@ def main(noms: list[str]):
     compo = mh.charger_composition()
     secteurs = dict(zip(snap["symbol"], snap["secteur"]))
 
-    deja = cli.table("experiences").select("nom,horizon").execute().data or []
     tous = {(r["nom"], r["horizon"]) for r in deja} | {(n, h) for n in noms for h in HORIZONS_TEST}
-    n_essais = len({e for e in tous if e[0] not in EXPERIENCES_RISQUE and not e[0].startswith("backtest")})
+    n_essais = len({e for e in tous if e[0] not in EXPERIENCES_RISQUE and e[0] not in EXPERIENCES_REGIME
+                    and not e[0].startswith("backtest")})
     n_essais_risque = len({e for e in tous if e[0] in EXPERIENCES_RISQUE})
-    lot = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M")
-
-    echecs = []
     for nom in [n for n in noms if n in EXPERIENCES_PORTEFEUILLE]:
         try:
             res = bt.backtest(raw, snap["symbol"].tolist(), compo)
@@ -135,10 +185,12 @@ def main(noms: list[str]):
             print(f"[LABO] {nom}_{nom_pf} : vol réelle {vs} ; IA vs 3 ans {comp} -> {v}")
 
     for nom in [n for n in noms if n in EXPERIENCES_RISQUE]:
-        genre, description = EXPERIENCES_RISQUE[nom]
+        genre, description, *opt_r = EXPERIENCES_RISQUE[nom]
+        sec_r = bool(opt_r and opt_r[0])
         for h in HORIZONS_TEST:
             try:
-                d = mr.entrainer_risque(raw, snap["symbol"].tolist(), h, genre, compo)
+                d = mr.entrainer_risque(raw, snap["symbol"].tolist(), h, genre, compo,
+                                        faits_sec if sec_r else None, splits if sec_r else None)
             except Exception as e:
                 print(f"[LABO][ERREUR] {nom} {h} : {type(e).__name__} : {e}")
                 echecs.append(f"{nom} {h}")
@@ -190,7 +242,7 @@ def main(noms: list[str]):
 
 if __name__ == "__main__":
     choix = os.environ.get("EXPERIENCES", "").strip()
-    connues = list(EXPERIENCES) + list(EXPERIENCES_RISQUE) + list(EXPERIENCES_PORTEFEUILLE)
+    connues = list(EXPERIENCES) + list(EXPERIENCES_RISQUE) + list(EXPERIENCES_PORTEFEUILLE) + list(EXPERIENCES_REGIME)
     noms = connues if choix in ("", "toutes") else [n.strip() for n in choix.split(",")]
     inconnues = [n for n in noms if n not in connues]
     if inconnues:

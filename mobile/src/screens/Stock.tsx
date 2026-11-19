@@ -1,7 +1,8 @@
-import { useCallback, useState } from "preact/hooks";
-import { api, getFavoris, toggleFavori } from "../api";
-import { Card, ChartBox, cssVar, HelpButton, Loading, RangeBar, Stat, useData, ZoneBadge } from "../components";
+import { useCallback, useEffect, useState } from "preact/hooks";
+import { api, getFavoris, lirePositions, type Position, toggleFavori, utilisateurCourant } from "../api";
+import { Card, ChartBox, cssVar, HelpButton, Loading, RangeBar, Stat, useData, Verifier } from "../components";
 import { dateFr, num, pct, prix, signClass } from "../format";
+import { usePortefeuilleCible } from "./Portfolio";
 
 const FONDA = ["roe", "margin", "ev_ebitda", "debt_eq"] as const;
 
@@ -9,13 +10,10 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
   const snap = useData(api.snapshot);
   const med = useData(api.medians);
   const prices = useData(() => api.prices([symbol]), [symbol]);
-  const sig = useData(() => api.signal(symbol), [symbol]);
-  const models = useData(api.models);
   const [fav, setFav] = useState(getFavoris().includes(symbol));
 
   const s = snap.data?.find((x) => x.symbol === symbol);
   const m = med.data?.find((x) => x.secteur === s?.secteur);
-  const model = models.data?.find((x) => x.kind === (s?.is_etf ? "etf" : "actions"));
   const pts = (prices.data ?? []).filter((p) => p.symbol === symbol);
 
   const chartCfg = useCallback(() => {
@@ -39,8 +37,6 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
 
   const pos52 = s.high_52w && s.low_52w && s.high_52w > s.low_52w ? (s.close - s.low_52w) / (s.high_52w - s.low_52w) : null;
   const aFonda = FONDA.some((k) => s[k] !== null && s[k] !== undefined);
-  const facteurs = sig.data?.facteurs ?? [];
-  const maxImpact = Math.max(1e-9, ...facteurs.map((f) => Math.abs(f.impact)));
 
   return (
     <div class="screen">
@@ -50,7 +46,7 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
           <h1>{s.symbol} <button class="fav" onClick={() => setFav(toggleFavori(symbol).includes(symbol))} aria-label="Favori">{fav ? "★" : "☆"}</button></h1>
           <p class="sub">{s.nom} · {s.secteur}</p>
         </div>
-        <HelpButton keys={["rsi_14", "chg_20d", "volatility", "pct_vs_ma50", "roe", "margin", "ev_ebitda", "debt_eq", "z_score", "proba_hausse"]}
+        <HelpButton keys={["rsi_14", "chg_20d", "volatility", "pct_vs_ma50", "roe", "margin", "ev_ebitda", "debt_eq", "z_score"]}
           intro={<p>Chaque jauge montre la valeur du titre (trait vertical) dans sa fourchette d'interprétation, et la <b>médiane du secteur</b> (◆) pour comparer aux pairs.</p>} />
       </header>
 
@@ -60,7 +56,9 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
         <span class="muted">clôture du {dateFr(s.date)}</span>
       </div>
 
-      <Card title="Cours sur 1 an">
+      <DansMonPortefeuille symbol={symbol} />
+
+      <Card title="Comment évolue son cours ?">
         {pts.length ? <ChartBox config={chartCfg} label={`Cours de ${symbol} sur un an`} /> : <Loading />}
         <div class="stats">
           <Stat label="1 semaine" value={pct(s.chg_5d)} cls={signClass(s.chg_5d)} tone={sgnTone(s.chg_5d)} />
@@ -75,7 +73,18 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
         )}
       </Card>
 
-      <Card title="Technique">
+      <Card title="Quel risque ?">
+        <div class="stats">
+          <Stat label="Risque des 3 dernières années" value={pct(s.volatility, 0, false)} sub="volatilité par an" />
+          <Stat label="Risque prévu par l'IA" value={s.vol_ia != null ? pct(s.vol_ia, 0, false) : "—"} sub="6 prochains mois"
+            tone={s.vol_ia == null || s.volatility == null ? "" : s.vol_ia < s.volatility ? "good" : "bad"} />
+        </div>
+        <p class="hint">La volatilité dit de combien le cours s'écarte en général sur un an. L'IA de risque, testée sur 2013-2026,
+          prévoit mieux le risque à venir que la simple volatilité passée.</p>
+        <Verifier href="#/risque/ia" label="Voir comment l'IA de risque est testée" />
+      </Card>
+
+      <Card title="Indicateurs techniques" repliable ouvert={false}>
         <RangeBar k="chg_20d" v={s.chg_20d} median={m?.chg_20d} />
         <RangeBar k="rsi_14" v={s.rsi_14} median={m?.rsi_14} />
         <RangeBar k="pct_vs_ma50" v={s.pct_vs_ma50} />
@@ -83,43 +92,20 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
       </Card>
 
       {!s.is_etf && (
-        <Card title="Fondamentaux">
+        <Card title="Est-il rentable et cher ?" repliable ouvert={false}>
           {aFonda ? FONDA.map((k) => <RangeBar k={k} v={s[k]} median={m?.[k]} />) : (
-            <p class="hint">Fondamentaux non suivis pour ce titre : l'API gratuite Alpha Vantage limite le suivi à une liste de titres « core » (modifiable dans <code>utils.py</code>).</p>
+            <p class="hint">Pas de données de rentabilité pour ce titre : la source gratuite utilisée n'en fournit que pour une douzaine de titres.</p>
           )}
         </Card>
       )}
 
       {!s.is_etf && (s.z_score !== null || s.rating_sp) && (
-        <Card title="Crédit & bilan">
+        <Card title="Est-il solide financièrement ?" repliable ouvert={false}>
           {s.z_score !== null && <RangeBar k="z_score" v={s.z_score} />}
           {s.rating_sp && <p>Note S&P : <b>{s.rating_sp}</b> {isIG(s.rating_sp) ? <span class="badge good">Investment Grade</span> : <span class="badge bad">High Yield</span>}</p>}
         </Card>
       )}
 
-      <Card title="Signal IA (jour suivant)">
-        {model && model.verdict !== "signal" && (
-          <div class="note warn">Fiabilité du modèle : <ZoneBadge k="gain_pts" v={model.gain_pts} /> — à lire comme une indication, pas comme une recommandation.</div>
-        )}
-        <RangeBar k="proba_hausse" v={sig.data?.proba_hausse ?? s.proba_hausse} />
-        {facteurs.length > 0 && (
-          <>
-            <h3 class="h3">Ce qui influence le signal</h3>
-            <ul class="factors">
-              {facteurs.map((f) => (
-                <li>
-                  <div class="f-label">{f.label} <small class="muted">({num(f.valeur, 3)})</small></div>
-                  <div class="f-bar"><div class={`f-fill ${f.impact >= 0 ? "pos" : "neg"}`}
-                    style={{ width: `${(Math.abs(f.impact) / maxImpact) * 50}%`, [f.impact >= 0 ? "left" : "right"]: "50%" }} /></div>
-                  <div class={`f-txt ${f.impact >= 0 ? "up" : "down"}`}>{f.impact >= 0 ? "pousse à la hausse" : "pousse à la baisse"}</div>
-                </li>
-              ))}
-            </ul>
-            <p class="hint">Contributions SHAP : de combien chaque facteur déplace la prédiction par rapport à la moyenne.</p>
-          </>
-        )}
-        <button class="link" onClick={() => go("#/risque/ia")}>Comment le modèle est évalué ›</button>
-      </Card>
     </div>
   );
 }
@@ -128,4 +114,23 @@ const sgnTone = (v: number | null | undefined) => (v == null ? "" : v > 0 ? "goo
 
 export function isIG(r: string) {
   return ["AAA", "AA+", "AA", "AA-", "A+", "A", "A-", "BBB+", "BBB", "BBB-"].includes(r);
+}
+
+/** Ce titre dans mon portefeuille conseillé et dans mes positions : tout au même endroit. */
+function DansMonPortefeuille({ symbol }: { symbol: string }) {
+  const { e, lignes } = usePortefeuilleCible();
+  const [mes, setMes] = useState<Position[] | null>(null);
+  useEffect(() => { utilisateurCourant().then((u) => { if (u) lirePositions().then((p) => setMes(p.filter((x) => x.symbol === symbol))).catch(() => {}); }); }, [symbol]);
+  const conseil = lignes.find((l) => l.symbol === symbol);
+  const qte = (mes ?? []).reduce((a, x) => a + x.quantite, 0);
+  if (!conseil && !qte) return null;
+  return (
+    <Card title="Dans mon portefeuille" class="tint-accent">
+      <div class="stats">
+        <Stat label="Part conseillée" value={conseil ? pct(conseil.poids, 1, false) : "0 %"} sub={conseil ? `${num(conseil.poids * e.capital, 2)} € sur ${num(e.capital, 0)} €` : "pas retenu"} />
+        {qte > 0 && <Stat label="Je possède" value={num(qte, 4)} sub="actions" />}
+      </div>
+      <Verifier href="#/portefeuille" label="Voir le portefeuille" />
+    </Card>
+  );
 }

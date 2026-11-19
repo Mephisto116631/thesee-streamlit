@@ -164,8 +164,6 @@ export function Calculs({ section }: { section?: string }) {
         <Etape titre="IA de risque" formule="volatilité prévue = classement IA du risque → niveau des volatilités 3 mois du moment"
           definition={<>L'IA classe les titres du plus calme au plus agité pour les 6 prochains mois ; chaque rang reçoit le niveau de volatilité
             correspondant parmi les titres actuels. Testée sur 2013-2026 : meilleure que la volatilité passée sur 91 % des dates.</>} />
-        <Etape titre="Mode court terme" formule="poidsᵢ = (1 / volᵢ) / Σ (1 / volⱼ), plafonné"
-          definition={<>Chaque titre reçoit une part inversement proportionnelle à son risque : les titres calmes pèsent plus.</>} />
       </Card>
     </div>
   );
