@@ -422,3 +422,4 @@ input[type="range"] { width: 100%; margin: 10px 0 2px; accent-color: var(--accen
 .form-position .reglages { margin-top: 8px; }
 .form-position .more { margin-top: 10px; }
 .link.down { color: var(--down); }
+.nowrap { white-space: nowrap; }

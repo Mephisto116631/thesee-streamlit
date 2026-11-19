@@ -10,7 +10,10 @@ import { monteCarlo, portfolioStats, returnsMatrix } from "../portfolio";
  * Complète la projection « log-normale » : elle reprend les vraies queues de
  * distribution (krachs, journées extrêmes) au lieu d'une loi théorique.
  */
-export function MonteCarlo({ lignes, capital, annees }: { lignes: { symbol: string; poids: number }[]; capital: number; annees: number }) {
+export function MonteCarlo({ lignes, capital, annees, volCible, source }: {
+  lignes: { symbol: string; poids: number }[]; capital: number; annees: number;
+  volCible?: number; source?: string;   // volatilité du portefeuille choisie (historique ou IA)
+}) {
   const syms = lignes.map((l) => l.symbol);
   const prices = useData(() => api.prices(syms), [syms.join(",")]);
   const jours = Math.max(21, Math.min(1260, Math.round(annees * 252)));
@@ -23,8 +26,14 @@ export function MonteCarlo({ lignes, capital, annees }: { lignes: { symbol: stri
     const brut = ok.map((s) => poids.get(s) ?? 0);
     const tot = brut.reduce((a, b) => a + b, 0) || 1;
     const st = portfolioStats(R, brut.map((w) => w / tot));
-    return { mc: monteCarlo(st.returns, capital, jours, 1000), nJours: R.length };
-  }, [prices.data, capital, jours, syms.join(",")]);
+    // Mise à l'échelle : les journées tirées gardent leur forme (krachs, queues épaisses) mais
+    // leur amplitude correspond à la volatilité retenue pour le portefeuille.
+    const moy = st.returns.reduce((a, b) => a + b, 0) / st.returns.length;
+    const et = Math.sqrt(st.returns.reduce((a, b) => a + (b - moy) ** 2, 0) / st.returns.length);
+    const k = volCible && et > 0 ? volCible / Math.sqrt(252) / et : 1;
+    const jours_ = st.returns.map((r) => moy + (r - moy) * k);
+    return { mc: monteCarlo(jours_, capital, jours, 1000), nJours: R.length, k };
+  }, [prices.data, capital, jours, syms.join(","), volCible]);
 
   const cfg = useCallback(() => {
     const mc = calc!.mc;
@@ -57,8 +66,8 @@ export function MonteCarlo({ lignes, capital, annees }: { lignes: { symbol: stri
       </div>
       <p class="verdict">Probabilité de finir en perte : <b class={mc.probPerte > 0.3 ? "down" : ""}>{pct(mc.probPerte, 0, false)}</b></p>
       <p class="hint">1 000 trajectoires de {jours} jours de bourse, tirées au hasard parmi les {calc.nJours} rendements quotidiens réels
-        de l'année passée. Plus réaliste pour les journées extrêmes que la projection théorique, mais suppose que l'année à venir
-        ressemble à la dernière.</p>
+        de l'année passée{volCible ? <>, ramenés à la volatilité du portefeuille ({pct(volCible, 0, false)}, {source ?? "historique"})</> : null}.
+        Plus réaliste pour les journées extrêmes que la projection théorique ; il ne prédit pas le marché, il montre l'éventail des résultats possibles.</p>
     </>
   );
 }

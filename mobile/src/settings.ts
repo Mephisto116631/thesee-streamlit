@@ -37,6 +37,7 @@ export const PARAMETRES_DEFAUT: Parametres = {
   ctNbTitres: 8,
   ctScoreMin: 0.8,
   ctRotation: "mois",
+  sourceVol: "historique",
 };
 
 const KEY = "thesee:parametres:v1";
