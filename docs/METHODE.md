@@ -189,7 +189,7 @@ nettement moins bien.
 |---|---|---|
 | Lignes | TRV 19 %, TRGP 13 %, STT 11 %, VTRS 9 %, GWW 8 %, MU 8 %, STX 7 %, AMD 6 %, TWLO 5 %, LITE 5 %, OKTA 5 %, FTNT 5 % | BNY 18 %, MU 12 %, WELL 11 %, CRWD 10 %, EBAY 8 %, WMT 7 %, CAH 7 %, MCK 7 %, TRV 6 %, MO 6 %, ECHO 4 %, CBOE 4 % |
 | Premier secteur | Technologie 41 % | Finance 28 % |
-| Secteurs représentés | 6 | 8 |
+| Secteurs représentés | 5 | 7 |
 | Risque attendu (volatilité) | 20,6 % | 15,5 % |
 | Rentabilité de long terme (hypothèse CAPM) | 14,1 % | 12,2 % |
 | Données publiées pour l'appli | covariance 40 x 40 | 494 titres, 20 facteurs, 83 Ko |
