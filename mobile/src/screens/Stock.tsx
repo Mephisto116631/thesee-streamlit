@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
-import { api, getFavoris, lirePositions, type Position, toggleFavori, utilisateurCourant } from "../api";
+import { api, getFavoris, lirePositions, type Position, type SectorMedian, type Snapshot, toggleFavori, utilisateurCourant } from "../api";
 import { Card, ChartBox, cssVar, HelpButton, Loading, RangeBar, Stat, useData, Verifier } from "../components";
 import { dateFr, num, pct, prix, signClass } from "../format";
-import { usePortefeuilleCible } from "./Portfolio";
+import { BadgeTeste, usePortefeuilleCible } from "./Portfolio";
+import { useFiabiliteVol } from "../fiabilite";
+import { coursVC, enPerte, per } from "../valorisation";
 
 const FONDA = ["roe", "margin", "ev_ebitda", "debt_eq"] as const;
 
@@ -11,6 +13,7 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
   const med = useData(api.medians);
   const prices = useData(() => api.prices([symbol]), [symbol]);
   const [fav, setFav] = useState(getFavoris().includes(symbol));
+  const fiab = useFiabiliteVol();
 
   const s = snap.data?.find((x) => x.symbol === symbol);
   const m = med.data?.find((x) => x.secteur === s?.secteur);
@@ -37,6 +40,8 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
 
   const pos52 = s.high_52w && s.low_52w && s.high_52w > s.low_52w ? (s.close - s.low_52w) / (s.high_52w - s.low_52w) : null;
   const aFonda = FONDA.some((k) => s[k] !== null && s[k] !== undefined);
+  // Prévision de l'IA montrée seulement si son dernier test est probant
+  const volIA = fiab.probant ? s.vol_ia ?? null : null;
 
   return (
     <div class="screen">
@@ -76,11 +81,12 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
       <Card title="Quel risque ?">
         <div class="stats">
           <Stat label="Risque des 3 dernières années" value={pct(s.volatility, 0, false)} sub="volatilité par an" />
-          <Stat label="Risque prévu par l'IA" value={s.vol_ia != null ? pct(s.vol_ia, 0, false) : "—"} sub="6 prochains mois"
-            tone={s.vol_ia == null || s.volatility == null ? "" : s.vol_ia < s.volatility ? "good" : "bad"} />
+          {volIA != null && <Stat label={<>Risque prévu par l'IA <BadgeTeste /></>} value={pct(volIA, 0, false)} sub="6 prochains mois"
+            tone={s.volatility == null ? "" : volIA < s.volatility ? "good" : "bad"} />}
         </div>
-        <p class="hint">La volatilité dit de combien le cours s'écarte en général sur un an. L'IA de risque, testée sur 2013-2026,
-          prévoit mieux le risque à venir que la simple volatilité passée.</p>
+        <p class="hint">La volatilité dit de combien le cours s'écarte en général sur un an.
+          {fiab.probant ? " L'IA de risque prévoit mieux le risque à venir que la simple volatilité passée (testée sur 2013-2026, re-testée chaque mois)."
+            : fiab.connu ? " La prévision de l'IA n'est pas affichée : son dernier test n'est pas probant." : ""}</p>
         <Verifier href="#/risque/ia" label="Voir comment l'IA de risque est testée" />
       </Card>
 
@@ -92,9 +98,14 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
       </Card>
 
       {!s.is_etf && (
-        <Card title="Est-il rentable et cher ?" repliable ouvert={false}>
-          {aFonda ? FONDA.map((k) => <RangeBar k={k} v={s[k]} median={m?.[k]} />) : (
-            <p class="hint">Pas de données de rentabilité pour ce titre : la source gratuite utilisée n'en fournit que pour une douzaine de titres.</p>
+        <Card title="Est-il cher, rentable, solide ?" repliable id="valorisation">
+          {s.comptes_date ? <Valorisation s={s} m={m} /> : aFonda ? (
+            <>
+              {FONDA.map((k) => <RangeBar k={k} v={s[k]} median={m?.[k]} />)}
+              <p class="hint">Source : Alpha Vantage (comptes officiels SEC non disponibles pour ce titre).</p>
+            </>
+          ) : (
+            <p class="hint">Non disponible : pas de comptes officiels SEC pour ce titre (entreprise étrangère, ou comptes non encore publiés).</p>
           )}
         </Card>
       )}
@@ -107,6 +118,56 @@ export function Stock({ symbol, go }: { symbol: string; go: (h: string) => void 
       )}
 
     </div>
+  );
+}
+
+type Sens = "prix" | "haut" | "bas";
+/** Une ligne : valeur du titre, médiane du secteur, et un mot de comparaison. */
+function LigneValo({ nom, aide, v, med, fmt, sens }: {
+  nom: string; aide: string; v: number | null | undefined; med: number | null | undefined; fmt: (x: number) => string; sens: Sens;
+}) {
+  let mot = "", ton = "";
+  if (v != null && med != null && Math.abs(med) > 1e-9) {
+    const r = v / med;
+    const plus = r > 1.2, moins = r < 0.8;
+    if (sens === "prix") { mot = plus ? "plus cher" : moins ? "moins cher" : "comme le secteur"; }
+    else if (sens === "haut") { mot = plus ? "mieux" : moins ? "moins bien" : "comme le secteur"; ton = plus ? "up" : moins ? "down" : ""; }
+    else { mot = plus ? "plus élevé" : moins ? "plus faible" : "comme le secteur"; ton = plus ? "down" : moins ? "up" : ""; }
+  }
+  return (
+    <tr>
+      <td><b>{nom}</b><br /><small class="muted">{aide}</small></td>
+      <td class="nowrap"><b>{v == null ? "n.d." : fmt(v)}</b></td>
+      <td class="nowrap">{med == null ? "n.d." : fmt(med)}</td>
+      <td class={ton}>{mot}</td>
+    </tr>
+  );
+}
+
+/** Valorisation d'après les comptes officiels déposés à la SEC : des faits, pas une prévision. */
+function Valorisation({ s, m }: { s: Snapshot; m: SectorMedian | undefined }) {
+  const x = (d: number) => `${num(d, 1)}`;
+  const p = (d: number) => pct(d, 0, false);
+  return (
+    <>
+      <table class="table small valo">
+        <thead><tr><th></th><th>Ce titre</th><th>Secteur<br /><small>médiane</small></th><th></th></tr></thead>
+        <tbody>
+          {enPerte(s) ? (
+            <tr><td><b>PER</b><br /><small class="muted">cours / bénéfice par action</small></td><td colSpan={3}>en perte sur le dernier exercice</td></tr>
+          ) : <LigneValo nom="PER" aide="cours / bénéfice par action (années de bénéfice payées)" v={per(s)} med={m?.per} fmt={x} sens="prix" />}
+          <LigneValo nom="Cours / valeur comptable" aide="prix payé pour 1 $ de fonds propres" v={coursVC(s)} med={m?.cours_vc} fmt={x} sens="prix" />
+          <LigneValo nom="ROE" aide="Return on Equity : bénéfice / fonds propres" v={s.roe_sec} med={m?.roe_sec} fmt={p} sens="haut" />
+          <LigneValo nom="Rentabilité brute" aide="marge brute / actifs" v={s.rentabilite_brute} med={m?.rentabilite_brute} fmt={p} sens="haut" />
+          <LigneValo nom="Endettement" aide="part des actifs financée par la dette" v={s.endettement} med={m?.endettement} fmt={p} sens="bas" />
+          <LigneValo nom="Bénéfice encaissé" aide="trésorerie d'exploitation / bénéfice" v={s.part_encaissee} med={m?.part_encaissee} fmt={p} sens="haut" />
+        </tbody>
+      </table>
+      <p class="hint">Comptes officiels annuels déposés à la SEC (Securities and Exchange Commission), publiés le <b>{dateFr(s.comptes_date!)}</b> ;
+        PER et cours / valeur comptable au cours du jour. « n.d. » : non disponible.</p>
+      <div class="note">Pour <b>comprendre</b> le titre, pas pour choisir : au laboratoire, ces ratios n'ont pas prédit la performance
+        sur 2012-2026 (les titres « pas chers » ont même fait un peu moins bien).</div>
+    </>
   );
 }
 

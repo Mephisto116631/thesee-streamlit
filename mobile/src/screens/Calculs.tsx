@@ -24,7 +24,7 @@ function Etape({ titre, formule, definition, calcul, children }: {
 
 /** Fiche de calculs : chaque chiffre du portefeuille affiché, recalculé pas à pas (même portefeuille que l'onglet Portefeuille). */
 export function Calculs({ section }: { section?: string }) {
-  const { e, h, u: u0, choix, params: p, reco, ov } = usePortefeuilleCible();
+  const { e, h, u: u0, choix, params: p, reco, ov, volIA } = usePortefeuilleCible();
   const models = useData(api.models);
   // Ouvre et montre la section demandée par un lien « Vérifier ce calcul »
   useEffect(() => {
@@ -38,7 +38,7 @@ export function Calculs({ section }: { section?: string }) {
 
   // Même univers que le portefeuille affiché : titres exclus retirés, volatilités IA si choisies
   const su = sousUnivers(u0, e.exclus);
-  const u = p.sourceVol === "ia" ? avecVolIA(su) : su;
+  const u = volIA ? avecVolIA(su) : su;
   const pt = choix.point;
   const mu = rendementsAttendus(u, p);
   const idx = new Map(u.symbols.map((s, i) => [s, i]));
@@ -65,7 +65,7 @@ export function Calculs({ section }: { section?: string }) {
         <a class="back" href={section ? "#/portefeuille" : "#/analyse"} aria-label="Retour">‹</a>
         <div class="grow"><h1>Fiche de calculs</h1>
           <p class="sub">Ton portefeuille · {num(e.capital, 0)} € · {e.mode === "risque" ? `risque max ${pct(e.volMax, 0, false)}` : `objectif ${pct(e.cible, 0, false)}/an`} · {h.label}
-            {p.sourceVol === "ia" ? " · risque prévu par l'IA" : ""}{e.exclus.length ? ` · ${e.exclus.length} exclu(s)` : ""}</p></div>
+            {volIA ? " · risque prévu par l'IA" : ""}{e.exclus.length ? ` · ${e.exclus.length} exclu(s)` : ""}</p></div>
       </header>
 
       <Card title="1. Rentabilité attendue de chaque titre" repliable id="calc-rendement" ouvert={!section || section === "rendement"}>
@@ -98,7 +98,7 @@ export function Calculs({ section }: { section?: string }) {
         <Etape titre="Volatilité" formule="σ = √( Σᵢ Σⱼ wᵢ × wⱼ × covᵢⱼ )"
           definition={<>Le risque : de combien la valeur s'écarte en général de sa tendance sur un an (σ = 15 % : une année « normale » finit
             entre −15 % et +15 % autour de la moyenne). <b>covᵢⱼ</b> = covariance, mesure de combien deux titres montent et baissent ensemble.
-            {p.sourceVol === "ia" && " Ici les volatilités de chaque titre sont celles prévues par l'IA, les corrélations restent historiques."}</>}
+            {volIA && " Ici les volatilités de chaque titre sont celles prévues par l'IA, les corrélations restent historiques."}</>}
           calcul={<>variance = {num(variance, 5)} → σ = <b>{pct(vol, 2, false)}</b> par an</>}>
           <p class="hint">La covariance (Ledoit-Wolf, 3 ans) tient compte des titres qui montent et baissent ensemble : le risque du portefeuille est inférieur à la moyenne des risques.</p>
         </Etape>

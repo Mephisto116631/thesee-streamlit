@@ -324,3 +324,36 @@ end $$;
 
 -- V10 — Volatilité prévue par l'IA de risque (6 mois) pour chaque titre suivi
 alter table titres_snapshot add column if not exists vol_ia double precision;
+
+-- V11 — Suivi en conditions réelles de l'IA de volatilité : la prévision de chaque titre est
+-- enregistrée une fois par semaine, puis comparée 6 mois plus tard à la volatilité observée.
+create table if not exists suivi_volatilite (
+    date        date not null,              -- séance de la prévision
+    symbol      text not null,
+    vol_prevue  double precision not null,  -- volatilité annuelle prévue par l'IA (6 mois)
+    vol_3m      double precision,           -- référence naïve : volatilité des 3 derniers mois
+    primary key (date, symbol)
+);
+alter table suivi_volatilite enable row level security;
+do $$ begin
+    if not exists (select 1 from pg_policies where schemaname = 'public'
+                   and tablename = 'suivi_volatilite' and policyname = 'lecture publique') then
+        create policy "lecture publique" on suivi_volatilite for select to anon, authenticated using (true);
+    end if;
+end $$;
+
+-- V12 — Valorisation depuis les comptes officiels déposés à la SEC (mise à jour hebdomadaire)
+alter table titres_snapshot add column if not exists bpa_sec double precision;          -- bénéfice par action annuel
+alter table titres_snapshot add column if not exists vc_action_sec double precision;    -- fonds propres par action
+alter table titres_snapshot add column if not exists roe_sec double precision;          -- bénéfice / fonds propres
+alter table titres_snapshot add column if not exists rentabilite_brute double precision; -- marge brute / actifs
+alter table titres_snapshot add column if not exists endettement double precision;      -- 1 − fonds propres / actifs
+alter table titres_snapshot add column if not exists part_encaissee double precision;   -- trésorerie d'exploitation / bénéfice
+alter table titres_snapshot add column if not exists comptes_date date;                 -- publication des comptes utilisés
+alter table titres_snapshot add column if not exists sec_maj timestamptz;
+alter table sector_medians add column if not exists per double precision;
+alter table sector_medians add column if not exists cours_vc double precision;
+alter table sector_medians add column if not exists roe_sec double precision;
+alter table sector_medians add column if not exists rentabilite_brute double precision;
+alter table sector_medians add column if not exists endettement double precision;
+alter table sector_medians add column if not exists part_encaissee double precision;

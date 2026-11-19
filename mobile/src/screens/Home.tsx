@@ -4,7 +4,7 @@ import { Card, Details, Info, Loading, OfflineNote, RangeBar, ReglagesButton, Re
 import { dateFr, ilYA, num, pb, pct, ratioPct } from "../format";
 import { zoneIndex } from "../ranges";
 import { useParametres } from "../settings";
-import { usePortefeuilleCible } from "./Portfolio";
+import { BadgeTeste, usePortefeuilleCible } from "./Portfolio";
 
 const EURUSD_SECOURS = 1.08;
 
@@ -106,11 +106,12 @@ function Conseil({ go }: { go: (h: string) => void }) {
   return (
     <Card title="Portefeuille conseillé" class="tint-accent" right={<button class="link" onClick={() => go("#/portefeuille")}>Ouvrir ›</button>}>
       <p class="verdict" style={{ marginTop: 0 }}>Pour <b>{num(e.capital, 0)} €</b> sur <b>{h.label}</b> :
-        {" "}{lignes.length} titres, rentabilité attendue <b>{pct(pt.rendement, 1, false)}</b> par an.</p>
+        {" "}{lignes.length} titres, risque <b>{pct(pt.volatilite, 0, false)}</b> par an{volIA ? " (prévu par l'IA, testé)" : ""},
+        rentabilité de long terme <b>{pct(pt.rendement, 1, false)}</b> par an (hypothèse).</p>
       <div class="stats">
-        <Stat label="Volatilité" value={pct(pt.volatilite, 0, false)} sub={volIA ? "prévue par l'IA" : "historique 3 ans"} tone={toneOf("volatility", pt.volatilite)} />
+        <Stat label="Volatilité" value={pct(pt.volatilite, 0, false)} sub={volIA ? <>prévue par l'IA <BadgeTeste /></> : "historique 3 ans"} tone={toneOf("volatility", pt.volatilite)} />
         <Stat label="Rendement / risque" value={<>{ratioPct(pt.rendement, pt.volatilite)}<Info>Pour 1 point de volatilité supporté,
-          {" "}{num(pt.rendement / pt.volatilite, 2)} point de rentabilité attendue par an.</Info></>} tone={pt.rendement / pt.volatilite >= 0.6 ? "good" : "neutral"} />
+          {" "}{num(pt.rendement / pt.volatilite, 2)} point de rentabilité de long terme par an (hypothèse CAPM).</Info></>} tone={pt.rendement / pt.volatilite >= 0.6 ? "good" : "neutral"} />
       </div>
       <Verifier href="#/parametres/calculs/risque" />
     </Card>

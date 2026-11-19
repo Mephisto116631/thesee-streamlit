@@ -42,6 +42,8 @@ CONCEPTS = {
     "cout_ventes": (["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold"], "USD", "annuel"),
     "flux_exploitation": (["NetCashProvidedByUsedInOperatingActivities"], "USD", "annuel"),
     "actions": (["dei:EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"], "shares", "instant"),
+    # Bénéfice par action dilué (même valeur pour toutes les catégories d'actions, ex. Alphabet A/C)
+    "bpa": (["EarningsPerShareDiluted", "EarningsPerShareBasic"], "USD/shares", "annuel"),
 }
 FEATURES_FD = ["fd_rentabilite", "fd_rendement_benef", "fd_valeur_comptable", "fd_levier",
                "fd_croissance_actifs", "fd_emissions", "fd_accruals"]
@@ -227,3 +229,111 @@ def caracteristiques_fondamentales(faits: pd.DataFrame, px_ajuste: pd.DataFrame,
     ech["fd_accruals"] = (ech["resultat_net"] - ech["flux_exploitation"]) / actifs
     ech["fd_levier"] = 1 - ech["fonds_propres"] / actifs                 # 0,8 = 80 % des actifs financés par des dettes
     return ech[["date", "symbol"] + FEATURES_FD].replace([np.inf, -np.inf], np.nan)
+
+
+# ------------------------------------------------------------------------------
+# VALORISATION ACTUELLE (affichée dans l'appli) : comptes annuels officiels les plus
+# récents, rapportés au cours du jour. Ce sont des FAITS publiés, pas des prévisions.
+# ------------------------------------------------------------------------------
+COLONNES_VALO = ["bpa_sec", "vc_action_sec", "roe_sec", "rentabilite_brute", "endettement",
+                 "part_encaissee", "comptes_date"]
+
+
+def _divisions_apres(splits: pd.DataFrame | None, symbol: str, depuis) -> float:
+    """Produit des divisions d'actions survenues après `depuis` (1 si aucune)."""
+    if splits is None or splits.empty or pd.isna(depuis):
+        return 1.0
+    g = splits[(splits["symbol"] == symbol) & (_ns(splits["date"]) > pd.Timestamp(depuis)) & (splits["ratio"] > 0)]
+    return float(np.prod(g["ratio"])) if len(g) else 1.0
+
+
+def valorisation_actuelle(faits: pd.DataFrame, prix: pd.Series, splits: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Une ligne par titre :
+      bpa_sec          bénéfice par action annuel (corrigé des divisions d'actions postérieures)
+      vc_action_sec    valeur comptable (fonds propres) par action
+      roe_sec          ROE (Return on Equity) = bénéfice / fonds propres
+      rentabilite_brute marge brute / actifs
+      endettement      1 − fonds propres / actifs (part des actifs financée par la dette)
+      part_encaissee   trésorerie d'exploitation / bénéfice (1 = bénéfice entièrement encaissé)
+      comptes_date     date de publication des comptes utilisés
+    Le PER (Price Earnings Ratio) = cours / bpa_sec et le cours / valeur comptable =
+    cours / vc_action_sec se recalculent à chaque cours (l'appli le fait)."""
+    if faits is None or faits.empty:
+        return pd.DataFrame(columns=["symbol"] + COLONNES_VALO)
+    faits = faits.assign(symbol=faits["symbol"].astype(str), end=_ns(faits["end"]), filed=_ns(faits["filed"]),
+                         val=pd.to_numeric(faits["val"], errors="coerce"))
+    if splits is not None and not splits.empty:
+        splits = splits.assign(symbol=splits["symbol"].astype(str), date=_ns(splits["date"]))
+    dern = {}
+    for var in ["actifs", "fonds_propres", "resultat_net", "marge_brute", "chiffre_affaires", "cout_ventes",
+                "flux_exploitation", "actions", "bpa"]:
+        d = _dernier_connu(faits, var).sort_values("filed").groupby("symbol").tail(1).set_index("symbol")
+        dern[var] = d
+    lignes = []
+    for s in sorted(set(faits["symbol"])):
+        def v(var):
+            d = dern[var]
+            return float(d.at[s, "val"]) if s in d.index and pd.notna(d.at[s, "val"]) else np.nan
+
+        def fin(var):
+            d = dern[var]
+            return d.at[s, "end"] if s in d.index else pd.NaT
+        actifs, fp, rn = v("actifs"), v("fonds_propres"), v("resultat_net")
+        marge = v("marge_brute")
+        if np.isnan(marge):
+            marge = v("chiffre_affaires") - v("cout_ventes")
+        bpa = v("bpa") / _divisions_apres(splits, s, fin("bpa"))
+        # Nombre d'actions : celui implicite du bénéfice (bénéfice / BPA, toutes catégories
+        # d'actions confondues), sinon celui publié en couverture, corrigé des divisions
+        if rn > 0 and v("bpa") > 0:
+            n_actions = rn / bpa
+        else:
+            n_actions = v("actions") * _divisions_apres(splits, s, fin("actions"))
+        filed = [dern[k].at[s, "filed"] for k in ("resultat_net", "fonds_propres", "actifs") if s in dern[k].index]
+        lignes.append({
+            "symbol": s,
+            "bpa_sec": bpa,
+            "vc_action_sec": fp / n_actions if fp > 0 and n_actions > 0 else np.nan,
+            "roe_sec": rn / fp if fp > 0 else np.nan,
+            "rentabilite_brute": marge / actifs if actifs > 0 else np.nan,
+            "endettement": 1 - fp / actifs if actifs > 0 and not np.isnan(fp) else np.nan,
+            "part_encaissee": v("flux_exploitation") / rn if rn > 0 else np.nan,
+            "comptes_date": max(filed) if filed else pd.NaT,
+        })
+    out = pd.DataFrame(lignes)
+    # Garde-fous contre les erreurs d'unité ou de balise : valeurs absurdes -> non disponible
+    px = prix.reindex(out["symbol"]).values
+    # BPA négatif conservé (entreprise en perte : « PER non significatif ») ; PER > 1000 = erreur
+    per = px / out["bpa_sec"].values
+    out.loc[(out["bpa_sec"] > 0) & ~((per > 0) & (per <= 1000)), "bpa_sec"] = np.nan
+    pb = px / out["vc_action_sec"].values
+    out.loc[(pb <= 0) | (pb > 500) | ~np.isfinite(pb), "vc_action_sec"] = np.nan
+    out.loc[out["roe_sec"].abs() > 5, "roe_sec"] = np.nan
+    out.loc[~out["endettement"].between(-0.5, 1.5), "endettement"] = np.nan
+    out.loc[out["part_encaissee"].abs() > 20, "part_encaissee"] = np.nan
+    return out.replace([np.inf, -np.inf], np.nan)
+
+
+def divisions_recentes(symboles: list[str], depuis: str) -> pd.DataFrame:
+    """Divisions d'actions depuis `depuis` (Yahoo) : pour corriger le BPA publié avant une division."""
+    import yfinance as yf
+    frames = []
+    for i in range(0, len(symboles), 100):
+        lot = symboles[i:i + 100]
+        try:
+            d = yf.download(lot, start=depuis, progress=False, auto_adjust=False, actions=True, threads=True)
+            if d is None or d.empty or "Stock Splits" not in d.columns.get_level_values(0):
+                continue
+            sp = d["Stock Splits"]
+            if isinstance(sp, pd.Series):
+                sp = sp.to_frame(lot[0])
+            sp = sp.stack().rename("ratio").reset_index()
+            sp.columns = ["date", "symbol", "ratio"]
+            frames.append(sp[sp["ratio"] > 0])
+        except Exception as e:
+            print(f"[SEC][WARN] divisions Yahoo, lot {lot[:3]}... : {e}")
+    if not frames:
+        return pd.DataFrame(columns=["symbol", "date", "ratio"])
+    out = pd.concat(frames, ignore_index=True)
+    out["date"] = pd.to_datetime(out["date"]).dt.tz_localize(None)
+    return out

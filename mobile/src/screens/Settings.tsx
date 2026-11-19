@@ -8,6 +8,8 @@ import { Relance } from "./Relance";
 import { ecrireParametres, nbModifies, PARAMETRES_DEFAUT, type Parametres, PRESET_TRADE_REPUBLIC, useParametres } from "../settings";
 import { BUILD, definirTelechargementAuto, estNatif, mo, tailleCache, telechargementAuto, VERSION, verifierMiseAJour, viderCache } from "../update";
 import { proposerMiseAJour } from "./MiseAJourDialogue";
+import { univers as universFiable, useFiabiliteVol } from "../fiabilite";
+import { ChoixSourceVol } from "./Portfolio";
 
 /** Champ numérique : la valeur stockée est une fraction, affichée en % si `pctAff`. */
 function Champ({ label, aide, k, p, pctAff = true, min, max, pas, decimales = 2 }: {
@@ -43,8 +45,9 @@ export function Settings() {
   const p = useParametres();
   const reco = useData(api.portefeuilleReco);
   const sync = useData(api.lastSync);
-  const u = reco.data?.univers as Univers | undefined;
-  const apercu = useMemo(() => (u ? frontiere(u, p, 10) : []), [u, p.tauxSansRisque, p.primeRisque, p.poidsHistorique, p.poidsMax, p.nMaxLignes, p.poidsMin, p.sourceVol]);
+  const fiab = useFiabiliteVol();
+  const u = universFiable(reco.data?.univers as Univers | undefined, fiab);
+  const apercu = useMemo(() => (u ? frontiere(u, p, 10) : []), [u, p.tauxSansRisque, p.primeRisque, p.poidsHistorique, p.poidsMax, p.nMaxLignes, p.poidsMin, p.sourceVol, fiab.probant]);
   const bt = useData(api.backtestVol);
   const impossible = p.poidsMax * p.nMaxLignes < 1 - 1e-9;
   const [maj, setMaj] = useState<{ etat: "idle" | "cherche" | "ok" | "erreur"; msg?: string }>({ etat: "idle" });
@@ -98,17 +101,11 @@ export function Settings() {
       </Card>
 
       <Card title="Comment je mesure le risque ?" repliable ouvert={false}>
-        <div class="field">Volatilité utilisée pour construire le portefeuille
-          <div class="seg full" role="group" aria-label="Source de volatilité">
-            <button class={p.sourceVol !== "ia" ? "on" : ""} onClick={() => ecrireParametres({ sourceVol: "historique" })}>Historique 3 ans</button>
-            <button class={p.sourceVol === "ia" ? "on" : ""} disabled={!u?.vol_ia?.length}
-              onClick={() => ecrireParametres({ sourceVol: "ia" })}>Prévue par l'IA</button>
-          </div>
-        </div>
+        <ChoixSourceVol volIA={p.sourceVol === "ia" && Boolean(u?.vol_ia?.length)} dispo={Boolean(u?.vol_ia?.length)} fiab={fiab}
+          libelleIA="Prévue par l'IA" />
         <p class="hint">L'IA de risque prévoit la volatilité des 6 prochains mois de chaque titre (corrélations : 3 ans d'historique).
-          {!u?.vol_ia?.length && " Disponible après la prochaine synchronisation du serveur."}
-          {" "}Les deux volatilités restent affichées dans la liste des titres du portefeuille Hold.</p>
-        {bt.data?.diagnostics?.variantes && (
+          Elle n'est proposée que si son dernier test est probant ; elle est re-testée chaque mois et suivie en conditions réelles.</p>
+        {fiab.probant && bt.data?.diagnostics?.variantes && (
           <>
             <h3 class="h3">Ce qu'aurait donné chaque choix (backtest {bt.data.diagnostics.n_mois} mois depuis 2013)</h3>
             <table class="table small">
