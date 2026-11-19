@@ -199,6 +199,51 @@ très bien la volatilité future) : seul ce gain est testé.
      l'hybride puis avec HAR seul est rapporté : risque réel, rendement net, limite tenue. C'est un constat, pas une condition.
 - **Résultats** : § 7.
 
+### 4.10 Essai « XGBoost sur le niveau de volatilité » (protocole écrit le 20/11/2026, AVANT tout résultat)
+- **Question (demande de l'utilisateur)** : l'IA actuelle apprend le **rang** du jour (`y` = rang du risque relatif). Elle ignore donc le niveau
+  global (un krach double toutes les volatilités sans changer les rangs) et emprunte celui de HAR. Un XGBoost qui prévoit directement
+  le **niveau** apporte-t-il quelque chose que HAR n'a pas ?
+- **Hypothèses**
+  - H0 : à information égale, XGBoost n'améliore pas la QLIKE de HAR (différence nulle ou en faveur de HAR).
+  - H1 : XGBoost, en corrigeant HAR à partir de variables supplémentaires, a une QLIKE plus basse que HAR.
+- **Variantes** (2 essais, ajoutés à la famille « références », qui en compte déjà 5 : seuil corrigé pour **7**)
+  - **B (hypothèse principale)** : cible `ln(σ réalisée 6 mois) − ln(σ HAR)`. Niveau prévu = `σ HAR × exp(prévision) × lissage`.
+  - **A (diagnostic)** : cible `ln(σ réalisée 6 mois)`, sans HAR comme point de départ. Niveau prévu = `exp(prévision) × lissage`.
+  - A n'est pas candidat à la publication seul. Si A ≈ B, l'ancrage sur HAR n'apporte rien ; si A ≪ B, HAR est indispensable.
+- **Variables** (toutes connues à la date t) : les rangs de `modele_horizon.FEATURES`, plus des niveaux en logarithme :
+  `ln σ 3 mois`, `ln σ EWMA`, `ln σ 5 jours`, `ln σ 22 jours`, `ln σ HAR`, **niveau de marché** (médiane du jour de `ln σ 3 mois`) et sa
+  **dispersion** (écart-type du jour).
+- **Modèle** : XGBoost « prudent » fixe (300 arbres, profondeur 2). **Aucun réglage choisi sur les données** : pas de degré de liberté en plus.
+- **Lissage** : prévoir un logarithme sous-estime la variance moyenne. Facteur `sqrt(moyenne(exp(2 × résidu)))`, calculé sur les résidus
+  d'entraînement de chaque fenêtre. Limite assumée : résidus d'entraînement trop petits (sur-apprentissage), donc lissage possiblement
+  insuffisant. **Pas de retouche après coup** : le biais éventuel est rapporté.
+- **Protocole** : identique à `examen_risque.walk_forward` (membres du S&P 500 à chaque date, 4 fenêtres de test depuis 2008, embargo de la durée
+  de l'horizon, HAR ajusté sur le passé seulement, 919 dates). Mêmes dates de test que l'examen de la PR #26.
+- **Règles de décision, fixées AVANT l'essai**
+  1. **Niveau (primaire)** : Diebold-Mariano sur la QLIKE, B contre HAR. B bat HAR si `force = −t / seuil ≥ 100 %` (seuil de Student corrigé pour 7).
+  2. **Placebo** : même modèle B entraîné sur une cible mélangée. Il ne doit pas battre HAR (force < 100 % ET écart de QLIKE ≥ 0). Sinon : fuite ou
+     défaut du banc d'essai, on arrête et on cherche, et le résultat 1 est écarté.
+  3. **Crises** : QLIKE de B / QLIKE de HAR en 2008-2009 et en 2020, rapport ≤ 1,10 dans les deux. Sinon B est écartée même si la règle 1 est vraie
+     (le défaut connu de l'IA est la sous-estimation dans les chocs).
+  4. **Ordre** : IC de B (classement des niveaux prévus) rapporté contre HAR (74,9 %) et l'hybride (78,3 %). Constat, pas condition.
+  5. **Calibration** : biais médian et par décile rapportés, constat.
+  6. **Publication** : les règles 1, 2 et 3 réunies rendent B *candidate* au remplacement du niveau HAR dans l'hybride. Elle ne change **rien** à
+     l'appli sans une décision écrite de l'utilisateur et une PR séparée (essai de laboratoire seulement).
+- **Lecture d'un échec (à l'avance)**
+
+| Observation | Conclusion | Suite possible (nouvel essai, compté) |
+|---|---|---|
+| B ≈ HAR (force entre −100 % et +100 %) | HAR contient déjà l'information utile ; XGBoost n'apporte que l'ordre | Rien : HAR + IA pour l'ordre reste le meilleur choix |
+| B moins bonne que HAR (force ≥ 100 % pour HAR) | Sur-apprentissage ou lissage insuffisant | Modèle de plus faible capacité (régression ridge sur les logs) |
+| B meilleure en moyenne mais ratio > 1,10 en crise | Dépendance au régime | Ajouter VIX / régime de marché aux variables |
+| Placebo qui gagne | Fuite ou artefact du banc d'essai | Arrêt, recherche de la fuite |
+| A ≈ B | L'ancrage sur HAR ne compte pas | — |
+| A ≪ B | HAR indispensable ; XGBoost seul ne sait pas poser le niveau | — |
+
+- **Limites déclarées** : biais du survivant partiel (Yahoo ne couvre pas les titres disparus) ; cibles à 6 mois qui se chevauchent (Newey-West, décalage
+  de 25 semaines) ; HAR de la phase d'entraînement évalué sur ses propres données ; une seule période de test (2008-2026).
+- **Résultats** : à venir (§ 8).
+
 ## 5. Résultats du backtest de la base large (PR #25)
 
 Expérience `backtest_base_large`, lancée le 19/11/2026 :
