@@ -286,16 +286,10 @@ def valorisation_actuelle(faits: pd.DataFrame, prix: pd.Series, splits: pd.DataF
         if np.isnan(marge):
             marge = v("chiffre_affaires") - v("cout_ventes")
         bpa = v("bpa") / _divisions_apres(splits, s, fin("bpa"))
-        actions_couv = v("actions") * _divisions_apres(splits, s, fin("actions"))
-        # Nombre d'actions : celui implicite du bénéfice (bénéfice / BPA, toutes catégories
-        # d'actions confondues), sinon celui publié en couverture, corrigé des divisions
-        if rn > 0 and v("bpa") > 0:
-            n_actions = rn / bpa
-        else:
-            n_actions = actions_couv
-        # BPA non publié (souvent : plusieurs catégories d'actions) -> bénéfice / actions en couverture
-        if np.isnan(bpa) and not np.isnan(rn) and actions_couv > 0:
-            bpa = rn / actions_couv
+        # Nombre d'actions : SEULEMENT celui implicite du bénéfice (bénéfice / BPA, toutes catégories
+        # d'actions confondues, bénéfice ou perte). Le nombre publié en couverture ne compte souvent
+        # qu'une catégorie d'actions (Visa : PER de 8 au lieu de 30) : pas fiable, donc pas utilisé.
+        n_actions = rn / bpa if rn * bpa > 0 else np.nan
         filed = [dern[k].at[s, "filed"] for k in ("resultat_net", "fonds_propres", "actifs") if s in dern[k].index]
         lignes.append({
             "symbol": s,

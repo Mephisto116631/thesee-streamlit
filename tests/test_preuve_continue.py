@@ -139,10 +139,12 @@ def test_bpa_d_une_autre_categorie_d_actions_ecarte():
     assert abs(v["roe_sec"] - 0.2) < 1e-9                      # les ratios sans action restent justes
 
 
-def test_repli_sans_bpa_publie_et_balise_de_repli():
-    # Pas de BPA publié : bénéfice 80 / 20 actions en couverture = 4 $ -> PER 15
+def test_sans_bpa_publie_non_disponible_et_balise_de_repli():
+    # Pas de BPA publié : le nombre d'actions en couverture ne compte souvent qu'une catégorie
+    # d'actions (Visa) -> PER et cours / valeur comptable « non disponible » plutôt que faux
     v = fsec.valorisation_actuelle(_faits(actions=20.0), pd.Series({"AAA": 60.0})).iloc[0]
-    assert v["bpa_sec"] == 4.0
+    assert pd.isna(v["bpa_sec"]) and pd.isna(v["vc_action_sec"])
+    assert abs(v["roe_sec"] - 0.2) < 1e-9
     # Bénéfice publié sous une balise de repli (résultat des activités poursuivies)
     v = fsec.valorisation_actuelle(_faits(eps=4.0, balise_rn="IncomeLossFromContinuingOperations"),
                                    pd.Series({"AAA": 60.0})).iloc[0]
