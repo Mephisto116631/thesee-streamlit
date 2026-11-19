@@ -80,7 +80,7 @@ CONFIGS = {
 }
 CONFIG_DEFAUT = "xgb_standard"
 PART_VALIDATION = 0.3              # dernière part du passé servant à choisir le réglage
-LIBELLES_CONFIGS = {"ensemble": "Ensemble XGBoost + linéaire", "xgb_prudent": "XGBoost prudent", "xgb_standard": "XGBoost standard",
+LIBELLES_CONFIGS = {"cnn": "CNN sur les courbes", "ensemble": "Ensemble XGBoost + linéaire", "xgb_prudent": "XGBoost prudent", "xgb_standard": "XGBoost standard",
                     "xgb_riche": "XGBoost riche", "lineaire": "Linéaire (ridge)"}
 
 
@@ -220,6 +220,9 @@ class Ensemble:
 def _modele(config: str = CONFIG_DEFAUT):
     if config == "ensemble":
         return Ensemble()
+    if config == "cnn":
+        from modele_cnn import CNN   # PyTorch : seulement pour le laboratoire
+        return CNN()
     c = CONFIGS[config]
     if config == "lineaire":
         from sklearn.linear_model import Ridge
@@ -229,7 +232,7 @@ def _modele(config: str = CONFIG_DEFAUT):
 
 
 def _importances(m, config: str) -> np.ndarray:
-    if config == "ensemble":
+    if config in ("ensemble", "cnn"):
         return m.feature_importances_
     if config == "lineaire":
         v = np.abs(m.coef_)
@@ -309,7 +312,8 @@ def ic_par_regime(t: pd.DataFrame) -> dict:
     return out
 
 
-def evaluer(data: pd.DataFrame, h: int, feats: list[str] | None = None, forcer_config: str | None = None) -> dict:
+def evaluer(data: pd.DataFrame, h: int, feats: list[str] | None = None, forcer_config: str | None = None,
+            pas_jours: int = PAS_ECHANTILLON) -> dict:
     """Walk-forward avec embargo de h jours entre entraînement et test."""
     feats = feats or FEATURES
     dates = np.sort(data["date"].unique())
@@ -341,7 +345,7 @@ def evaluer(data: pd.DataFrame, h: int, feats: list[str] | None = None, forcer_c
     ic_multi = _ic_par_date(t, "multi")
     # Les dates se chevauchent (cible sur h jours, une date par semaine) :
     # nombre effectif d'observations indépendantes ≈ n_dates / (h / 5).
-    n_eff = max(1.0, len(ic) / max(1.0, h / PAS_ECHANTILLON))
+    n_eff = max(1.0, len(ic) / max(1.0, h / pas_jours))
     t_stat = float(ic.mean() / ic.std() * np.sqrt(n_eff)) if ic.std() > 0 else 0.0
     t_mom = float(ic_mom.mean() / ic_mom.std() * np.sqrt(n_eff)) if len(ic_mom) and ic_mom.std() > 0 else 0.0
     t_multi = float(ic_multi.mean() / ic_multi.std() * np.sqrt(n_eff)) if len(ic_multi) and ic_multi.std() > 0 else 0.0

@@ -19,6 +19,7 @@ jobs:
           python-version: "3.11"
           cache: "pip"
       - run: pip install -r requirements.txt pytest
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Compilation
         run: python -m compileall -q . -x "mobile/|\.git/"
       - name: Tests

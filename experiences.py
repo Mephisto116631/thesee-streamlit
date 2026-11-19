@@ -25,6 +25,7 @@ import modele_horizon as mh  # noqa: E402
 import modele_risque as mr   # noqa: E402
 import backtest_risque as bt  # noqa: E402
 import modele_regime as mreg  # noqa: E402
+import modele_cnn as mcnn     # noqa: E402
 from publish import _clean   # noqa: E402
 
 # nom -> (mode de cible, facteurs retirés, description[, fondamentaux SEC])
@@ -61,6 +62,8 @@ EXPERIENCES_REGIME = {
     "regime_logistique": ("logistique", "Régime de marché : régression logistique (coefficients lisibles)"),
     "regime_xgboost": ("xgboost", "Régime de marché : XGBoost prudent"),
 }
+# Algorithme 4 : CNN 1D sur les courbes (famille « rendement », même seuil corrigé)
+EXPERIENCES_CNN = {"cnn": "CNN sur les courbes de cours (forme de la dernière année), alpha sectoriel"}
 HORIZONS_TEST = ["6m", "1a"]
 
 
@@ -164,6 +167,26 @@ def main(noms: list[str]):
     n_essais = len({e for e in tous if e[0] not in EXPERIENCES_RISQUE and e[0] not in EXPERIENCES_REGIME
                     and not e[0].startswith("backtest")})
     n_essais_risque = len({e for e in tous if e[0] in EXPERIENCES_RISQUE})
+    for nom in [n for n in noms if n in EXPERIENCES_CNN]:
+        for h in HORIZONS_TEST:
+            try:
+                ligne = mcnn.entrainer_cnn(raw, snap["symbol"].tolist(), h, compo, secteurs)
+            except Exception as e:
+                print(f"[LABO][ERREUR] {nom} {h} : {type(e).__name__} : {e}")
+                echecs.append(f"{nom} {h}")
+                continue
+            if not ligne:
+                continue
+            d = ligne["diagnostics"]
+            seuil = mh.seuil_t(d.get("n_effectif"), n_candidats=n_essais)
+            v = verdict_labo(d.get("ic_moyen"), d.get("t_stat"), d.get("n_effectif"), seuil)
+            cli.table("experiences").insert(_clean({
+                "lot": lot, "nom": nom, "horizon": h, "description": EXPERIENCES_CNN[nom],
+                "ic": d.get("ic_moyen"), "t_stat": d.get("t_stat"), "seuil_t_global": seuil,
+                "n_essais": n_essais, "verdict": v, "diagnostics": {**d, "importance": ligne.get("importance")},
+            })).execute()
+            print(f"[LABO] cnn {h} : IC {d.get('ic_moyen', 0):+.3f} t {d.get('t_stat', 0):.2f} (seuil {seuil:.2f}) -> {v}")
+
     for nom in [n for n in noms if n in EXPERIENCES_PORTEFEUILLE]:
         try:
             res = bt.backtest(raw, snap["symbol"].tolist(), compo)
@@ -245,7 +268,8 @@ def main(noms: list[str]):
 
 if __name__ == "__main__":
     choix = os.environ.get("EXPERIENCES", "").strip()
-    connues = list(EXPERIENCES) + list(EXPERIENCES_RISQUE) + list(EXPERIENCES_PORTEFEUILLE) + list(EXPERIENCES_REGIME)
+    connues = (list(EXPERIENCES) + list(EXPERIENCES_RISQUE) + list(EXPERIENCES_PORTEFEUILLE)
+               + list(EXPERIENCES_REGIME) + list(EXPERIENCES_CNN))
     noms = connues if choix in ("", "toutes") else [n.strip() for n in choix.split(",")]
     inconnues = [n for n in noms if n not in connues]
     if inconnues:
