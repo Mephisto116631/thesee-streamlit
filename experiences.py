@@ -56,6 +56,8 @@ EXPERIENCES_RISQUE = {
 # Famille « portefeuille » : backtest mensuel du portefeuille construit avec la volatilité IA
 EXPERIENCES_PORTEFEUILLE = {
     "backtest_volatilite": "Portefeuille rééquilibré chaque mois avec la volatilité IA, comparé à l'historique 3 ans et aux 3 derniers mois",
+    # PR #25 : Markowitz sur tout le S&P 500 au lieu des 40 meilleurs au momentum (pari non prouvé)
+    "backtest_base_large": "Markowitz sur tout le S&P 500, comparé à l'ancienne base (40 meilleurs au momentum) et à l'indice",
 }
 # Famille « régime de marché » : probabilité d'une baisse du S&P 500 de plus de 10 % en 6 mois
 EXPERIENCES_REGIME = {
@@ -186,6 +188,33 @@ def main(noms: list[str]):
                 "n_essais": n_essais, "verdict": v, "diagnostics": {**d, "importance": ligne.get("importance")},
             })).execute()
             print(f"[LABO] cnn {h} : IC {d.get('ic_moyen', 0):+.3f} t {d.get('t_stat', 0):.2f} (seuil {seuil:.2f}) -> {v}")
+
+    if "backtest_base_large" in noms:
+        noms = [n for n in noms if n != "backtest_base_large"]
+        try:
+            res = bt.backtest(raw, snap["symbol"].tolist(), compo, base=bt.BASES, variantes=["hist_3a", "ia"],
+                              secteurs=secteurs)
+        except Exception as e:
+            print(f"[LABO][ERREUR] backtest_base_large : {type(e).__name__} : {e}")
+            echecs.append("backtest_base_large")
+            res = None
+        if res is not None:
+            for nom_pf in ["sharpe_max", "variance_min"]:
+                for variante in ["hist_3a", "ia"]:
+                    c = bt.comparer_bases(res, nom_pf, variante)
+                    ec = c["ecart"]
+                    seuil = mh.seuil_t(c["sp500"]["n_mois"], n_candidats=4)   # 2 portefeuilles x 2 volatilités
+                    # Règle de décision (docs/METHODE.md) : la base large est adoptée car elle retire un pari
+                    # non prouvé, SAUF si elle est nettement moins bonne (t < −seuil).
+                    v = ("probant" if ec["t"] > seuil else "moins bonne" if ec["t"] < -seuil else "équivalente")
+                    cli.table("experiences").insert(_clean({
+                        "lot": lot, "nom": f"backtest_base_large_{nom_pf}_{variante}", "horizon": "1m",
+                        "description": EXPERIENCES_PORTEFEUILLE["backtest_base_large"],
+                        "ic": ec["rendement_mensuel"], "t_stat": ec["t"], "seuil_t_global": seuil,
+                        "n_essais": 4, "verdict": v, "diagnostics": c,
+                    })).execute()
+                    print(f"[LABO] base large {nom_pf} {variante} : S&P 500 {c['sp500']} | momentum {c['momentum40']} "
+                          f"| indice {c.get('indice')} | écart {ec} -> {v}")
 
     for nom in [n for n in noms if n in EXPERIENCES_PORTEFEUILLE]:
         try:

@@ -27,7 +27,7 @@ describe("optimisation", () => {
     expect(mu[0]).toBeCloseTo((1 - h.poidsHistorique) * (h.tauxSansRisque + u.beta[0] * h.primeRisque) + h.poidsHistorique * u.mu_hist[0], 12);
   });
 
-  it("frontière cohérente avec celle du serveur (scipy)", () => {
+  it("frontière identique à celle du serveur (même algorithme FISTA, forme factorielle)", () => {
     const f = frontiere(u, h);
     expect(f.length).toBeGreaterThanOrEqual(4);
     for (let i = 1; i < f.length; i++) expect(f[i].rendement).toBeGreaterThan(f[i - 1].rendement);
@@ -37,9 +37,9 @@ describe("optimisation", () => {
       expect(p.lignes.reduce((a, l) => a + l.poids, 0)).toBeCloseTo(1, 6);
     }
     const srv = fx.serveur;
-    // Extrémités : même risque minimal (±1 pt) et même rendement maximal (±1 pt)
-    expect(Math.abs(f[0].volatilite - srv[0].volatilite)).toBeLessThan(0.01);
-    expect(Math.abs(f[f.length - 1].rendement - srv[srv.length - 1].rendement)).toBeLessThan(0.01);
+    // Extrémités : même risque minimal et même rendement maximal (±0,2 pt)
+    expect(Math.abs(f[0].volatilite - srv[0].volatilite)).toBeLessThan(0.002);
+    expect(Math.abs(f[f.length - 1].rendement - srv[srv.length - 1].rendement)).toBeLessThan(0.002);
     expect(tangent(f)).not.toBeNull();
   });
 
@@ -60,7 +60,7 @@ describe("volatilité prévue par l'IA", () => {
     expect(volHistorique(v)[0]).toBeCloseTo(0.1, 9);          // 20 % -> 10 % prévu
     expect(volHistorique(v)[1]).toBeCloseTo(0.3, 9);          // pas de prévision : historique
     const corr = (c: number[][]) => c[0][1] / Math.sqrt(c[0][0] * c[1][1]);
-    expect(corr(v.cov)).toBeCloseTo(corr(u.cov), 9);
+    expect(corr(v.cov!)).toBeCloseTo(corr(u.cov), 9);
   });
   it("choisit le plus rentable sous le plafond de volatilité", async () => {
     const { choisirPointRisque } = await import("./strategy");
@@ -87,5 +87,55 @@ describe("ajuster les titres", () => {
       const avec = f(u, { ...h, imposes: [absent] });
       expect(avec.every((p) => p.lignes.some((l) => l.symbol === absent && l.poids >= 0.03 - 1e-6))).toBe(true);
     }
+  });
+});
+
+describe("covariance factorielle (tout le S&P 500)", () => {
+  const dense = (u: Univers): Univers => {
+    const n = u.symbols.length;
+    const cov = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => {
+      let s = i === j ? u.idio![i] : 0;
+      for (let k = 0; k < u.facteurs![i].length; k++) s += u.facteurs![i][k] * u.facteurs![j][k];
+      return s;
+    }));
+    return { ...u, facteurs: undefined, idio: undefined, cov };
+  };
+
+  it("même frontière qu'avec la covariance dense reconstruite (ancien format)", () => {
+    const a = frontiere(u, h), b = frontiere(dense(u), h);
+    expect(a.length).toBe(b.length);
+    a.forEach((p, i) => {
+      expect(p.rendement).toBeCloseTo(b[i].rendement, 3);
+      expect(p.volatilite).toBeCloseTo(b[i].volatilite, 3);
+    });
+  });
+
+  it("volatilité IA : corrélations conservées en forme factorielle", async () => {
+    const { avecVolIA, covariance, volHistorique } = await import("./optim");
+    const v = avecVolIA({ ...u, vol_ia: u.symbols.map((_, i) => (i === 0 ? 0.5 : null)) });
+    expect(volHistorique(v)[0]).toBeCloseTo(0.5, 9);
+    expect(volHistorique(v)[1]).toBeCloseTo(volHistorique(u)[1], 9);
+    const corr = (x: Univers) => covariance(x, 0, 1) / Math.sqrt(covariance(x, 0, 0) * covariance(x, 1, 1));
+    expect(corr(v)).toBeCloseTo(corr(u), 9);
+  });
+
+  it("500 titres : frontière calculée en moins de 2 s", () => {
+    // Univers synthétique : 3 facteurs de marché + risque propre, 20 colonnes comme le serveur
+    let graine = 7;
+    const alea = () => { graine = (graine * 16807) % 2147483647; return graine / 2147483647; };
+    const n = 500, k = 20;
+    const big: Univers = {
+      symbols: Array.from({ length: n }, (_, i) => `S${i}`), jours: 756,
+      mu_hist: Array.from({ length: n }, () => 0.05 + 0.15 * alea()),
+      beta: Array.from({ length: n }, () => 0.5 + alea()),
+      facteurs: Array.from({ length: n }, () => Array.from({ length: k }, (_, j) => (j < 3 ? 0.08 + 0.1 * alea() : 0.02 * (alea() - 0.5)))),
+      idio: Array.from({ length: n }, () => 0.01 + 0.06 * alea()),
+    };
+    const t0 = performance.now();
+    const f = frontiere(big, h);
+    const ms = performance.now() - t0;
+    expect(f.length).toBeGreaterThanOrEqual(4);
+    for (const p of f) expect(p.lignes.length).toBeLessThanOrEqual(h.nMaxLignes);
+    expect(ms).toBeLessThan(2000);
   });
 });

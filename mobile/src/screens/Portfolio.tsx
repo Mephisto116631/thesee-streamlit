@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "preact/hooks";
 import { api } from "../api";
 import { BarreSeuil, Card, ChartBox, cssVar, HelpButton, Info, Loading, OfflineNote, RefreshButton, ReglagesButton, Stat, toneOf, useData, Verifier } from "../components";
-import { frontiere as calculerFrontiere, sousUnivers, type Univers } from "../optim";
+import { frontiere as calculerFrontiere, sousUnivers, variance, type Univers } from "../optim";
 import { ecrireParametres, nbModifies, useParametres } from "../settings";
 import { ilYA, num, pct, ratioPct } from "../format";
 import { choisirPoint, choisirPointRisque, HORIZON_DEFAUT, HORIZONS, planAchat, projection } from "../strategy";
@@ -48,7 +48,7 @@ export function usePortefeuilleCible() {
   const modifies = nbModifies(params);
   const choix = e.mode === "risque" ? choisirPointRisque(frontiere, e.volMax) : choisirPoint(frontiere, e.cible);
   const volIA = params.sourceVol === "ia" && Boolean(u?.vol_ia?.length);
-  const volHistDe = new Map((u?.symbols ?? []).map((sy, i) => [sy, Math.sqrt(Math.max(u!.cov[i][i], 0))]));
+  const volHistDe = new Map((u?.symbols ?? []).map((sy, i) => [sy, Math.sqrt(Math.max(variance(u!, i), 0))]));
   const volIADe = new Map((u?.symbols ?? []).map((sy, i) => [sy, u?.vol_ia?.[i] ?? null]));
   const lignes = choix?.point.lignes ?? [];
   // Meilleure rentabilité de long terme possible pour le risque du portefeuille choisi (frontière)
@@ -74,7 +74,7 @@ export function Portfolio() {
       <header class="screen-head">
         <div><h1>Portefeuille</h1><p class="sub">{num(e.capital, 0)} € · horizon {h.label}{ajuste ? ` · ${ajuste} ajustement(s)` : ""}</p></div>
         <HelpButton keys={["sharpe", "volatility", "max_drawdown"]} intro={<>
-          <p><b>Objectif</b> : tu fixes soit la rentabilité visée, soit le risque maximal. L'appli choisit, parmi ~40 titres présélectionnés,
+          <p><b>Objectif</b> : tu fixes soit la rentabilité visée, soit le risque maximal. L'appli choisit, parmi les ~500 titres du S&P 500,
             le meilleur compromis (frontière efficiente de Markowitz, 20 % max par titre).</p>
           <p><b>Risque</b> : la volatilité de chaque titre, mesurée sur 3 ans ou prévue par l'IA. La prévision de l'IA n'est proposée
             que si son dernier test est probant (re-test chaque mois).</p>
@@ -272,18 +272,25 @@ function AjusterTitres({ u, e, maj, retenus, volHistDe }: {
     exclus: v === "exclu" ? [...e.exclus.filter((x) => x !== s), s] : e.exclus.filter((x) => x !== s),
     imposes: v === "impose" ? [...e.imposes.filter((x) => x !== s), s] : e.imposes.filter((x) => x !== s),
   });
-  const tri = [...u.symbols].sort((a, b) => Number(retenus.includes(b)) - Number(retenus.includes(a)) || a.localeCompare(b));
+  const [q, setQ] = useState("");
+  // ~500 titres : on montre ceux ajustés et retenus, puis le résultat de la recherche
+  const ajustes = [...e.exclus, ...e.imposes];
+  const qq = q.trim().toUpperCase();
+  const trouves = qq ? u.symbols.filter((s) => s.includes(qq) || (reco.data?.titres?.[s]?.nom ?? "").toUpperCase().includes(qq)).slice(0, 30) : [];
+  const liste = [...new Set([...ajustes, ...retenus, ...trouves])].filter((s) => u.symbols.includes(s) || e.exclus.includes(s));
   return (
     <Card title="Ajuster les titres" repliable ouvert={false} class="ajuster">
-      <p class="hint" style={{ marginTop: 0 }}>Exclus un titre que tu ne veux pas, ou impose un titre que tu veux garder.
-        Le portefeuille est recalculé avec exactement la même méthode et tes réglages.</p>
+      <p class="hint" style={{ marginTop: 0 }}>Exclus un titre que tu ne veux pas, ou impose un titre que tu veux garder, parmi les
+        {" "}{u.symbols.length} titres du S&P 500. Le portefeuille est recalculé avec exactement la même méthode et tes réglages.</p>
+      <input type="search" placeholder="Chercher un titre (ex. KO, Coca-Cola)" value={q} aria-label="Chercher un titre"
+        onInput={(ev) => setQ((ev.target as HTMLInputElement).value)} />
       {(e.exclus.length > 0 || e.imposes.length > 0) && <button class="link" onClick={() => maj({ exclus: [], imposes: [] })}>↺ Revenir au conseil</button>}
-      <ul>{tri.map((s) => {
+      <ul>{liste.map((s) => {
         const t = reco.data?.titres?.[s];
         const v = etat(s);
         return (
           <li><span class="nom"><b>{s}</b>{retenus.includes(s) && <small class="accent"> · retenu</small>}
-            <small>{t?.nom ?? ""} · risque {pct(volHistDe.get(s), 0, false)}</small></span>
+            <small>{t?.nom ?? ""}{volHistDe.has(s) ? ` · risque ${pct(volHistDe.get(s), 0, false)}` : ""}</small></span>
             <span class="tri" role="group" aria-label={`Réglage ${s}`}>
               <button class={v === "exclu" ? "on" : ""} onClick={() => regler(s, "exclu")}>Exclure</button>
               <button class={v === "auto" ? "on" : ""} onClick={() => regler(s, "auto")}>Auto</button>
@@ -291,6 +298,7 @@ function AjusterTitres({ u, e, maj, retenus, volHistDe }: {
             </span></li>
         );
       })}</ul>
+      {qq && !trouves.length && <p class="hint">Aucun titre du S&P 500 ne correspond.</p>}
     </Card>
   );
 }

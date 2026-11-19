@@ -3,7 +3,7 @@ import type { ComponentChildren } from "preact";
 import { api } from "../api";
 import { Card, Loading, textePreuve, useData } from "../components";
 import { corr, num, pct, ratioPct } from "../format";
-import { avecVolIA, rendementsAttendus, sousUnivers } from "../optim";
+import { avecVolIA, covariance, rendementsAttendus, sousUnivers, variance } from "../optim";
 import { coutAnnualise, planAchat, projection } from "../strategy";
 import { usePortefeuilleCible } from "./Portfolio";
 
@@ -45,12 +45,16 @@ export function Calculs({ section }: { section?: string }) {
   const lignes = pt.lignes.map((l) => {
     const i = idx.get(l.symbol)!;
     const capm = p.tauxSansRisque + u.beta[i] * p.primeRisque;
-    return { ...l, i, beta: u.beta[i], hist: u.mu_hist[i], capm, mu: mu[i], vol: Math.sqrt(u.cov[i][i]) };
+    return { ...l, i, beta: u.beta[i], hist: u.mu_hist[i], capm, mu: mu[i], vol: Math.sqrt(variance(u, i)) };
   });
   const er = lignes.reduce((a, l) => a + l.poids * l.mu, 0);
-  let variance = 0;
-  for (const a of lignes) for (const b of lignes) variance += a.poids * b.poids * u.cov[a.i][b.i];
-  const vol = Math.sqrt(variance);
+  let variancePf = 0;
+  for (const a of lignes) for (const b of lignes) variancePf += a.poids * b.poids * covariance(u, a.i, b.i);
+  const vol = Math.sqrt(variancePf);
+  // Gain de diversification : risque moyen des titres contre risque du portefeuille, et ce que
+  // cela rapporte en rendement composé (≈ σ²/2 de moins perdu chaque année, si l'on rééquilibre)
+  const volMoy = lignes.reduce((a, l) => a + l.poids * l.vol, 0);
+  const gainCompose = (volMoy * volMoy - vol * vol) / 2;
   const pr = projection(e.capital, er, vol, h.annees, e.mode === "risque" ? er : e.cible, p.confiance);
   const prix = Object.fromEntries(Object.entries(reco.data?.titres ?? {}).map(([k, v]) => [k, v.prix]));
   const fx = ov.data?.eurusd ?? 1.08;
@@ -99,9 +103,16 @@ export function Calculs({ section }: { section?: string }) {
           definition={<>Le risque : de combien la valeur s'écarte en général de sa tendance sur un an (σ = 15 % : une année « normale » finit
             entre −15 % et +15 % autour de la moyenne). <b>covᵢⱼ</b> = covariance, mesure de combien deux titres montent et baissent ensemble.
             {volIA && " Ici les volatilités de chaque titre sont celles prévues par l'IA, les corrélations restent historiques."}</>}
-          calcul={<>variance = {num(variance, 5)} → σ = <b>{pct(vol, 2, false)}</b> par an</>}>
+          calcul={<>variance = {num(variancePf, 5)} → σ = <b>{pct(vol, 2, false)}</b> par an</>}>
           <p class="hint">La covariance (Ledoit-Wolf, 3 ans) tient compte des titres qui montent et baissent ensemble : le risque du portefeuille est inférieur à la moyenne des risques.</p>
         </Etape>
+        <Etape titre="Gain de diversification" formule="σ moy = Σ wᵢ σᵢ ; gain ≈ (σ moy² − σ²) / 2"
+          definition={<>Si les titres montaient et baissaient tous ensemble, le risque du portefeuille serait la moyenne de leurs risques
+            (<b>σ moy</b>). Comme ce n'est pas le cas, une partie des écarts se compense. Le rendement composé (année après année) perd environ σ²/2
+            par an à cause des écarts : un portefeuille moins agité garde ce surplus, à condition de <b>rééquilibrer</b> (revenir aux parts cibles).
+            C'est un calcul, pas une prévision.</>}
+          calcul={<>σ moy = {pct(volMoy, 1, false)} → σ = {pct(vol, 1, false)} (−{pct(1 - vol / volMoy, 0, false)}) ;
+            gain ≈ ({pct(volMoy, 1, false)}² − {pct(vol, 1, false)}²) / 2 = <b>{pct(gainCompose, 2, false)}</b> de rendement composé par an</>} />
         <Etape titre="Rendement / risque" formule="E[R] / σ"
           definition={<>Combien de rentabilité on obtient pour chaque point de risque supporté. Affiché en % dans l'appli.</>}
           calcul={<>{pct(er, 2, false)} / {pct(vol, 2, false)} = <b>{ratioPct(er, vol)}</b></>} />

@@ -23,9 +23,9 @@ describe("fiabilité de la volatilité IA", () => {
     const sans = univers(U, { probant: false })!;
     expect(sans.vol_ia).toBeUndefined();
     // le portefeuille revient alors à la volatilité historique
-    expect(avecVolIA(sans).cov).toEqual(U.cov);
+    expect(avecVolIA(sans).cov!).toEqual(U.cov);
     expect(univers(U, { probant: true })!.vol_ia).toEqual([0.1, 0.5]);
-    expect(avecVolIA(univers(U, { probant: true })!).cov[1][1]).toBeCloseTo(0.25);
+    expect(avecVolIA(univers(U, { probant: true })!).cov![1][1]).toBeCloseTo(0.25);
   });
 
   it("bilan réel lu depuis model_runs, prochain re-test le 2 du mois", () => {
