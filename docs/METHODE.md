@@ -396,3 +396,32 @@ encore un peu mieux que le semestriel sur cette période. L'écart entre les deu
   Avec la loi de Student, le mauvais cas repasse sous le seuil de 7,5 % : la règle 5 est satisfaite. Contrepartie
   assumée : le bon cas devient prudent (dépassé 1,6 % des fois au lieu de 5 %). La fourchette est un peu trop large
   vers le haut, ce qui est préférable pour décider.
+
+### 7.6 L'IA bat-elle HAR sur l'ordre des titres ? **Oui, elle reste** (règle 6)
+Essai `examen_ia_contre_har`, 2008-2026, 919 dates, membres du S&P 500 à chaque date :
+- **Ordre des titres** : IC de l'hybride 78,3 % contre 74,9 % pour HAR (+3,4 points). L'hybride est meilleur sur
+  **82 % des dates**. t = 5,67 pour un seuil de 2,72 (corrigé pour 5 essais) : force de la preuve **208 %**.
+- **Effet sur le portefeuille** (backtest 2006-2026, frais réels, révision tous les 6 mois) :
+
+  | Portefeuille | Prévision | Rendement net | Volatilité | Ordres / an | Limite 15 % dépassée |
+  |---|---|---|---|---|---|
+  | Conseillé (Sharpe max) | **hybride** | **10,2 %** | 25,9 % | 34 | — |
+  | | HAR seul | 7,3 % | 26,4 % | 34 | — |
+  | « Je limite le risque » 15 % | **hybride** | **11,6 %** | 19,1 % | 35 | 46 % des semestres |
+  | | HAR seul | 9,4 % | 19,0 % | 37 | 49 % des semestres |
+
+  À risque égal, le meilleur ordre des titres de l'IA a rapporté environ 2 à 3 points de plus par an. C'est un constat :
+  cet écart de rendement n'est pas testé statistiquement.
+- **Décision** : l'IA reste dans l'hybride. Cet essai est relancé chaque mois, avec `risque_volatilite` et
+  `examen_hybride`. Si l'IA cessait de battre HAR, l'appli basculerait d'elle-même sur HAR seul.
+
+### 7.7 Bilan de la PR #27
+| Règle | Résultat | Conséquence dans l'appli |
+|---|---|---|
+| 1. Hybride | validée (niveau = HAR, ordre 217 % du seuil) | Prévision « IA + HAR » publiée |
+| 2. Révision | constat : 165 → 34 ordres/an, +4,5 pts de rendement net | Portefeuille révisé tous les 6 mois (ou 12) |
+| 3. Marge | non atteinte pour les limites < 18 % | Marge appliquée, part de semestres tenue affichée en clair |
+| 4. Placebo | validée (moyenne −1,5 %) | — |
+| 5. Fourchette | déclenchée puis satisfaite (8,8 % → 6,4 %) | Projection selon une loi de Student à 5 degrés |
+| 6. IA contre HAR | validée (208 % du seuil) | L'IA reste ; HAR seul en repli automatique |
+
