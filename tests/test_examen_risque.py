@@ -168,3 +168,35 @@ def test_ia_contre_har_et_variante_har():
     res = bt.backtest(raw, syms, None, debut="2011-01-01", pas_semaines=8, base="sp500", variantes=["har"],
                       portefeuilles={"sharpe_max": None}, garder_poids=True)
     assert (res["variante"] == "har").any()
+
+
+def _echantillon_niveau(n_titres=60, n_dates=260, graine=0):
+    """Panel synthétique : la volatilité future dépend du niveau passé ET d'un facteur de marché caché
+    que les variables de niveau (médiane du jour) permettent de voir."""
+    import modele_horizon as mh
+    rng = np.random.default_rng(graine)
+    dates = pd.bdate_range("1999-01-04", periods=n_dates * 5, freq="B")[::5][:n_dates]
+    lignes = []
+    marche = np.cumsum(rng.normal(0, 0.15, n_dates))
+    for i, d in enumerate(dates):
+        base = rng.normal(np.log(0.25), 0.4, n_titres)
+        v3 = np.exp(base + 0.5 * marche[i])
+        for j in range(n_titres):
+            futur = np.exp(base[j] + 0.5 * marche[min(i + 3, n_dates - 1)] + rng.normal(0, 0.15))
+            ligne = {"date": d, "symbol": f"T{j}", "brut": futur, "lvl_vol_3m": v3[j], "lvl_ewma": v3[j] * 1.02,
+                     "v1": v3[j] ** 2 / 252, "v5": v3[j] ** 2 / 252, "v22": v3[j] ** 2 / 252, "v63": v3[j] ** 2 / 252}
+            ligne.update({f: rng.normal() for f in mh.FEATURES})
+            lignes.append(ligne)
+    df = pd.DataFrame(lignes)
+    df["y"] = df.groupby("date")["brut"].rank(pct=True)
+    return df
+
+
+def test_niveau_xgb_tourne_et_le_placebo_ne_gagne_pas():
+    data = _echantillon_niveau()
+    tb = ex.walk_forward_niveau(data, "B", h=10)
+    tp = ex.walk_forward_niveau(data, "B", h=10, melange=True)
+    assert not tb.empty and tb["lvl_xgb"].notna().all() and (tb["lvl_xgb"] > 0).all()
+    c = ex.comparer_niveau(tb, None, tp, h=10)
+    assert {"B", "placebo", "regles", "candidate"} <= set(c)
+    assert c["placebo"]["qlike"] >= c["B"]["qlike"] - 1e-9      # une cible mélangée ne peut pas mieux faire que la vraie

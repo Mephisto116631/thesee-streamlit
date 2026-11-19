@@ -435,3 +435,103 @@ def pbo(rendements: pd.DataFrame, n_blocs: int = 16) -> dict:
         logits.append(np.log(rang / (1 - rang)))
     logits = np.array(logits)
     return {"pbo": float((logits <= 0).mean()), "n_variantes": N, "n_combinaisons": len(logits)}
+
+
+# ------------------------------------------------------------------------------
+# Essai « XGBoost sur le niveau » (protocole : docs/METHODE.md § 4.10, écrit avant l'essai)
+# ------------------------------------------------------------------------------
+FEATURES_NIVEAU = ["ln_vol_3m", "ln_ewma", "ln_v5", "ln_v22", "ln_har", "ln_marche", "disp_marche"]
+N_CANDIDATS_NIVEAU = 7          # 5 essais déjà comptés dans la famille « références » + A et B
+
+
+def _ln(x) -> pd.Series:
+    return np.log(np.maximum(pd.Series(x, dtype=float), 1e-8))
+
+
+def ajouter_niveaux(df: pd.DataFrame, coef_har: np.ndarray) -> pd.DataFrame:
+    """Variables de niveau (en logarithme), toutes connues à la date t."""
+    df = df.copy()
+    df["lvl_har"] = har_prevoir(df, coef_har)
+    df["ln_vol_3m"] = _ln(df["lvl_vol_3m"]).values
+    df["ln_ewma"] = _ln(df["lvl_ewma"]).values
+    df["ln_v5"] = 0.5 * _ln(df["v5"] * 252).values
+    df["ln_v22"] = 0.5 * _ln(df["v22"] * 252).values
+    df["ln_har"] = _ln(df["lvl_har"]).values
+    g = df.groupby("date")["ln_vol_3m"]
+    df["ln_marche"] = g.transform("median")
+    df["disp_marche"] = g.transform("std")
+    return df.replace([np.inf, -np.inf], np.nan)
+
+
+def walk_forward_niveau(data: pd.DataFrame, variante: str = "B", h: int = H, melange: bool = False,
+                        graine: int = 0) -> pd.DataFrame:
+    """Prévision du NIVEAU de volatilité par XGBoost prudent (config fixe, aucun réglage).
+    variante « A » : cible ln(σ réalisée) ; « B » : cible ln(σ réalisée / σ HAR). `melange` : placebo."""
+    feats = list(mh.FEATURES) + FEATURES_NIVEAU
+    dates = np.sort(data["date"].unique())
+    bornes = np.array_split(dates[len(dates) // 3:], mh.N_FENETRES)
+    embargo = pd.Timedelta(days=int(h * 7 / 5) + 1)
+    sorties = []
+    for k, bloc in enumerate(bornes):
+        debut = pd.Timestamp(bloc[0])
+        train = data[data["date"] < debut - embargo]
+        test = data[data["date"].isin(bloc)].copy()
+        if len(train) < 2000 or test.empty:
+            continue
+        coef = har_ajuster(train)
+        train, test = ajouter_niveaux(train, coef), ajouter_niveaux(test, coef)
+        train = train[(train["brut"] > 0) & (train["lvl_har"] > 0)]
+        ancre = np.log(train["lvl_har"]) if variante == "B" else 0.0
+        y = np.log(train["brut"]) - ancre
+        if melange:
+            y = pd.Series(np.random.default_rng(graine + k).permutation(y.values), index=y.index)
+        m = mh._modele("xgb_prudent").fit(train[feats], y)
+        lissage = float(np.sqrt(np.mean(np.exp(2 * (y.values - m.predict(train[feats]))))))
+        base = test["lvl_har"].values if variante == "B" else 1.0
+        test["lvl_xgb"] = base * np.exp(m.predict(test[feats])) * lissage
+        test["fenetre"], test["lissage"] = k, lissage
+        sorties.append(test)
+    return pd.concat(sorties, ignore_index=True) if sorties else pd.DataFrame()
+
+
+def comparer_niveau(tb: pd.DataFrame, ta: pd.DataFrame | None = None, tp: pd.DataFrame | None = None,
+                    h: int = H) -> dict:
+    """Règles 1 à 5 du § 4.10. tb : variante B ; ta : variante A (diagnostic) ; tp : placebo de B."""
+    lag = max(1, h // mh.PAS_ECHANTILLON)
+
+    def dm_contre_har(t, col):
+        a, b = _pertes_par_date(t, col), _pertes_par_date(t, "lvl_har")
+        n_eff = max(1.0, len(a) * mh.PAS_ECHANTILLON / h)
+        seuil = mh.seuil_t(n_eff, n_candidats=N_CANDIDATS_NIVEAU)
+        dm = diebold_mariano(a, b, decalage=lag)
+        return {"qlike": float(a.mean()), "qlike_har": float(b.mean()), "ecart": dm["ecart"], "t": dm["t"],
+                "seuil": seuil, "force": -dm["t"] / seuil, "n_effectif": n_eff}
+
+    out = {"B": dm_contre_har(tb, "lvl_xgb")}
+    r1 = out["B"]["force"] >= 1.0
+    if ta is not None and not ta.empty:
+        out["A"] = dm_contre_har(ta, "lvl_xgb")
+    placebo_ok = True
+    if tp is not None and not tp.empty:
+        out["placebo"] = dm_contre_har(tp, "lvl_xgb")
+        placebo_ok = not (out["placebo"]["force"] >= 1.0 or out["placebo"]["ecart"] < 0)
+    # Règle 3 : crises (rapport des QLIKE moyennes B / HAR, dates de test dans la crise)
+    pb, ph = _pertes_par_date(tb, "lvl_xgb"), _pertes_par_date(tb, "lvl_har")
+    crises = {}
+    for nom, (d0, d1) in CRISES.items():
+        i = (pb.index >= pd.Timestamp(d0)) & (pb.index <= pd.Timestamp(d1))
+        if i.sum() >= 3:
+            crises[nom] = {"ratio": float(pb[i].mean() / ph.reindex(pb.index)[i].mean()), "n_dates": int(i.sum())}
+    cles = [k for k in crises if k.startswith("2008") or k.startswith("2020")]
+    crises_ok = bool(cles) and all(crises[k]["ratio"] <= 1.10 for k in cles)
+    tt = tb.assign(rel=tb["brut"])
+    out.update({
+        "crises": crises, "crises_ok": crises_ok, "placebo_ok": placebo_ok,
+        "ic": {"xgb": float(mh._ic_par_date(tt.dropna(subset=["lvl_xgb"]), "lvl_xgb").mean()),
+               "har": float(mh._ic_par_date(tt.dropna(subset=["lvl_har"]), "lvl_har").mean())},
+        "calibration": calibration(tb, "lvl_xgb"), "calibration_har": calibration(tb, "lvl_har"),
+        "lissage_moyen": float(tb["lissage"].mean()),
+        "regles": {"1_niveau": bool(r1), "2_placebo": placebo_ok, "3_crises": crises_ok},
+    })
+    out["candidate"] = bool(r1 and placebo_ok and crises_ok)
+    return out
