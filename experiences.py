@@ -23,6 +23,7 @@ import db                    # noqa: E402
 import fondamentaux_sec as fsec  # noqa: E402
 import modele_horizon as mh  # noqa: E402
 import modele_risque as mr   # noqa: E402
+import backtest_risque as bt  # noqa: E402
 from publish import _clean   # noqa: E402
 
 # nom -> (mode de cible, facteurs retirés, description[, fondamentaux SEC])
@@ -44,6 +45,10 @@ EXPERIENCES = {
 EXPERIENCES_RISQUE = {
     "risque_volatilite": ("volatilite", "IA de risque : volatilité future, comparée à la volatilité passée"),
     "risque_perte_max": ("perte_max", "IA de risque : perte maximale future, comparée à la volatilité passée"),
+}
+# Famille « portefeuille » : backtest mensuel du portefeuille construit avec la volatilité IA
+EXPERIENCES_PORTEFEUILLE = {
+    "backtest_volatilite": "Portefeuille rééquilibré chaque mois avec la volatilité IA, comparé à l'historique 3 ans et aux 3 derniers mois",
 }
 HORIZONS_TEST = ["6m", "1a"]
 
@@ -102,11 +107,33 @@ def main(noms: list[str]):
 
     deja = cli.table("experiences").select("nom,horizon").execute().data or []
     tous = {(r["nom"], r["horizon"]) for r in deja} | {(n, h) for n in noms for h in HORIZONS_TEST}
-    n_essais = len({e for e in tous if e[0] not in EXPERIENCES_RISQUE})
+    n_essais = len({e for e in tous if e[0] not in EXPERIENCES_RISQUE and not e[0].startswith("backtest")})
     n_essais_risque = len({e for e in tous if e[0] in EXPERIENCES_RISQUE})
     lot = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M")
 
     echecs = []
+    for nom in [n for n in noms if n in EXPERIENCES_PORTEFEUILLE]:
+        try:
+            res = bt.backtest(raw, snap["symbol"].tolist(), compo)
+            r = bt.resume(res)
+        except Exception as e:
+            print(f"[LABO][ERREUR] {nom} : {type(e).__name__} : {e}")
+            echecs.append(nom)
+            continue
+        for nom_pf, bloc in r.items():
+            comp = bloc.get("ia_vs_hist_3a", {})
+            t_moins_risque = -comp.get("t", 0.0)          # > 0 : l'IA a donné un portefeuille moins risqué
+            # 2 portefeuilles × 2 comparaisons : seuil corrigé de 4 essais
+            seuil = mh.seuil_t(bloc["n_mois"], n_candidats=4)
+            v = "probant" if comp.get("ecart_vol", 0) < 0 and t_moins_risque > seuil else "non probant"
+            cli.table("experiences").insert(_clean({
+                "lot": lot, "nom": f"{nom}_{nom_pf}", "horizon": "1m", "description": EXPERIENCES_PORTEFEUILLE[nom],
+                "ic": comp.get("ecart_vol"), "t_stat": t_moins_risque, "seuil_t_global": seuil,
+                "n_essais": 4, "verdict": v, "diagnostics": bloc,
+            })).execute()
+            vs = {k: round(x["vol_reelle"], 4) for k, x in bloc["variantes"].items()}
+            print(f"[LABO] {nom}_{nom_pf} : vol réelle {vs} ; IA vs 3 ans {comp} -> {v}")
+
     for nom in [n for n in noms if n in EXPERIENCES_RISQUE]:
         genre, description = EXPERIENCES_RISQUE[nom]
         for h in HORIZONS_TEST:
@@ -163,7 +190,7 @@ def main(noms: list[str]):
 
 if __name__ == "__main__":
     choix = os.environ.get("EXPERIENCES", "").strip()
-    connues = list(EXPERIENCES) + list(EXPERIENCES_RISQUE)
+    connues = list(EXPERIENCES) + list(EXPERIENCES_RISQUE) + list(EXPERIENCES_PORTEFEUILLE)
     noms = connues if choix in ("", "toutes") else [n.strip() for n in choix.split(",")]
     inconnues = [n for n in noms if n not in connues]
     if inconnues:

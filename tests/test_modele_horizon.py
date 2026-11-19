@@ -185,3 +185,26 @@ def test_modele_risque_bat_la_reference():
     assert ev["gain"] > -0.05                                     # pas pire que la référence
     dd = mr.entrainer_risque(raw, syms, "6m", "perte_max")
     assert dd["ic_moyen"] > 0.3
+
+
+def test_backtest_risque():
+    """Risque propre qui change par régimes : le backtest tourne et compare les trois variantes."""
+    import backtest_risque as bt
+    rng = np.random.default_rng(11)
+    n, jours = 60, 2600
+    dates = pd.bdate_range("2006-01-02", periods=jours)
+    marche = rng.normal(0.0003, 0.01, jours)
+    rows = []
+    for i in range(n):
+        niveau = np.repeat(rng.uniform(0.005, 0.03, jours // 250 + 1), 250)[:jours]   # régimes annuels
+        px = 100 * np.cumprod(1 + (0.5 + i / n) * marche + rng.normal(0, 1, jours) * niveau)
+        rows += [{"symbol": f"T{i:02d}", "date": d, "close": p, "volume": 1e6} for d, p in zip(dates, px)]
+    rows += [{"symbol": "SPY", "date": d, "close": p, "volume": 1e7} for d, p in zip(dates, 100 * np.cumprod(1 + marche))]
+    raw, syms = pd.DataFrame(rows), [f"T{i:02d}" for i in range(n)]
+    res = bt.backtest(raw, syms, None, debut="2012-01-01", pas_semaines=8)
+    assert set(res["variante"]) == set(bt.VARIANTES) and set(res["portefeuille"]) == set(bt.PORTEFEUILLES)
+    r = bt.resume(res)
+    for nom_pf in bt.PORTEFEUILLES:
+        assert r[nom_pf]["n_mois"] >= 5
+        assert "ia_vs_hist_3a" in r[nom_pf]
+        assert all(0 < v["vol_reelle"] < 1 for v in r[nom_pf]["variantes"].values())
