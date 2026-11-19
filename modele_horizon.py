@@ -80,7 +80,7 @@ CONFIGS = {
 }
 CONFIG_DEFAUT = "xgb_standard"
 PART_VALIDATION = 0.3              # dernière part du passé servant à choisir le réglage
-LIBELLES_CONFIGS = {"xgb_prudent": "XGBoost prudent", "xgb_standard": "XGBoost standard",
+LIBELLES_CONFIGS = {"ensemble": "Ensemble XGBoost + linéaire", "xgb_prudent": "XGBoost prudent", "xgb_standard": "XGBoost standard",
                     "xgb_riche": "XGBoost riche", "lineaire": "Linéaire (ridge)"}
 
 
@@ -195,7 +195,31 @@ def cible(px: pd.DataFrame, dates: pd.Index, h: int, mode: str = "relatif",
     return _relatif(out, mode == "alpha_secteur")
 
 
+class Ensemble:
+    """Algorithme 3 : moyenne des prédictions (centrées-réduites) de XGBoost prudent et du modèle
+    linéaire. Un ensemble est souvent plus stable que chacun de ses membres."""
+    def __init__(self):
+        self.membres = [_modele("xgb_prudent"), _modele("lineaire")]
+
+    def fit(self, X, y):
+        for m in self.membres:
+            m.fit(X, y)
+        return self
+
+    def predict(self, X):
+        preds = [np.asarray(m.predict(X), dtype=float) for m in self.membres]
+        return np.mean([(p - p.mean()) / (p.std() or 1.0) for p in preds], axis=0)
+
+    @property
+    def feature_importances_(self):
+        a = _importances(self.membres[0], "xgb_prudent")
+        b = _importances(self.membres[1], "lineaire")
+        return (a / (a.sum() or 1) + b / (b.sum() or 1)) / 2
+
+
 def _modele(config: str = CONFIG_DEFAUT):
+    if config == "ensemble":
+        return Ensemble()
     c = CONFIGS[config]
     if config == "lineaire":
         from sklearn.linear_model import Ridge
@@ -205,6 +229,8 @@ def _modele(config: str = CONFIG_DEFAUT):
 
 
 def _importances(m, config: str) -> np.ndarray:
+    if config == "ensemble":
+        return m.feature_importances_
     if config == "lineaire":
         v = np.abs(m.coef_)
         return v / v.sum() if v.sum() > 0 else v
@@ -283,7 +309,7 @@ def ic_par_regime(t: pd.DataFrame) -> dict:
     return out
 
 
-def evaluer(data: pd.DataFrame, h: int, feats: list[str] | None = None) -> dict:
+def evaluer(data: pd.DataFrame, h: int, feats: list[str] | None = None, forcer_config: str | None = None) -> dict:
     """Walk-forward avec embargo de h jours entre entraînement et test."""
     feats = feats or FEATURES
     dates = np.sort(data["date"].unique())
@@ -298,7 +324,7 @@ def evaluer(data: pd.DataFrame, h: int, feats: list[str] | None = None) -> dict:
         test = data[data["date"].isin(bloc)].copy()
         if len(train) < 2000 or test.empty:
             continue
-        config, _ = choisir_config(train, h, feats)
+        config = forcer_config or choisir_config(train, h, feats)[0]
         m = _modele(config).fit(train[feats], train["y"])
         test["pred"] = m.predict(test[feats])
         ic = _ic_par_date(test, "pred")
@@ -399,7 +425,8 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
                       cible_mode: str = "relatif",
                       exclure: list[str] | None = None,
                       faits_sec: pd.DataFrame | None = None,
-                      splits: pd.DataFrame | None = None) -> tuple[dict, pd.DataFrame]:
+                      splits: pd.DataFrame | None = None,
+                      forcer_config: str | None = None) -> tuple[dict, pd.DataFrame]:
     """Évalue puis entraîne le modèle final ; retourne (ligne model_runs, scores du jour).
     `composition` (charger_composition()) : évaluation sur les seuls membres de l'indice à chaque date."""
     h = HORIZONS[nom]
@@ -428,7 +455,7 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
         filtre = membres_a_date(data, composition, cible_mode == "alpha_secteur", feats)
         if not filtre.empty:
             data, point_in_time = filtre, True
-    ev = evaluer(data, h, feats)
+    ev = evaluer(data, h, feats, forcer_config)
     if ev:
         ev["cible"] = cible_mode
         ev["facteurs_exclus"] = list(exclure or [])
@@ -439,7 +466,7 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
         ev["titres_par_date"] = float(data.groupby("date")["symbol"].size().mean())
     if data.empty:
         return {}, pd.DataFrame()
-    config, ic_validation = choisir_config(data, h, feats)      # réglage du modèle final : même règle, sur tout le passé
+    config, ic_validation = (forcer_config, {}) if forcer_config else choisir_config(data, h, feats)
     m = _modele(config).fit(data[feats], data["y"])
     if ev:
         ev["config"] = config

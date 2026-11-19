@@ -229,3 +229,13 @@ def test_risque_avec_comptes():
     assert "fd_levier" in ev["facteurs_utilises"] and ev["couverture_fondamentaux"]["fd_levier"] > 0.5
     assert set(fsec.FEATURES_FD) <= {x["feature"] for x in ev["importance"]}
     assert "controles" in ev
+
+
+def test_ensemble():
+    """L'ensemble trouve le signal planté et rapporte des importances qui somment à 1."""
+    raw, syms = _marche(persistance=True)
+    ligne, scores = mh.entrainer_horizon(raw, syms, "6m", forcer_config="ensemble")
+    d = ligne["diagnostics"]
+    assert d["config"] == "ensemble" and all(f["config"] == "ensemble" for f in d["fenetres"])
+    assert d["ic_moyen"] > 0.05
+    assert abs(sum(x["importance"] for x in ligne["importance"]) - 1) < 1e-6
