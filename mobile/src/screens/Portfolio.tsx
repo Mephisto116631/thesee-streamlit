@@ -38,7 +38,7 @@ export function usePortefeuilleCible() {
   const params = useParametres();
   // La prévision IA n'entre dans le calcul que si son dernier test est probant
   const fiab = useFiabiliteVol();
-  const u = universFiable(reco.data?.univers as Univers | undefined, fiab);
+  const u = universFiable((reco.data?.univers_facteurs ?? reco.data?.univers ?? undefined) as Univers | undefined, fiab);
   // Frontière recalculée sur le téléphone avec les hypothèses de la page Paramètres
   // (repli : celle du serveur si l'univers n'est pas encore publié).
   // Titres exclus / imposés par l'utilisateur : même optimiseur, sur le sous-univers

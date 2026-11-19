@@ -360,7 +360,10 @@ def portefeuille_recommande(market_raw: pd.DataFrame, snapshot: pd.DataFrame) ->
         },
         "frontiere": frontiere_efficiente(R, marche=marche),
         "titres": titres,
-        "univers": ingredients(R, marche),
+        # Nouveau format (forme factorielle) sous une nouvelle clé : les anciennes versions de l'appli,
+        # qui attendent `univers.cov`, voient `univers` vide et affichent la frontière du serveur.
+        "univers": None,
+        "univers_facteurs": ingredients(R, marche),
         "methode": (f"Markowitz (meilleur ratio de Sharpe) parmi les {R.shape[1]} titres du S&P 500 "
                     f"ayant 3 ans d'historique, plafond {int(POIDS_MAX * 100)} % par ligne, "
                     f"au plus {N_MAX_LIGNES} lignes d'au moins {int(POIDS_MIN * 100)} %, "

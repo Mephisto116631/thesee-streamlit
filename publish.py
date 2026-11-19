@@ -456,9 +456,9 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
         reco = portefeuille.portefeuille_recommande(raw, snap)
         if reco:
             if vol_publiee is not None:
-                syms = reco.get("univers", {}).get("symbols", [])
+                syms = (reco.get("univers_facteurs") or {}).get("symbols", [])
                 if syms:
-                    reco["univers"]["vol_ia"] = [float(vol_publiee[s]) if s in vol_publiee else None for s in syms]
+                    reco["univers_facteurs"]["vol_ia"] = [float(vol_publiee[s]) if s in vol_publiee else None for s in syms]
                 for s, t in (reco.get("titres") or {}).items():
                     if s in vol_publiee:
                         t["vol_ia"] = float(vol_publiee[s])

@@ -46,7 +46,7 @@ export function Settings() {
   const reco = useData(api.portefeuilleReco);
   const sync = useData(api.lastSync);
   const fiab = useFiabiliteVol();
-  const u = universFiable(reco.data?.univers as Univers | undefined, fiab);
+  const u = universFiable((reco.data?.univers_facteurs ?? reco.data?.univers ?? undefined) as Univers | undefined, fiab);
   const apercu = useMemo(() => (u ? frontiere(u, p, 10) : []), [u, p.tauxSansRisque, p.primeRisque, p.poidsHistorique, p.poidsMax, p.nMaxLignes, p.poidsMin, p.sourceVol, fiab.probant]);
   const bt = useData(api.backtestVol);
   const impossible = p.poidsMax * p.nMaxLignes < 1 - 1e-9;
@@ -166,7 +166,7 @@ export function Settings() {
 
       <Card title="Ce que le serveur fixe" repliable ouvert={false}>
         <ul class="liste-fixe">
-          <li><b>Candidats</b> : tous les titres du S&P 500 ayant 3 ans d'historique ({(reco.data?.univers?.symbols.length ?? 0) || "~500"} titres),
+          <li><b>Candidats</b> : tous les titres du S&P 500 ayant 3 ans d'historique ({u?.symbols.length || "~500"} titres),
             sans tri préalable. L'ancienne présélection par momentum (ce qui a le plus monté) a été retirée : elle n'a pas été probante.</li>
           <li><b>Exclusion</b> : titres en détresse financière (Z-Score Altman &lt; 1,81).</li>
           <li><b>Estimation</b> : 3 ans de cours quotidiens ; covariance Ledoit-Wolf résumée en 20 facteurs + risque propre de chaque titre

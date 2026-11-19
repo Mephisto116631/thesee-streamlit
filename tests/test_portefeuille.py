@@ -79,7 +79,8 @@ def test_ingredients_coherents():
     """Les ingrédients publiés redonnent exactement les rendements attendus du serveur."""
     raw, snap = _marche(n_titres=21, jours=800)
     reco = pf.portefeuille_recommande(raw, snap)
-    u = reco["univers"]
+    u = reco["univers_facteurs"]
+    assert reco["univers"] is None          # anciennes versions de l'appli : frontière du serveur
     n = len(u["symbols"])
     assert len(u["mu_hist"]) == n and len(u["beta"]) == n
     assert len(u["facteurs"]) == n and len(u["idio"]) == n

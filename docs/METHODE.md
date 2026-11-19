@@ -129,6 +129,9 @@ très bien la volatilité future) : seul ce gain est testé.
   - **Optimiseur** : SLSQP (scipy) est remplacé par le même FISTA que l'appli. La projection sur les contraintes
     se fait par Newton exact.
   - **Temps de calcul** : ~1 s pour une frontière de 500 titres sur le serveur, < 2 s sur le téléphone.
+- **Compatibilité** : le nouveau format est publié dans une nouvelle colonne, `univers_facteurs` (migration V13).
+  Les anciennes versions de l'appli, qui lisent `univers.cov`, trouvent `univers` vide et affichent la frontière
+  calculée par le serveur. Elles n'ont pas d'« Ajuster les titres » tant que l'appli n'est pas mise à jour.
 - **Hypothèse testée** : la base large ne fait pas nettement moins bien que l'ancienne base, en rendement mensuel
   apparié, sur 2013-2026, avec le même moteur.
 - **Règle de décision** : adopter la base large (elle retire un pari non prouvé), **sauf** si elle est nettement moins

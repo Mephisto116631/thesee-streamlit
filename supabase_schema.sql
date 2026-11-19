@@ -357,3 +357,7 @@ alter table sector_medians add column if not exists roe_sec double precision;
 alter table sector_medians add column if not exists rentabilite_brute double precision;
 alter table sector_medians add column if not exists endettement double precision;
 alter table sector_medians add column if not exists part_encaissee double precision;
+
+-- V13 — Univers du portefeuille sous forme factorielle (~500 titres du S&P 500). Nouvelle colonne :
+-- les anciennes versions de l'appli lisent `univers` (vide désormais) et affichent la frontière du serveur.
+alter table portefeuille_recommande add column if not exists univers_facteurs jsonb;
