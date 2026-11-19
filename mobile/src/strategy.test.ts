@@ -74,3 +74,18 @@ describe("indices en %", () => {
     expect(corr(null)).toBe("—");
   });
 });
+
+describe("projection à queues épaisses (règle 5)", () => {
+  it("Student à 5 degrés : CDF exacte et fourchette plus large que la normale", async () => {
+    const { studentCdf5, zStudent5, zConfiance, projection } = await import("./strategy");
+    expect(studentCdf5(0)).toBeCloseTo(0.5, 12);
+    expect(zStudent5(0.9)).toBeCloseTo(2.015, 3);                 // table de Student : t(0,95 ; 5) = 2,015
+    expect(zStudent5(0.95)).toBeCloseTo(2.571, 3);
+    expect(zStudent5(0.9)).toBeGreaterThan(zConfiance(0.9));
+    const n = projection(1000, 0.08, 0.18, 1, 0.08, 0.9, "normale");
+    const t = projection(1000, 0.08, 0.18, 1, 0.08, 0.9, "student5");
+    expect(t.bas).toBeLessThan(n.bas);
+    expect(t.haut).toBeGreaterThan(n.haut);
+    expect(t.median).toBeCloseTo(n.median, 9);
+  });
+});

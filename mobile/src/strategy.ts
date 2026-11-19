@@ -46,7 +46,7 @@ export function choisirPointRisque(frontiere: PointFrontiere[], volMax: number) 
 }
 
 // ---------------------------------------------------------------------------
-// Projection à l'horizon (modèle log-normal) : fourchette et probabilités.
+// Projection à l'horizon (rendements composés, écarts Student à 5 degrés) : fourchette et probabilités.
 // ---------------------------------------------------------------------------
 function erf(x: number) { // Abramowitz-Stegun 7.1.26, précision ~1e-7
   const s = Math.sign(x); x = Math.abs(x);
@@ -65,15 +65,34 @@ export function zConfiance(confiance: number): number {
   return (lo + hi) / 2;
 }
 
-export function projection(capital: number, rendement: number, volatilite: number, annees: number, cible: number, confiance = 0.9) {
+/** Loi de Student à 5 degrés de liberté (forme exacte pour ν = 5). */
+export function studentCdf5(t: number): number {
+  const th = Math.atan(t / Math.sqrt(5)), c = Math.cos(th);
+  return 0.5 + (th + Math.sin(th) * c * (1 + (2 / 3) * c * c)) / Math.PI;
+}
+export function zStudent5(confiance: number): number {
+  const p = 1 - (1 - confiance) / 2;
+  let lo = 0, hi = 20;
+  for (let k = 0; k < 80; k++) { const m = (lo + hi) / 2; if (studentCdf5(m) < p) lo = m; else hi = m; }
+  return (lo + hi) / 2;
+}
+
+/** Loi des écarts de la projection (docs/METHODE.md § 4.9, règle 5) : la fourchette « mauvais cas 5 % » de la
+ *  loi normale a été touchée 8,8 % des fois au backtest 2006-2026 (> 7,5 %) : on passe à une loi de Student
+ *  à 5 degrés de liberté, d'échelle σ (queues plus épaisses : 90 % des scénarios dans ±2,02 σ au lieu de ±1,64 σ). */
+export const LOI_PROJECTION: "normale" | "student5" = "student5";
+
+export function projection(capital: number, rendement: number, volatilite: number, annees: number, cible: number, confiance = 0.9,
+  loi: "normale" | "student5" = LOI_PROJECTION) {
   const m = (Math.log(1 + rendement) - (volatilite * volatilite) / 2) * annees; // moyenne du log-rendement
   const s = Math.max(1e-9, volatilite * Math.sqrt(annees));
   const q = (z: number) => capital * Math.exp(m + z * s);
-  const z = zConfiance(confiance);
+  const z = loi === "student5" ? zStudent5(confiance) : zConfiance(confiance);
+  const F = loi === "student5" ? studentCdf5 : normCdf;
   return {
-    bas: q(-z), median: q(0), haut: q(z), m, s, z,              // `confiance` des scénarios entre bas et haut
-    probPerte: normCdf(-m / s),
-    probObjectif: normCdf((m - annees * Math.log(1 + cible)) / s),
+    bas: q(-z), median: q(0), haut: q(z), m, s, z, loi,          // `confiance` des scénarios entre bas et haut
+    probPerte: F(-m / s),
+    probObjectif: F((m - annees * Math.log(1 + cible)) / s),
     valeurObjectif: capital * Math.pow(1 + cible, annees),
   };
 }

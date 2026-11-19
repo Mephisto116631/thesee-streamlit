@@ -210,6 +210,8 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
                     for nom_pf in ["sharpe_max", "risque_15"]:
                         c["rythmes"][f"{nom_pf}_{rythme}m"] = bt.backtest_reel(res, px, nom_pf, "hybride", revision_mois=rythme)
                 c["couverture"] = {var: bt.couverture_fourchette(res, px, "sharpe_max", var) for var in ["hist_3a", "hybride"]}
+                # Règle 5 : loi de Student à 5 degrés (90 % des scénarios dans ±2,015 σ), revérifiée
+                c["couverture"]["hybride_student5"] = bt.couverture_fourchette(res, px, "sharpe_max", "hybride", z=2.015)
                 c["debut"] = str(pd.Timestamp(res["date"].min()).date())
                 parts = [m["part_respectee_avec_marge"] for m in c["marges"].values() if m["part_respectee_avec_marge"] is not None]
                 ok = bool(parts) and min(parts) >= 0.70                 # règle 3 : au moins 70 % des semestres

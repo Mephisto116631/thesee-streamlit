@@ -134,10 +134,11 @@ export function Calculs({ section }: { section?: string }) {
           calcul={<>T = {num(h.annees, 2)} an → m = {num(pr.m, 4)}, s = {num(pr.s, 4)}</>} />
         <Etape titre="Fourchette" formule={`valeur = capital × exp(m ± z × s),  z = ${num(pr.z, 3)} (${pct(p.confiance, 0, false)} des scénarios)`}
           definition={<>Mauvais cas, cas médian et bon cas : {pct(p.confiance, 0, false)} des scénarios finissent entre le bas et le haut.
-            <b> z</b> = nombre d'écarts-types correspondant.</>}
+            <b> z</b> = nombre d'écarts-types correspondant, pris dans une <b>loi de Student à 5 degrés</b> (queues plus épaisses que
+            la loi normale) : au backtest 2006-2026, la loi normale sous-estimait les mauvaises années (mauvais cas 5 % touché 8,8 % du temps).</>}
           calcul={<>bas {num(pr.bas, 2)} € · médian {num(pr.median, 2)} € · haut {num(pr.haut, 2)} €</>} />
         <Etape titre="Probabilité de perte" formule="P(perte) = Φ(−m / s)"
-          definition={<>La part des scénarios où tu récupères moins que ta mise. <b>Φ</b> (phi) = probabilité qu'une loi normale soit sous une valeur.</>} calcul={<>Φ({num(-pr.m / pr.s, 3)}) = <b>{pct(pr.probPerte, 1, false)}</b></>} />
+          definition={<>La part des scénarios où tu récupères moins que ta mise. <b>Φ</b> (phi) = probabilité que la loi (ici Student à 5 degrés) soit sous une valeur.</>} calcul={<>Φ({num(-pr.m / pr.s, 3)}) = <b>{pct(pr.probPerte, 1, false)}</b></>} />
         <Etape titre="Probabilité d'atteindre l'objectif" formule="P = Φ((m − T × ln(1 + objectif)) / s)"
           definition={<>La part des scénarios qui atteignent la rentabilité visée sur toute la durée.</>}
           calcul={<>Φ({num((pr.m - h.annees * Math.log(1 + e.cible)) / pr.s, 3)}) = <b>{pct(pr.probObjectif, 1, false)}</b> (valeur visée {num(pr.valeurObjectif, 2)} €)</>}>

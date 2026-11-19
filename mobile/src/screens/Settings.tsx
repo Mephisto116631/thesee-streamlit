@@ -182,7 +182,7 @@ export function Settings() {
             (variance de chaque titre exacte) ; bêta mesuré contre SPY.</li>
           <li><b>Optimisation</b> : même algorithme sur le serveur et le téléphone (gradient projeté accéléré, FISTA).
             Historique des choix : docs/METHODE.md du dépôt.</li>
-          <li><b>Projection à l'horizon</b> : modèle log-normal ; fourchette = 90 % des scénarios.</li>
+          <li><b>Projection à l'horizon</b> : rendements composés, écarts selon une loi de Student à 5 degrés (queues épaisses) ; fourchette = 90 % des scénarios.</li>
           <li><b>Données</b> : synchronisation {sync.data ? ilYA(sync.data.finished_at ?? sync.data.started_at) : "—"}
             {reco.data?.updated_at && <> · candidats du {dateFr(reco.data.updated_at)}</>}.</li>
         </ul>

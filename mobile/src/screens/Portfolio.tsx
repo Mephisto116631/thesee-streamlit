@@ -62,7 +62,10 @@ export function usePortefeuilleCible() {
   // Meilleure rentabilité de long terme possible pour le risque du portefeuille choisi (frontière)
   const maxAuRisque = choix ? Math.max(...frontiere.filter((f) => f.volatilite <= choix.point.volatilite + 0.0025).map((f) => f.rendement)) : null;
   const revisionInfo = { date: revision?.date ?? null, prochaine: prochaineRevision(params.rythmeRevision ?? 6) };
-  const margeInfo = { m: marge, part: margeRun?.diagnostics?.part_respectee as number | undefined,
+  // Part des semestres où la limite a été tenue, pour la limite testée la plus proche (10, 12, 15, 18 %)
+  const marges = (margeRun?.diagnostics?.marges ?? {}) as Record<string, { part_respectee_avec_marge?: number; marge_actuelle?: number }>;
+  const cle = Object.keys(marges).sort((a, b) => Math.abs(+a / 100 - e.volMax) - Math.abs(+b / 100 - e.volMax))[0];
+  const margeInfo = { m: marge, part: cle ? marges[cle]?.part_respectee_avec_marge : undefined, limiteTestee: cle ? +cle / 100 : undefined,
     depuis: margeRun?.diagnostics?.depuis as string | undefined, connue: Boolean(margeRun) };
   return { e, maj, reco, ov, snap, h, params, u, frontiere, modifies, choix, volIA, volHistDe, volIADe, lignes, fiab, maxAuRisque,
     revisionInfo, margeInfo };
@@ -135,9 +138,10 @@ export function Portfolio() {
             <div class="range-labels"><span>8 % calme</span><span>≈ 18 % S&P 500</span><span>35 % agité</span></div>
             {margeInfo.connue ? (
               <p class="hint">Visé : <b>{pct(e.volMax * margeInfo.m, 1, false)}</b> pour tenir ta limite de {pct(e.volMax, 0, false)}
-                {margeInfo.part != null && <> · respectée {pct(margeInfo.part, 0, false)} des semestres depuis {String(margeInfo.depuis ?? "").slice(0, 4)}</>}.
-                <Info>Le risque réel dépasse souvent le risque prévu. L'appli vise donc un peu en dessous de ta limite : la marge est
-                  apprise sur le passé seulement, pour tenir la limite au moins 70 % des semestres.</Info></p>
+                {margeInfo.part != null && <> · une limite de {pct(margeInfo.limiteTestee, 0, false)} a été tenue <b class={margeInfo.part < 0.7 ? "down" : ""}>{pct(margeInfo.part, 0, false)}</b> des semestres depuis {String(margeInfo.depuis ?? "").slice(0, 4)}</>}.
+                <Info>Le risque réel varie plus que prévu. L'appli vise donc un peu en dessous de ta limite (marge apprise sur le passé
+                  seulement). Même ainsi, une limite basse est souvent dépassée : avec 12 titres au plus, le portefeuille ne peut pas être
+                  aussi calme qu'un indice, et les crises font grimper le risque de tous les titres en même temps.</Info></p>
             ) : <p class="hint">Par le passé, cette limite a souvent été dépassée : le risque réel varie plus que prévu.</p>}
           </div>
         )}
