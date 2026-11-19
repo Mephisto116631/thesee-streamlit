@@ -39,7 +39,7 @@ export function PlanAchat({ capital, lignes, prix, eurusd, annees, mode = "hold"
 
   return (
     <>
-      <Card title="Plan d'achat" class="tint-accent">
+      <Card title="Passer les ordres" class="tint-accent" repliable id="ordres">
         <p class="hint" style={{ marginTop: 0 }}>
           Frais {num(r.fraisOrdre, 2)} € par ordre · change {pct(r.fraisChange, 2, false)} · {r.fractions ? "fractions d'actions" : "actions entières"} ·
           prix limite + {pct(r.margeLimite ?? 0, 1, false)} — <a href="#/parametres">modifier dans Paramètres</a>
@@ -140,7 +140,7 @@ export function PlanAchat({ capital, lignes, prix, eurusd, annees, mode = "hold"
         </Details>
       </Card>
 
-      <Card title="Coût des frais">
+      <Card title="Ce que coûtent les frais" repliable ouvert={false} id="frais">
         <div class="stats">
           <Stat label="Ordres" value={String(plan.nbOrdres)} sub={`${num(plan.fraisOrdres, 2)} € de frais`} />
           <Stat label="Change" value={`${num(plan.fraisChangeEur, 2)} €`} sub={`taux 1 € = ${num(fx, 4)} $${eurusd ? "" : " (estimé)"}`} />

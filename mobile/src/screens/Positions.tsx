@@ -6,6 +6,7 @@ import {
 import { Card, Details, Loading, Stat, useData } from "../components";
 import { dateFr, num, pct, signClass } from "../format";
 import { useParametres } from "../settings";
+import { PlanAchat } from "./PlanAchat";
 
 const EURUSD_SECOURS = 1.08;
 
@@ -93,6 +94,10 @@ function MesPositions({ email, cible }: { email: string; cible: { symbol: string
     return { sym, w, wc, ajuste: (wc - w) * total };
   }).filter((e) => Math.abs(e.w - e.wc) > 0.005).sort((a, b) => Math.abs(b.ajuste) - Math.abs(a.ajuste));
   const depasse = lignes.filter((l) => total > 0 && (l.valeur ?? 0) / total > p.seuilReequilibrage);
+  // Ordres pour revenir à la cible : on prépare directement les achats (mêmes outils que dans Portefeuille)
+  const achats = ecarts.filter((e) => e.ajuste > 1);
+  const totAchat = achats.reduce((a, e) => a + e.ajuste, 0);
+  const prixUsd = Object.fromEntries((snap.data ?? []).map((x) => [x.symbol, x.close]));
 
   return (
     <>
@@ -124,7 +129,7 @@ function MesPositions({ email, cible }: { email: string; cible: { symbol: string
       </Card>
 
       {cible.length > 0 && total > 0 && (
-        <Card title="Écart avec ma cible (onglet Hold)">
+        <Card title="Pour revenir au portefeuille conseillé">
           {!ecarts.length ? <p class="hint">Ton portefeuille correspond à la cible.</p> : (
             <table class="table small">
               <thead><tr><th>Titre</th><th>Actuel</th><th>Cible</th><th>À ajuster</th></tr></thead>
@@ -135,8 +140,13 @@ function MesPositions({ email, cible }: { email: string; cible: { symbol: string
             </table>
           )}
           <p class="hint">En hold, inutile de suivre chaque changement de la cible : rééquilibre une fois par an, ou si une ligne dépasse
-            {" "}{pct(p.seuilReequilibrage, 0, false)}.</p>
+            {" "}{pct(p.seuilReequilibrage, 0, false)}. Les ventes se passent directement dans ton appli de courtier ; les achats sont préparés ci-dessous.</p>
+          <a class="verifier" href="#/portefeuille">Voir le portefeuille conseillé ›</a>
         </Card>
+      )}
+      {cible.length > 0 && total > 0 && achats.length > 0 && (
+        <PlanAchat capital={totAchat} lignes={achats.map((e) => ({ symbol: e.sym, poids: e.ajuste / totAchat }))}
+          prix={prixUsd} eurusd={ov.data?.eurusd ?? null} annees={1} />
       )}
 
       <Card>

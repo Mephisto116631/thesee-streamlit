@@ -71,3 +71,21 @@ describe("volatilité prévue par l'IA", () => {
     expect(trop.point.volatilite).toBe(0.08);
   });
 });
+
+describe("ajuster les titres", () => {
+  it("exclut un titre et en impose un autre, avec le même optimiseur", async () => {
+    const { sousUnivers, frontiere: f } = await import("./optim");
+    const fs = await import("node:fs");
+    const u = JSON.parse(fs.readFileSync(new URL("./fixtures/univers-test.json", import.meta.url), "utf8")).univers;
+    const h = { tauxSansRisque: 0.0435, primeRisque: 0.05, poidsHistorique: 0.1, poidsMax: 0.2, nMaxLignes: 12, poidsMin: 0.03 };
+    const base = f(u, h);
+    const meilleur = base[base.length - 1].lignes[0].symbol;
+    const sans = f(sousUnivers(u, [meilleur]), h);
+    expect(sans.every((p) => p.lignes.every((l) => l.symbol !== meilleur))).toBe(true);
+    const absent = u.symbols.find((s: string) => !base.some((p) => p.lignes.some((l) => l.symbol === s)));
+    if (absent) {
+      const avec = f(u, { ...h, imposes: [absent] });
+      expect(avec.every((p) => p.lignes.some((l) => l.symbol === absent && l.poids >= 0.03 - 1e-6))).toBe(true);
+    }
+  });
+});

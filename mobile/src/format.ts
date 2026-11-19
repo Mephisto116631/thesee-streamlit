@@ -31,3 +31,12 @@ export function ilYA(iso: string | null | undefined): string {
 
 export const signClass = (v: number | null | undefined) =>
   v === null || v === undefined ? "" : v > 0 ? "up" : v < 0 ? "down" : "";
+
+/** Corrélation ou IC affiché en % (0,077 -> « 7,7 % »). */
+export const corr = (v: number | null | undefined, d = 1) =>
+  v === null || v === undefined || Number.isNaN(v) ? "—" : `${(v * 100).toLocaleString("fr-FR", { maximumFractionDigits: d, minimumFractionDigits: d })} %`;
+/** Spread en points de base affiché en % (305 pb -> « 3,05 % »). */
+export const pb = (v: number | null | undefined) =>
+  v === null || v === undefined || Number.isNaN(v) ? "—" : `${(v / 100).toLocaleString("fr-FR", { maximumFractionDigits: 2, minimumFractionDigits: 2 })} %`;
+/** Rendement / risque en % (0,57 -> « 57 % »). */
+export const ratioPct = (rendement: number, vol: number) => `${Math.round((rendement / Math.max(vol, 1e-9)) * 100)} %`;

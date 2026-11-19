@@ -175,13 +175,66 @@ export function HelpButton({ keys, intro }: { keys: string[]; intro?: ComponentC
   );
 }
 
-export function Card({ title, right, children, class: cls = "" }:
-  { title?: ComponentChildren; right?: ComponentChildren; children: ComponentChildren; class?: string }) {
+const CLE_REPLIS = "thesee:replis:v1";
+const lireReplis = (): Record<string, boolean> => { try { return JSON.parse(localStorage.getItem(CLE_REPLIS) ?? "{}"); } catch { return {}; } };
+
+/** Carte. `repliable` : l'en-tête ouvre/ferme le contenu (état mémorisé par titre) ; `ouvert` = état initial. */
+export function Card({ title, right, children, class: cls = "", repliable = false, ouvert = true, id }:
+  { title?: ComponentChildren; right?: ComponentChildren; children: ComponentChildren; class?: string;
+    repliable?: boolean; ouvert?: boolean; id?: string }) {
+  const cle = id ?? (typeof title === "string" ? title : "");
+  const [estOuvert, setOuvert] = useState<boolean>(() => (repliable && cle in lireReplis() ? lireReplis()[cle] : ouvert));
+  const basculer = () => {
+    const n = !estOuvert;
+    setOuvert(n);
+    try { localStorage.setItem(CLE_REPLIS, JSON.stringify({ ...lireReplis(), [cle]: n })); } catch { /* ignore */ }
+  };
+  if (!repliable) {
+    return (
+      <section class={`card ${cls}`} id={id}>
+        {(title || right) && <div class="card-head"><h2>{title}</h2>{right}</div>}
+        {children}
+      </section>
+    );
+  }
   return (
-    <section class={`card ${cls}`}>
-      {(title || right) && <div class="card-head"><h2>{title}</h2>{right}</div>}
-      {children}
+    <section class={`card repliable ${estOuvert ? "ouvert" : ""} ${cls}`} id={id}>
+      <div class="card-head">
+        <button class="card-toggle" aria-expanded={estOuvert} onClick={basculer}>
+          <span class="chevron" aria-hidden="true">›</span><h2>{title}</h2>
+        </button>
+        {right}
+      </div>
+      {estOuvert && <div class="card-body">{children}</div>}
     </section>
+  );
+}
+
+/** Lien discret vers la section de vérification correspondante (Fiche de calculs, modèles…). */
+export function Verifier({ href, label = "Vérifier ce calcul" }: { href: string; label?: string }) {
+  return <a class="verifier" href={href}>{label} ›</a>;
+}
+
+/** Info-bulle : un « i » qui déplie une explication courte. */
+export function Info({ children }: { children: ComponentChildren }) {
+  const [o, setO] = useState(false);
+  return (
+    <span class="info">
+      <button class="info-btn" aria-label="Explication" aria-expanded={o} onClick={(e) => { e.stopPropagation(); setO(!o); }}>i</button>
+      {o && <span class="info-txt" role="note">{children}</span>}
+    </span>
+  );
+}
+
+/** Barre « hasard ↔ probant » : position du t par rapport au seuil exigé. */
+export function BarreSeuil({ t, seuil }: { t: number | null | undefined; seuil: number | null | undefined }) {
+  if (t == null || seuil == null || seuil <= 0) return null;
+  const r = Math.max(0, Math.min(1.5, t / seuil));
+  return (
+    <div class="barre-seuil" title={`t = ${t.toFixed(1)} pour un seuil de ${seuil.toFixed(1)}`}>
+      <div class="piste"><div class={`rempli ${r >= 1 ? "ok" : ""}`} style={{ width: `${(r / 1.5) * 100}%` }} /><span class="repere" /></div>
+      <small>{r >= 1 ? "probant" : r >= 0.66 ? "proche du seuil" : "hasard possible"}</small>
+    </div>
   );
 }
 

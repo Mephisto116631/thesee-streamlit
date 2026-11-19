@@ -79,7 +79,7 @@ export function Settings() {
         <p class="hint">Rentabilités attendues par an. Elles se recalculent sur le téléphone à chaque changement, l'onglet Portefeuille aussi.</p>
       </Card>
 
-      <Card title="Rentabilité attendue des titres">
+      <Card title="Rentabilité attendue des titres" repliable ouvert={false}>
         <Champ p={p} k="tauxSansRisque" label="Taux sans risque" min={0} max={10} pas={0.05}
           aide="Rendement d'un placement sans risque en dollars (bons du Trésor US). Sert de base à tous les rendements attendus." />
         <Champ p={p} k="primeRisque" label="Prime de risque actions" min={0} max={12} pas={0.25}
@@ -88,7 +88,7 @@ export function Settings() {
           aide="Poids du rendement des 3 dernières années dans l'estimation (le reste vient du modèle CAPM). Les titres étant choisis parce qu'ils ont monté, une part élevée rend les estimations trop optimistes." />
       </Card>
 
-      <Card title="Construction du portefeuille">
+      <Card title="Construction du portefeuille" repliable ouvert={false}>
         <Champ p={p} k="poidsMax" label="Plafond par titre" min={5} max={100} pas={1} decimales={0}
           aide="Part maximale d'un seul titre. Plus bas = plus diversifié, mais rentabilité maximale plus faible." />
         <Champ p={p} k="nMaxLignes" label="Nombre maximal de lignes" pctAff={false} min={1} max={40} pas={1}
@@ -97,7 +97,7 @@ export function Settings() {
           aide="Les lignes plus petites sont supprimées et le portefeuille est ré-optimisé sans elles." />
       </Card>
 
-      <Card title="Risque du portefeuille">
+      <Card title="Risque du portefeuille" repliable ouvert={false}>
         <div class="field">Volatilité utilisée pour construire le portefeuille
           <div class="seg full" role="group" aria-label="Source de volatilité">
             <button class={p.sourceVol !== "ia" ? "on" : ""} onClick={() => ecrireParametres({ sourceVol: "historique" })}>Historique 3 ans</button>
@@ -127,7 +127,7 @@ export function Settings() {
         )}
       </Card>
 
-      <Card title="Passage des ordres" right={<button class="link" onClick={() => ecrireParametres(PRESET_TRADE_REPUBLIC)}>Préréglage Trade Republic</button>}>
+      <Card title="Passage des ordres" repliable ouvert={false} right={<button class="link" onClick={() => ecrireParametres(PRESET_TRADE_REPUBLIC)}>Préréglage Trade Republic</button>}>
         <div class="param">
           <span class="param-tete"><span>Devise des prix d'ordre</span></span>
           <div class="seg full" role="group" aria-label="Devise">
@@ -149,7 +149,7 @@ export function Settings() {
         </label>
       </Card>
 
-      <Card title="Projection et suivi">
+      <Card title="Projection et suivi" repliable ouvert={false}>
         <div class="param">
           <span class="param-tete"><span>Niveau de la fourchette</span></span>
           <div class="seg full" role="group" aria-label="Niveau de confiance">
@@ -162,7 +162,7 @@ export function Settings() {
           aide="En hold, rééquilibrer (une fois par an) dès qu'une ligne dépasse ce poids à cause de sa hausse." />
       </Card>
 
-      <Card title="Mode court terme">
+      <Card title="Mode court terme" repliable ouvert={false}>
         <Champ p={p} k="ctNbTitres" label="Nombre de titres" pctAff={false} min={1} max={30} pas={1}
           aide="Les N titres les mieux classés par le modèle 1 mois." />
         <Champ p={p} k="ctScoreMin" label="Score IA minimal" min={50} max={99} pas={1} decimales={0}
@@ -177,12 +177,12 @@ export function Settings() {
         </div>
       </Card>
 
-      <Card title="Fourchettes de lecture des indicateurs">
+      <Card title="Fourchettes de lecture des indicateurs" repliable ouvert={false}>
         <p class="hint" style={{ marginTop: 0 }}>Seuils qui colorent les indicateurs (rouge / gris / vert). Valeurs en %, sauf multiples (x) et points.</p>
         {Object.entries(RANGES).map(([k, r]) => <LigneBornes k={k} r={r} />)}
       </Card>
 
-      <Card title="Hypothèses du serveur (fixes)">
+      <Card title="Hypothèses du serveur (fixes)" repliable ouvert={false}>
         <ul class="liste-fixe">
           <li><b>Candidats</b> : les 40 meilleurs titres par momentum 12-1 mois divisé par la volatilité (S&P 500, Nasdaq-100, ETF).</li>
           <li><b>Exclusion</b> : titres en détresse financière (Z-Score Altman &lt; 1,81).</li>
@@ -193,7 +193,7 @@ export function Settings() {
         </ul>
       </Card>
 
-      <Card title="Application">
+      <Card title="Application" repliable ouvert={false}>
         <div class="stats">
           <Stat label="Version installée" value={VERSION} sub={estNatif() ? "application Android" : "version web"} />
         </div>
@@ -217,7 +217,7 @@ export function Settings() {
           Remettre toutes les hypothèses par défaut</button>
       </Card>
 
-      <Card title="Calculs du serveur">
+      <Card title="Calculs du serveur" repliable ouvert={false}>
         <Relance />
       </Card>
 

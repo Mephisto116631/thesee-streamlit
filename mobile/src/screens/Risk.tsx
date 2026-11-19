@@ -1,7 +1,7 @@
 import { useCallback, useState } from "preact/hooks";
 import { api, type ModelRun } from "../api";
-import { Card, ChartBox, cssVar, Details, HelpButton, Loading, OfflineNote, RangeBar, Stat, toneOf, useData, ZoneBadge, RefreshButton } from "../components";
-import { dateFr, ilYA, num, pct, signClass } from "../format";
+import { BarreSeuil, Card, ChartBox, cssVar, Details, HelpButton, Loading, OfflineNote, RangeBar, Stat, toneOf, useData, ZoneBadge, RefreshButton } from "../components";
+import { corr, dateFr, ilYA, num, pb, pct, signClass } from "../format";
 import { Relance } from "./Relance";
 import { isIG } from "./Stock";
 
@@ -53,18 +53,18 @@ function Credit({ go }: { go: (h: string) => void }) {
     <>
       <OfflineNote res={ov.res} />
       {o && (
-        <Card title="Spreads aujourd'hui vs 10 ans">
+        <Card title="Combien coûte d'emprunter pour les entreprises ?">
           <div class="stats">
-            <Stat label="High Yield" value={`${Math.round(o.hy_spread_bp ?? 0)} pb`} sub={`fourchette ${Math.round(o.hy_min_10y ?? 0)}–${Math.round(o.hy_max_10y ?? 0)}`} />
-            <Stat label="Investment Grade" value={`${Math.round(o.ig_spread_bp ?? 0)} pb`} sub={`fourchette ${Math.round(o.ig_min_10y ?? 0)}–${Math.round(o.ig_max_10y ?? 0)}`} />
+            <Stat label="High Yield" value={pb(o.hy_spread_bp)} sub={`fourchette 10 ans ${pb(o.hy_min_10y)} – ${pb(o.hy_max_10y)}`} />
+            <Stat label="Investment Grade" value={pb(o.ig_spread_bp)} sub={`fourchette 10 ans ${pb(o.ig_min_10y)} – ${pb(o.ig_max_10y)}`} />
           </div>
           <RangeBar k="spread_pct" v={o.hy_pct_10y} median={50} medianLabel="médiane 10 ans" />
         </Card>
       )}
-      <Card title="Historique 3 ans (source FRED)">
+      <Card title="Historique 3 ans (source FRED)" repliable ouvert={false}>
         {sp.loading && !sp.data?.length ? <Loading /> : sp.data?.length ? <ChartBox config={cfg} height={230} label="Spreads de crédit High Yield et Investment Grade sur 3 ans" /> : <p class="hint">Pas de données FRED (clé FRED_API_KEY absente du cron ?).</p>}
       </Card>
-      <Card title="Santé financière des titres suivis">
+      <Card title="Santé financière des titres suivis" repliable ouvert={false}>
         {!z.length ? <p class="hint">Aucun Z-Score publié.</p> : (
           <table class="table">
             <thead><tr><th>Titre</th><th>Z-Score</th><th>Note S&P</th></tr></thead>
@@ -157,26 +157,27 @@ function HorizonView({ m }: { m: ModelRun }) {
   const maxQ = Math.max(1e-9, ...q.map((x) => Math.abs(x ?? 0)));
   return (
     <>
-      <Card title="Verdict" class={`edge-${v.ton}`} right={<small class="muted">entraîné {ilYA(m.trained_at)}</small>}>
+      <Card title="Le modèle est-il fiable ?" class={`edge-${v.ton}`} right={<small class="muted">entraîné {ilYA(m.trained_at)}</small>}>
         <p class="verdict"><span class={`badge ${v.ton}`}>{v.nom}</span> {v.txt}</p>
         <div class="note">Classement utilisé : <b>{SOURCES[d.source as string] ?? "modèle IA"}</b>.
           {d.source !== "modele" && " Le modèle IA (XGBoost) a fait moins bien en test : il reste entraîné à chaque calcul et reprendra la main s'il devient meilleur."}
           {d.debut_test && <> Testé depuis {dateFr(d.debut_test)} (données depuis {dateFr(d.debut_donnees)}) : environ {num(d.n_effectif, 0)} périodes indépendantes.</>}
           {d.seuil_t != null && <> « Signal » exige t &gt; {num(d.seuil_t, 1)} (seuil relevé : peu de périodes et meilleur de 3 classements).</>}
+          <BarreSeuil t={d.source === "momentum" ? d.t_momentum : d.source === "multifacteurs" ? d.t_multifacteurs : d.t_stat} seuil={d.seuil_t} />
           {d.config_libelle && <> Réglage du modèle IA : {d.config_libelle}, choisi sur le passé uniquement.</>}</div>
         <div class="stats">
-          <Stat label="IC modèle IA" value={num(d.ic_moyen, 3)} sub={`t = ${num(d.t_stat, 1)}`} tone={d.source === "modele" ? v.ton : "neutral"} />
-          <Stat label="IC momentum" value={num(d.ic_momentum, 3)} sub={`t = ${num(d.t_momentum, 1)}`} tone={d.source === "momentum" ? v.ton : "neutral"} />
-          <Stat label="IC multi-facteurs" value={num(d.ic_multifacteurs, 3)} sub={`t = ${num(d.t_multifacteurs, 1)}`} tone={d.source === "multifacteurs" ? v.ton : "neutral"} />
+          <Stat label="IC modèle IA" value={corr(d.ic_moyen)} sub={`t = ${num(d.t_stat, 1)}`} tone={d.source === "modele" ? v.ton : "neutral"} />
+          <Stat label="IC momentum" value={corr(d.ic_momentum)} sub={`t = ${num(d.t_momentum, 1)}`} tone={d.source === "momentum" ? v.ton : "neutral"} />
+          <Stat label="IC multi-facteurs" value={corr(d.ic_multifacteurs)} sub={`t = ${num(d.t_multifacteurs, 1)}`} tone={d.source === "multifacteurs" ? v.ton : "neutral"} />
         </div>
         <p class="hint">L'<b>IC</b> (« Information Coefficient », coefficient d'information) mesure, date par date, si les titres classés en tête ont réellement fait mieux
-          que les autres sur les {d.horizon_jours} jours de bourse suivants (corrélation de rang, de −1 à +1). En gestion, un IC de 0,05 stable est déjà bon.
+          que les autres sur les {d.horizon_jours} jours de bourse suivants (corrélation de rang, de −100 % à +100 %). En gestion, un IC de 5 % stable est déjà bon.
           Le <b>t</b> (statistique de Student) dit si l'IC moyen se distingue du hasard : plus il est grand, moins le résultat
           peut être un coup de chance.</p>
       </Card>
 
       {q.length === 5 && (
-        <Card title="Performance relative par quintile (modèle IA)">
+        <Card title="Les titres les mieux classés ont-ils fait mieux ?" repliable ouvert={false} id="quintiles">
           <ul class="imp">{q.map((x, i) => (
             <li><span>{["Q1 (les moins bien classés)", "Q2", "Q3", "Q4", "Q5 (les mieux classés)"][i]}</span>
               <div class="qbar"><div class={x >= 0 ? "pos" : "neg"} style={{ width: `${(Math.abs(x) / maxQ) * 50}%`, [x >= 0 ? "left" : "right"]: "50%" }} /></div>
@@ -188,31 +189,31 @@ function HorizonView({ m }: { m: ModelRun }) {
         </Card>
       )}
 
-      <Card title="Ce qui compte pour le modèle">
+      <Card title="Ce qui compte pour le modèle" repliable ouvert={false}>
         <ul class="imp">{imp.map((x) => (
           <li><span>{x.label}</span><div class="wbar"><div style={{ width: `${(x.importance / maxImp) * 100}%` }} /></div><b class="imp-val">{pct(x.importance / totImp, 0, false)}</b></li>
         ))}</ul>
       </Card>
 
       {d.controles && (
-        <Card title="Contrôles anti-biais">
+        <Card title="Contrôles anti-biais" repliable ouvert={false}>
           <table class="table small">
             <thead><tr><th>Facteur</th><th>Le modèle favorise</th><th>En réalité, ont fait mieux</th></tr></thead>
             <tbody>{Object.keys(SENS).filter((f) => d.controles.facteurs?.[f]).map((f) => {
               const c = d.controles.facteurs[f];
               return <tr><td>{SENS[f][0]}</td>
-                <td>{sens(f, c.modele, 0.05)} <small class="muted">({num(c.modele, 2)})</small></td>
-                <td>{sens(f, c.realite, 0.01)} <small class="muted">(IC {num(c.realite, 3)})</small></td></tr>;
+                <td>{sens(f, c.modele, 0.05)} <small class="muted">({corr(c.modele, 0)})</small></td>
+                <td>{sens(f, c.realite, 0.01)} <small class="muted">(IC {corr(c.realite)})</small></td></tr>;
             })}</tbody>
           </table>
           <div class="stats">
-            <Stat label="IC chez les grandes valeurs" value={num(d.controles.ic_grandes, 3)} tone={(d.controles.ic_grandes ?? 0) > 0.02 ? "good" : "neutral"} />
-            <Stat label="IC chez les petites valeurs" value={num(d.controles.ic_petites, 3)} tone="neutral" />
+            <Stat label="IC chez les grandes valeurs" value={corr(d.controles.ic_grandes)} tone={(d.controles.ic_grandes ?? 0) > 0.02 ? "good" : "neutral"} />
+            <Stat label="IC chez les petites valeurs" value={corr(d.controles.ic_petites)} tone="neutral" />
           </div>
           <p class="hint">Les cours des entreprises disparues (faillites) manquent : ce sont surtout des petites valeurs très volatiles.
             Si le modèle favorise les titres <b>petits et volatils</b> et ne marche que chez les petites valeurs, son résultat est suspect.
             S'il marche aussi chez les <b>grandes valeurs</b> (moitié la plus échangée, rarement disparue par faillite), il est plus crédible.
-            Colonne « modèle » : corrélation entre le score et le facteur (de −1 à +1).</p>
+            Colonne « modèle » : corrélation entre le score et le facteur (de −100 % à +100 %).</p>
         </Card>
       )}
 
@@ -220,7 +221,7 @@ function HorizonView({ m }: { m: ModelRun }) {
         <Details summary="Détails de l'évaluation">
           <table class="table small">
             <thead><tr><th>Période de test</th><th>IC</th><th>Dates</th><th>Réglage</th></tr></thead>
-            <tbody>{(d.fenetres ?? []).map((f: any) => <tr><td>{dateFr(f.debut)} → {dateFr(f.fin)}</td><td class={signClass(f.ic)}>{num(f.ic, 3)}</td><td>{f.n_dates}</td><td class="muted">{LIBELLES_CONFIG[f.config] ?? "—"}</td></tr>)}</tbody>
+            <tbody>{(d.fenetres ?? []).map((f: any) => <tr><td>{dateFr(f.debut)} → {dateFr(f.fin)}</td><td class={signClass(f.ic)}>{corr(f.ic)}</td><td>{f.n_dates}</td><td class="muted">{LIBELLES_CONFIG[f.config] ?? "—"}</td></tr>)}</tbody>
           </table>
           <p class="hint">Validation « walk-forward » : le modèle est entraîné sur le passé puis testé sur la période suivante,
             avec un écart de {d.horizon_jours} jours de bourse entre les deux pour qu'il ne voie jamais le futur. {d.n_dates_test} dates testées,
@@ -307,6 +308,14 @@ function ModelView({ m }: { m: ModelRun }) {
   );
 }
 
+const NOMS_LABO: Record<string, string> = {
+  reference: "Modèle publié", alpha: "Sans effet marché (alpha)", alpha_secteur: "Alpha par secteur",
+  alpha_secteur_sans_taille: "Alpha par secteur, sans la taille", fondamentaux: "Cours + comptes des entreprises",
+  fondamentaux_seuls: "Comptes des entreprises seuls", risque_volatilite: "IA de risque : volatilité",
+  risque_perte_max: "IA de risque : perte maximale", backtest_volatilite_sharpe_max: "Portefeuille avec la volatilité IA",
+  backtest_volatilite_variance_min: "Portefeuille le plus calme avec la volatilité IA",
+};
+
 /** Laboratoire : variantes du modèle essayées sans toucher aux scores publiés (experiences.py). */
 function Laboratoire() {
   const ex = useData(api.experiences);
@@ -315,34 +324,27 @@ function Laboratoire() {
   // Dernier résultat de chaque variante × horizon (les lots peuvent ne relancer qu'une partie des essais)
   const vus = new Set<string>();
   const lot = lignes.filter((e) => { const k = `${e.nom}|${e.horizon}`; if (vus.has(k)) return false; vus.add(k); return true; }).reverse();
-  const dernier = lignes[0].lot;
   const n = Math.max(...lot.filter((e) => !e.nom.startsWith("risque") && !e.nom.startsWith("backtest")).map((e) => e.n_essais ?? 0), 0);
+  const hz = (h: string) => (h === "1a" ? "1 an" : h === "6m" ? "6 mois" : h === "1m" ? "chaque mois" : h);
   return (
-    <Card title="Laboratoire" right={<small class="muted">essais du {dernier}</small>}>
-      <table class="table small">
-        <thead><tr><th>Variante</th><th>Horizon</th><th>IC</th><th>t / seuil</th><th>Hausse · baisse</th></tr></thead>
-        <tbody>{lot.map((e) => (
-          <tr>
-            <td><b>{e.nom}</b>{e.verdict === "probant" && <span class="badge good"> probant</span>}</td>
-            <td>{e.horizon === "1a" ? "1 an" : e.horizon === "6m" ? "6 mois" : e.horizon}</td>
+    <Card title="Laboratoire : les essais" repliable ouvert={false} id="labo">
+      {lot.map((e) => (
+        <div class="ligne-labo">
+          <div class="tete"><b>{NOMS_LABO[e.nom] ?? e.nom}</b>
+            {e.verdict === "probant" ? <span class="badge good">probant</span> : <small class="muted">{hz(e.horizon)}</small>}</div>
+          <div class="chiffres">
             {e.nom.startsWith("backtest")
-              ? <td class={signClass(-(e.ic ?? 0))}>{pct(e.ic, 1)} <small class="muted">de volatilité</small></td>
-              : <td class={signClass(e.ic)}>{num(e.ic, 3)}{e.ic_base != null && <small class="muted"> réf. {num(e.ic_base, 3)}</small>}</td>}
-            <td>{num(e.t_stat, 1)} / {num(e.seuil_t_global, 1)}</td>
-            <td><span class={signClass(e.regimes?.hausse?.ic)}>{num(e.regimes?.hausse?.ic, 3)}</span> · <span class={signClass(e.regimes?.baisse?.ic)}>{num(e.regimes?.baisse?.ic, 3)}</span></td>
-          </tr>
-        ))}</tbody>
-      </table>
-      <p class="hint">Variantes du modèle testées à part : les scores publiés ne changent pas.
-        <b> reference</b> = modèle publié ;
-        <b> risque_…</b> = IA qui prédit le risque (volatilité ou perte maximale) : elle doit battre la « réf. »,
-        la simple volatilité des 3 derniers mois, et son t mesure ce gain ;
-        <b> backtest_…</b> = portefeuille reconstruit chaque mois depuis 2013 avec la volatilité IA : écart de volatilité
-        réelle par rapport à la méthode actuelle (3 ans), négatif = moins risqué ; <b>alpha</b> = cible ajustée du bêta (alpha de Jensen : rendement − bêta × marché,
-        ce qui reste une fois le risque de marché retiré) ; <b>alpha_secteur</b> = idem, comparé aux titres du même secteur.
-        « Hausse · baisse » : IC (Information Coefficient) quand le marché a monté ou baissé sur l'horizon.
-        Une variante n'est « probante » que si son t dépasse un seuil corrigé des {n} essais de rendement faits jusqu'ici (les essais de risque forment une famille à part) :
-        plus on essaie, plus le hasard finit par en faire gagner une.</p>
+              ? <span>Risque réel <b class={signClass(-(e.ic ?? 0))}>{e.ic != null && e.ic > 0 ? "+" : ""}{pct(e.ic, 1, false)}</b> vs méthode actuelle</span>
+              : <span>IC <b class={signClass(e.ic)}>{corr(e.ic)}</b>{e.ic_base != null && <> (réf. {corr(e.ic_base)})</>}</span>}
+            {e.regimes?.hausse && <span>marché en hausse {corr(e.regimes.hausse.ic)} · en baisse {corr(e.regimes?.baisse?.ic)}</span>}
+            {e.verdict === "probant" && <span>{hz(e.horizon)}</span>}
+          </div>
+          <BarreSeuil t={e.t_stat} seuil={e.seuil_t_global} />
+        </div>
+      ))}
+      <p class="hint">Variantes testées à part : les scores publiés ne changent pas. La barre montre le résultat par rapport au seuil exigé
+        (trait vertical) ; ce seuil monte avec le nombre d'essais ({n} pour le rendement), sinon le hasard finit par faire gagner une variante.
+        « Alpha » = ce qui reste une fois l'effet du marché retiré. « IA de risque » doit battre la référence, la volatilité des 3 derniers mois.</p>
     </Card>
   );
 }

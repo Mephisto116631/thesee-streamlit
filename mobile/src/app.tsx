@@ -8,7 +8,7 @@ import { Portfolio } from "./screens/Portfolio";
 import { Risk } from "./screens/Risk";
 import { Calculs } from "./screens/Calculs";
 import { Analyse } from "./screens/Analyse";
-import { CourtTermeEcran, MesTitresEcran, PositionsEcran } from "./screens/EcransSecondaires";
+import { CourtTermeEcran, PositionsEcran } from "./screens/EcransSecondaires";
 import { Progression } from "./screens/Progression";
 import { Settings } from "./screens/Settings";
 import { MiseAJourDialogue, verifierAuLancement } from "./screens/MiseAJourDialogue";
@@ -30,8 +30,8 @@ const go = (h: string) => { location.hash = h; };
 const TABS = [
   { h: "#/", label: "Accueil", icon: "M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" },
   { h: "#/portefeuille", label: "Portefeuille", icon: "M12 3v9l7 4A9 9 0 1 1 12 3zM15 3.5A9 9 0 0 1 20.5 9H15z" },
-  { h: "#/positions", label: "Positions", icon: "M4 7h16v12H4zM9 7V5h6v2M4 12h16" },
   { h: "#/analyse", label: "Analyse", icon: "M3 17l5-5 4 4 8-8M15 8h5v5" },
+  { h: "#/positions", label: "Positions", icon: "M4 7h16v12H4zM9 7V5h6v2M4 12h16" },
 ];
 
 export function App() {
@@ -56,9 +56,9 @@ export function App() {
     case "positions": screen = <PositionsEcran />; break;
     case "analyse": screen = <Analyse />; break;
     case "court": screen = <CourtTermeEcran />; break;
-    case "titres": screen = <MesTitresEcran />; break;
+    case "titres": screen = <Portfolio />; break;   // « Composer » fusionné dans Portefeuille
     case "risque": screen = <Risk tab={arg === "ia" ? "ia" : "credit"} go={go} />; break;
-    case "parametres": screen = arg === "calculs" ? <Calculs /> : <Settings />; break;
+    case "parametres": screen = arg.startsWith("calculs") ? <Calculs section={arg.split("/")[1]} /> : <Settings />; break;
     default: screen = <Home go={go} />;
   }
   // Onglet actif : les écrans d'analyse (marché, risque, réglages…) sont rangés sous « Analyse »
