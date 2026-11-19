@@ -152,3 +152,72 @@ def predire_volatilite(market_raw: pd.DataFrame, symboles: list[str], compositio
     vol_3m = px.pct_change().iloc[-63:].std() * np.sqrt(252)
     niveaux = np.sort(vol_3m.reindex(auj.index).dropna().values)
     return pd.Series(np.quantile(niveaux, rang.values), index=rang.index)
+
+
+# ------------------------------------------------------------------------------
+# PREUVE CONTINUE : verdict du laboratoire et bilan en conditions réelles
+# ------------------------------------------------------------------------------
+JOURS_SUIVI = 126            # 6 mois de bourse : délai avant de pouvoir juger une prévision
+NOM_LABO = "risque_volatilite"
+
+
+def verdict_labo(lignes: list[dict]) -> dict:
+    """Dernier verdict du laboratoire pour l'IA de volatilité à 6 mois (le plus récent fait foi).
+    `lignes` : lignes de la table `experiences`. Sans essai : non probant (prudence)."""
+    l6 = [r for r in lignes or [] if r.get("nom") == NOM_LABO and r.get("horizon") == "6m"]
+    if not l6:
+        return {"probant": False, "verdict": "jamais testé"}
+    r = max(l6, key=lambda r: str(r.get("cree_le") or ""))
+    d = r.get("diagnostics") or {}
+    return {"probant": r.get("verdict") == "probant", "verdict": r.get("verdict"),
+            "t_stat": r.get("t_stat"), "seuil": r.get("seuil_t_global"), "date": r.get("cree_le"),
+            "ic": d.get("ic_moyen"), "ic_base": d.get("ic_base"), "gain": d.get("gain"),
+            "part_dates_gagnantes": d.get("part_dates_gagnantes")}
+
+
+def bilan_reel(suivi: pd.DataFrame, px: pd.DataFrame, premiere=None, h: int = JOURS_SUIVI) -> dict:
+    """Compare les prévisions ENREGISTRÉES (table suivi_volatilite : date, symbol, vol_prevue,
+    vol_3m) à la volatilité RÉELLEMENT observée pendant les `h` séances suivantes.
+    Aucune donnée de test n'a servi à entraîner : c'est la preuve la plus forte.
+    `px` : cours de clôture (dates × symboles)."""
+    out = {"n_dates": 0}
+    if premiere is None and suivi is not None and not suivi.empty:
+        premiere = pd.to_datetime(suivi["date"]).min()
+    if premiere is not None:
+        out["premiere_prevision"] = str(pd.Timestamp(premiere).date())
+        # Premier bilan possible : h séances (~6 mois) après la première prévision
+        out["premier_bilan"] = str((pd.Timestamp(premiere) + pd.tseries.offsets.BDay(h)).date())
+    if suivi is None or suivi.empty:
+        return out
+    s = suivi.copy()
+    s["date"] = pd.to_datetime(s["date"])
+    dates = np.sort(s["date"].unique())
+    if px is None or px.empty:
+        return out
+    px = px.sort_index()
+    reel = cible_risque(px, pd.DatetimeIndex([d for d in dates if d in px.index]), h, "volatilite")
+    if reel.empty:
+        return out
+    t = s.merge(reel[["date", "symbol", "rel"]], on=["date", "symbol"]).dropna(subset=["vol_prevue", "vol_3m", "rel"])
+    if t.empty:
+        return out
+    ic_ia = mh._ic_par_date(t, "vol_prevue")
+    ic_ref = mh._ic_par_date(t, "vol_3m")
+    gain = (ic_ia - ic_ref).dropna()
+    if gain.empty:
+        return out
+    # Prévisions hebdomadaires, horizon de 6 mois : elles se chevauchent -> périodes indépendantes
+    n_eff = max(1.0, len(gain) * 5 / h)
+    t_gain = float(gain.mean() / gain.std() * np.sqrt(n_eff)) if len(gain) > 1 and gain.std() > 0 else 0.0
+    seuil = mh.seuil_t(n_eff, n_candidats=1)
+    if n_eff < mh.MIN_PERIODES_SIGNAL:
+        verdict = "pas encore assez de recul"
+    elif gain.mean() > GAIN_MIN and t_gain > seuil:
+        verdict = "probant"
+    else:
+        verdict = "non probant"
+    out.update({"n_dates": int(len(gain)), "n_effectif": n_eff, "ic_ia": float(ic_ia.mean()),
+                "ic_reference": float(ic_ref.mean()), "gain": float(gain.mean()), "t_stat": t_gain,
+                "seuil": seuil, "part_dates_gagnantes": float((gain > 0).mean()), "verdict": verdict,
+                "derniere_date_jugee": str(pd.Timestamp(gain.index.max()).date())})
+    return out

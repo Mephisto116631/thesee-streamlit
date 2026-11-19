@@ -15,6 +15,7 @@ import pandas as pd
 
 import data_pipeline as dp
 import db
+import fondamentaux_sec as fsec
 import modele_horizon
 import modele_risque
 import portefeuille
@@ -263,6 +264,97 @@ def construire_medianes(snapshot: pd.DataFrame) -> pd.DataFrame:
     return med
 
 
+# ------------------------------------------------------------------------------
+# Volatilité prévue par l'IA : publiée SEULEMENT si sa preuve tient toujours
+# ------------------------------------------------------------------------------
+def filtrer_vol_ia(vol_ia: pd.Series, fiabilite: dict) -> pd.Series | None:
+    """Garde-fou : la prévision n'est montrée dans l'appli que si le DERNIER test du
+    laboratoire est probant. Sinon None : l'appli revient d'elle-même à l'historique."""
+    if not fiabilite.get("probant") or vol_ia is None or vol_ia.dropna().empty:
+        return None
+    return vol_ia.dropna()
+
+
+def _cours(raw: pd.DataFrame) -> pd.DataFrame:
+    px = raw.pivot_table(index="date", columns="symbol", values="close")
+    px.index = pd.to_datetime(px.index)
+    return px.sort_index()
+
+
+def suivre_volatilite(vol_ia: pd.Series, raw: pd.DataFrame, date_marche, fiabilite: dict) -> dict:
+    """Enregistre la prévision une fois par semaine (table suivi_volatilite), puis compare les
+    prévisions vieilles de 6 mois à la volatilité réellement observée. Résultat -> model_runs."""
+    cli = db.get_client()
+    px = _cours(raw)
+    date_marche = pd.Timestamp(date_marche)
+    derniere = cli.table("suivi_volatilite").select("date").order("date", desc=True).limit(1).execute().data
+    if vol_ia is not None and not vol_ia.dropna().empty and (
+            not derniere or (date_marche - pd.Timestamp(derniere[0]["date"])).days >= 7):
+        vol_3m = px.pct_change().iloc[-63:].std() * np.sqrt(252)
+        lignes = [{"date": str(date_marche.date()), "symbol": s, "vol_prevue": float(v),
+                   "vol_3m": float(vol_3m[s]) if s in vol_3m and pd.notna(vol_3m[s]) else None}
+                  for s, v in vol_ia.dropna().items()]
+        db.upsert_rows("suivi_volatilite", lignes, on_conflict="date,symbol")
+        print(f"[PUBLISH] Suivi réel : {len(lignes)} prévisions enregistrées au {date_marche.date()}")
+    # Seules les prévisions de plus de ~6 mois peuvent être jugées : inutile de lire les autres
+    premiere = cli.table("suivi_volatilite").select("date").order("date").limit(1).execute().data
+    limite = str((date_marche - pd.Timedelta(days=170)).date())
+    suivi = pd.DataFrame(db._select_all(lambda: cli.table("suivi_volatilite").select("date,symbol,vol_prevue,vol_3m")
+                                        .lte("date", limite).order("date").order("symbol")))
+    bilan = modele_risque.bilan_reel(suivi, px, premiere[0]["date"] if premiere else None)
+    db.upsert_rows("model_runs", [_clean({
+        "kind": "risque_volatilite_reel",
+        "trained_at": pd.Timestamp.now(tz="UTC").isoformat(),
+        "verdict": bilan.get("verdict", "en attente"),
+        "diagnostics": {"labo": fiabilite, "reel": bilan, "vol_ia_publiee": bool(fiabilite.get("probant"))},
+    })], on_conflict="kind")
+    return bilan
+
+
+# ------------------------------------------------------------------------------
+# Valorisation : comptes officiels déposés à la SEC (une fois par semaine)
+# ------------------------------------------------------------------------------
+COLONNES_MEDIANES_SEC = {"per": "per", "cours_vc": "cours_vc", "roe_sec": "roe_sec",
+                         "rentabilite_brute": "rentabilite_brute", "endettement": "endettement",
+                         "part_encaissee": "part_encaissee"}
+
+
+def medianes_valorisation(valo: pd.DataFrame, snap: pd.DataFrame) -> pd.DataFrame:
+    """Médiane par secteur des ratios SEC (PER et cours / valeur comptable au cours du jour)."""
+    v = valo.merge(snap[~snap["is_etf"]][["symbol", "secteur", "close"]], on="symbol")
+    v["per"] = (v["close"] / v["bpa_sec"]).where(v["bpa_sec"] > 0)
+    v["cours_vc"] = (v["close"] / v["vc_action_sec"]).where(v["vc_action_sec"] > 0)
+    med = v.groupby("secteur")[list(COLONNES_MEDIANES_SEC)].median(numeric_only=True).reset_index()
+    return med
+
+
+def publier_valorisation_sec(snap: pd.DataFrame, force: bool = False) -> int:
+    """Télécharge les comptes SEC (≈ 5 min) si la dernière mise à jour date de plus de 6 jours."""
+    import os
+    if not os.environ.get("SEC_USER_AGENT", "").strip():
+        print("[PUBLISH][WARN] SEC_USER_AGENT absent : valorisation SEC non mise à jour.")
+        return 0
+    cli = db.get_client()
+    if not force:
+        d = cli.table("titres_snapshot").select("sec_maj").not_.is_("sec_maj", "null") \
+            .order("sec_maj", desc=True).limit(1).execute().data
+        if d and pd.Timestamp.now(tz="UTC") - pd.Timestamp(d[0]["sec_maj"]) < pd.Timedelta(days=6):
+            return 0
+    actions = snap[~snap["is_etf"]]["symbol"].tolist()
+    faits = fsec.telecharger(actions)
+    splits = fsec.divisions_recentes(actions, str((pd.Timestamp.now() - pd.Timedelta(days=730)).date()))
+    valo = fsec.valorisation_actuelle(faits, snap.set_index("symbol")["close"], splits)
+    if valo.empty:
+        return 0
+    maj = pd.Timestamp.now(tz="UTC").isoformat()
+    lignes = valo.assign(comptes_date=valo["comptes_date"].dt.strftime("%Y-%m-%d"), sec_maj=maj)
+    db.upsert_rows("titres_snapshot", _records(lignes), on_conflict="symbol")
+    db.upsert_rows("sector_medians", _records(medianes_valorisation(valo, snap)), on_conflict="secteur")
+    print(f"[PUBLISH] Valorisation SEC : {valo['bpa_sec'].notna().sum()} PER, "
+          f"{valo['roe_sec'].notna().sum()} ROE sur {len(valo)} entreprises")
+    return len(valo)
+
+
 def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
     """Calcule et écrit toutes les tables d'affichage. Retourne un résumé (logs)."""
     symboles_etf = set(universe.ETFS_SECTORIELS.keys())
@@ -294,6 +386,13 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
                                       ligne_model_run(data["model_result_etf"], "etf")], on_conflict="kind")
     db.upsert_rows("market_overview", [overview], on_conflict="id")
 
+    # Valorisation (PER, ROE…) depuis les comptes officiels SEC : une fois par semaine
+    try:
+        db.progression(62, "Comptes officiels (SEC)")
+        publier_valorisation_sec(snap)
+    except Exception as e:
+        print(f"[PUBLISH][WARN] Valorisation SEC non mise à jour : {e}")
+
     # Modèles « horizon » (1 mois, 6 mois, 1 an) : classement relatif des titres
     # Sur l'historique long (depuis 2005, non stocké) : bien plus de périodes de test indépendantes.
     raw_long = dp.historique_long()
@@ -315,30 +414,44 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
         except Exception as e:
             print(f"[PUBLISH][WARN] Modèle horizon {nom} non calculé : {e}")
 
+    # Volatilité prévue par l'IA de risque (6 mois) : calculée et SUIVIE à chaque passage,
+    # mais montrée dans l'appli seulement si le dernier test du laboratoire est probant.
+    vol_publiee = None
+    try:
+        db.progression(93, "Volatilité prévue par l'IA")
+        lab = db.get_client().table("experiences").select("nom,horizon,verdict,t_stat,seuil_t_global,diagnostics,cree_le") \
+            .eq("nom", modele_risque.NOM_LABO).eq("horizon", "6m").order("cree_le", desc=True).limit(1).execute().data
+        fiab = modele_risque.verdict_labo(lab)
+        vol_ia = modele_risque.predire_volatilite(raw_horizon, snap["symbol"].tolist(), composition)
+        vol_publiee = filtrer_vol_ia(vol_ia, fiab)
+        if vol_publiee is None:
+            # Preuve tombée : on efface les anciennes valeurs, l'appli revient à l'historique
+            db.get_client().table("titres_snapshot").update({"vol_ia": None}).not_.is_("vol_ia", "null").execute()
+            print(f"[PUBLISH] Volatilité IA NON publiée : dernier test « {fiab.get('verdict')} »")
+        else:
+            db.upsert_rows("titres_snapshot", [{"symbol": s, "vol_ia": float(v)} for s, v in vol_publiee.items()],
+                           on_conflict="symbol")
+            print(f"[PUBLISH] Volatilité IA : {len(vol_publiee)} titres (test t {fiab.get('t_stat', 0):.1f} "
+                  f"> seuil {fiab.get('seuil', 0):.1f})")
+        bilan = suivre_volatilite(vol_ia, raw, snap["date"].max(), fiab)
+        print(f"[PUBLISH] Bilan réel : {bilan.get('verdict', 'en attente')} "
+              f"({bilan.get('n_dates', 0)} dates jugées, premier bilan {bilan.get('premier_bilan')})")
+    except Exception as e:
+        print(f"[PUBLISH][WARN] Volatilité IA non calculée : {e}")
+
     # Portefeuille recommandé : bonus, ne doit jamais faire échouer la publication
     n_lignes = 0
     try:
-        db.progression(95, "Portefeuille recommandé")
+        db.progression(97, "Portefeuille recommandé")
         reco = portefeuille.portefeuille_recommande(raw, snap)
         if reco:
-            # Volatilité prévue par l'IA de risque (6 mois), affichée à côté de l'historique ;
-            # l'appli peut s'en servir pour le portefeuille (option « IA » dans Paramètres).
-            try:
-                db.progression(97, "Volatilité prévue par l'IA")
-                vol_ia = modele_risque.predire_volatilite(raw_horizon, snap["symbol"].tolist(), composition)
+            if vol_publiee is not None:
                 syms = reco.get("univers", {}).get("symbols", [])
                 if syms:
-                    reco["univers"]["vol_ia"] = [float(vol_ia[s]) if s in vol_ia and pd.notna(vol_ia[s]) else None
-                                                 for s in syms]
+                    reco["univers"]["vol_ia"] = [float(vol_publiee[s]) if s in vol_publiee else None for s in syms]
                 for s, t in (reco.get("titres") or {}).items():
-                    if s in vol_ia and pd.notna(vol_ia[s]):
-                        t["vol_ia"] = float(vol_ia[s])
-                # Aussi pour tous les titres suivis (écran Marché, fiche d'un titre)
-                db.upsert_rows("titres_snapshot", [{"symbol": s, "vol_ia": float(v)} for s, v in vol_ia.dropna().items()],
-                               on_conflict="symbol")
-                print(f"[PUBLISH] Volatilité IA : {len(vol_ia)} titres")
-            except Exception as e:
-                print(f"[PUBLISH][WARN] Volatilité IA non calculée : {e}")
+                    if s in vol_publiee:
+                        t["vol_ia"] = float(vol_publiee[s])
             db.upsert_rows("portefeuille_recommande", [_clean({
                 "id": 1, "date": snap["date"].max(), **reco,
                 "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),

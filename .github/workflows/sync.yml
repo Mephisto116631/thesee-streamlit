@@ -42,6 +42,8 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           ALPHA_VANTAGE_KEY: ${{ secrets.ALPHA_VANTAGE_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          # Comptes officiels SEC (valorisation, une fois par semaine) : contact exigé par la SEC
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: python cron_sync.py
 
   # GitHub désactive automatiquement les workflows planifiés après 60 jours sans
@@ -57,4 +59,7 @@ jobs:
       - name: Réactiver le workflow
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/sync.yml/enable"
+        run: |
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/sync.yml/enable"
+          # Re-test mensuel de l'IA de volatilité : même risque de désactivation
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/experiences.yml/enable"

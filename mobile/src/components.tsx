@@ -239,7 +239,7 @@ export function BarreSeuil({ t, seuil }: { t: number | null | undefined; seuil: 
 }
 
 export function Stat({ label, value, sub, cls = "", tone = "" }:
-  { label: string; value: ComponentChildren; sub?: ComponentChildren; cls?: string; tone?: string }) {
+  { label: ComponentChildren; value: ComponentChildren; sub?: ComponentChildren; cls?: string; tone?: string }) {
   return (
     <div class={`stat ${tone ? `tone-${tone}` : ""}`}>
       <div class="stat-label">{label}</div>

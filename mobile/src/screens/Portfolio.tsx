@@ -5,6 +5,7 @@ import { frontiere as calculerFrontiere, sousUnivers, type Univers } from "../op
 import { ecrireParametres, nbModifies, useParametres } from "../settings";
 import { ilYA, num, pct, ratioPct } from "../format";
 import { choisirPoint, choisirPointRisque, HORIZON_DEFAUT, HORIZONS, planAchat, projection } from "../strategy";
+import { univers as universFiable, useFiabiliteVol, type FiabiliteVol } from "../fiabilite";
 import { MonteCarlo } from "./MonteCarlo";
 import { PlanAchat } from "./PlanAchat";
 
@@ -35,24 +36,28 @@ export function usePortefeuilleCible() {
 
   const h = HORIZONS_HOLD.find((x) => x.k === e.horizon) ?? HORIZONS_HOLD.find((x) => x.k === "1a")!;
   const params = useParametres();
-  const u = reco.data?.univers as Univers | undefined;
+  // La prévision IA n'entre dans le calcul que si son dernier test est probant
+  const fiab = useFiabiliteVol();
+  const u = universFiable(reco.data?.univers as Univers | undefined, fiab);
   // Frontière recalculée sur le téléphone avec les hypothèses de la page Paramètres
   // (repli : celle du serveur si l'univers n'est pas encore publié).
   // Titres exclus / imposés par l'utilisateur : même optimiseur, sur le sous-univers
   const frontiere = useMemo(() => (u ? calculerFrontiere(sousUnivers(u, e.exclus), { ...params, imposes: e.imposes }) : reco.data?.frontiere ?? []),
     [u, reco.data?.frontiere, params.tauxSansRisque, params.primeRisque, params.poidsHistorique, params.poidsMax, params.nMaxLignes,
-      params.poidsMin, params.sourceVol, e.exclus.join(","), e.imposes.join(",")]);
+      params.poidsMin, params.sourceVol, fiab.probant, e.exclus.join(","), e.imposes.join(",")]);
   const modifies = nbModifies(params);
   const choix = e.mode === "risque" ? choisirPointRisque(frontiere, e.volMax) : choisirPoint(frontiere, e.cible);
   const volIA = params.sourceVol === "ia" && Boolean(u?.vol_ia?.length);
   const volHistDe = new Map((u?.symbols ?? []).map((sy, i) => [sy, Math.sqrt(Math.max(u!.cov[i][i], 0))]));
   const volIADe = new Map((u?.symbols ?? []).map((sy, i) => [sy, u?.vol_ia?.[i] ?? null]));
   const lignes = choix?.point.lignes ?? [];
-  return { e, maj, reco, ov, snap, h, params, u, frontiere, modifies, choix, volIA, volHistDe, volIADe, lignes };
+  // Meilleure rentabilité de long terme possible pour le risque du portefeuille choisi (frontière)
+  const maxAuRisque = choix ? Math.max(...frontiere.filter((f) => f.volatilite <= choix.point.volatilite + 0.0025).map((f) => f.rendement)) : null;
+  return { e, maj, reco, ov, snap, h, params, u, frontiere, modifies, choix, volIA, volHistDe, volIADe, lignes, fiab, maxAuRisque };
 }
 
 export function Portfolio() {
-  const { e, maj, reco, ov, snap, h, params, u, frontiere, modifies, choix, volIA, volHistDe, volIADe, lignes } = usePortefeuilleCible();
+  const { e, maj, reco, ov, snap, h, params, u, frontiere, modifies, choix, volIA, volHistDe, volIADe, lignes, fiab, maxAuRisque } = usePortefeuilleCible();
   const prix: Record<string, number | null | undefined> = {
     ...Object.fromEntries(Object.entries(reco.data?.titres ?? {}).map(([k, v]) => [k, v.prix])),
     ...Object.fromEntries((snap.data ?? []).map((x) => [x.symbol, x.close])),
@@ -71,8 +76,11 @@ export function Portfolio() {
         <HelpButton keys={["sharpe", "volatility", "max_drawdown"]} intro={<>
           <p><b>Objectif</b> : tu fixes soit la rentabilité visée, soit le risque maximal. L'appli choisit, parmi ~40 titres présélectionnés,
             le meilleur compromis (frontière efficiente de Markowitz, 20 % max par titre).</p>
-          <p><b>Rentabilité attendue</b> : estimée surtout par le modèle CAPM (taux sans risque + prime de risque selon la sensibilité
-            du titre au marché), à 10 % seulement par l'historique. C'est une estimation volontairement prudente, pas une promesse.</p>
+          <p><b>Risque</b> : la volatilité de chaque titre, mesurée sur 3 ans ou prévue par l'IA. La prévision de l'IA n'est proposée
+            que si son dernier test est probant (re-test chaque mois).</p>
+          <p><b>Rentabilité de long terme (hypothèse)</b> : ce n'est pas une prévision (aucun modèle testé ne prévoit les rendements),
+            mais la récompense moyenne du risque sur longue période, selon le modèle CAPM (Capital Asset Pricing Model : taux sans
+            risque + bêta × prime de risque). Réglable dans les Paramètres.</p>
           <p><b>Ajuster les titres</b> : exclus ou impose des titres ; le calcul reste exactement le même.</p>
         </>} />
         <RefreshButton />
@@ -113,13 +121,8 @@ export function Portfolio() {
             <div class="range-labels"><span>8 % calme</span><span>≈ 18 % S&P 500</span><span>35 % agité</span></div>
           </div>
         )}
-        <div class="field" style={{ marginTop: 6 }}>Risque mesuré avec
-          <div class="seg full" role="group" aria-label="Source de volatilité">
-            <button class={!volIA ? "on" : ""} onClick={() => ecrireParametres({ sourceVol: "historique" })}>Historique 3 ans</button>
-            <button class={volIA ? "on" : ""} disabled={!u?.vol_ia?.length} onClick={() => ecrireParametres({ sourceVol: "ia" })}>Prévision de l'IA</button>
-          </div>
-        </div>
-        <BacktestVol />
+        <ChoixSourceVol volIA={volIA} dispo={Boolean(u?.vol_ia?.length)} fiab={fiab} />
+        {fiab.probant && <BacktestVol />}
       </Card>
 
       {reco.loading && !reco.data ? <Loading /> : !choix ? (
@@ -135,12 +138,20 @@ export function Portfolio() {
             )}
             <div class="stats">
               <Stat label="Titres" value={String(lignes.length)} sub={`${num(e.capital, 0)} € investis`} />
-              <Stat label="Rentabilité attendue" value={`${pct(choix.point.rendement, 1, false)}/an`} tone="good" />
+              <Stat label={<>Rentabilité de long terme<Info>Hypothèse, pas une prévision : la récompense moyenne du risque sur longue
+                période (modèle CAPM, Capital Asset Pricing Model : taux sans risque + bêta × prime de risque). Aucun modèle testé ne
+                prévoit les rendements de façon fiable. Réglable dans les Paramètres.</Info></>}
+                value={`${pct(choix.point.rendement, 1, false)}/an`} sub="hypothèse" />
               <Stat label="Rendement / risque" value={<>{ratioPct(choix.point.rendement, choix.point.volatilite)}<Info>
-                Pour 1 point de volatilité supporté, {num(choix.point.rendement / choix.point.volatilite, 2)} point de rentabilité attendue par an.
+                Pour 1 point de volatilité supporté, {num(choix.point.rendement / choix.point.volatilite, 2)} point de rentabilité de long terme par an (hypothèse).
                 Plus c'est haut, mieux le risque est payé.</Info></>} />
             </div>
-            <JaugeRisque vol={choix.point.volatilite} source={volIA ? "prévision IA" : "historique 3 ans"} />
+            <JaugeRisque vol={choix.point.volatilite} source={volIA ? "prévu par l'IA" : "historique 3 ans"} teste={volIA} />
+            {maxAuRisque != null && (
+              <p class="hint">Avec ce risque ({pct(choix.point.volatilite, 0, false)} {volIA ? "prévu" : "mesuré"}), la rentabilité de long terme
+                maximale est <b>{pct(maxAuRisque, 1, false)}/an</b> (hypothèse).
+                {e.mode === "rendement" && <> Pour fixer d'abord le risque et viser ce maximum, choisis « Je limite le risque ».</>}</p>
+            )}
             {proj && (
               <>
                 <h3 class="h3">Dans {h.label}, tes {num(e.capital, 0)} € deviendraient</h3>
@@ -151,6 +162,8 @@ export function Portfolio() {
                 </div>
                 <div class="barre-proba"><span>Risque de finir en perte</span><b class={proj.probPerte > 0.3 ? "down" : ""}>{pct(proj.probPerte, 0, false)}</b></div>
                 <div class="jauge-simple"><div style={{ width: `${Math.min(100, proj.probPerte * 100)}%` }} /></div>
+                <p class="hint">La largeur de la fourchette vient du risque ({volIA ? "prévu par l'IA, testé" : "mesuré sur 3 ans"}) ;
+                  son centre vient de l'hypothèse de rentabilité de long terme.</p>
               </>
             )}
             {frais && <p class="hint">Frais à l'achat : <b>{num(frais.totalFrais, 2)} €</b> ({pct(frais.partFrais, 2, false)}) pour {frais.nbOrdres} ordres.</p>}
@@ -160,7 +173,7 @@ export function Portfolio() {
           {/* 3. Les titres */}
           <Card title={`Les ${lignes.length} titres`} repliable id="titres">
             <table class="table">
-              <thead><tr><th>Titre</th><th>Part</th><th>Risque<br /><small>3 ans · IA</small></th><th>Montant</th></tr></thead>
+              <thead><tr><th>Titre</th><th>Part</th><th>Risque<br /><small>{u?.vol_ia ? "3 ans · IA" : "3 ans"}</small></th><th>Montant</th></tr></thead>
               <tbody>{lignes.map((l) => {
                 const t = reco.data?.titres?.[l.symbol];
                 const maxP = Math.max(...lignes.map((x) => x.poids));
@@ -176,8 +189,8 @@ export function Portfolio() {
                 );
               })}</tbody>
             </table>
-            <p class="hint">Risque = volatilité annuelle. La seconde valeur est la prévision de l'IA pour les 6 prochains mois
-              (verte si plus calme que l'historique). Touche un titre pour sa fiche.</p>
+            <p class="hint">Risque = volatilité annuelle.{u?.vol_ia ? <> La seconde valeur est la prévision de l'IA pour les 6 prochains mois
+              (verte si plus calme que l'historique), <BadgeTeste />.</> : ""} Touche un titre pour sa fiche.</p>
             <h3 class="h3">Tous les compromis possibles</h3>
             <Frontiere frontiere={frontiere} choisi={choix.point.rendement} cible={e.cible} />
             <p class="hint">Chaque point est le meilleur portefeuille pour un niveau de risque (frontière efficiente). Le point orange est le tien.</p>
@@ -210,13 +223,39 @@ export function Portfolio() {
   );
 }
 
+/** Badge « testée ✓ » : renvoie à la preuve (Analyse › Modèles IA). */
+export function BadgeTeste({ texte = "testée" }: { texte?: string }) {
+  return <a class="badge-teste" href="#/risque/ia" title="Voir la preuve">{texte} ✓</a>;
+}
+
+/** Choix de la volatilité : la prévision de l'IA n'est proposée que si elle est prouvée. */
+export function ChoixSourceVol({ volIA, dispo, fiab, libelleIA = "Prévision de l'IA" }: {
+  volIA: boolean; dispo: boolean; fiab: FiabiliteVol; libelleIA?: string;
+}) {
+  if (!fiab.probant) {
+    return fiab.connu ? (
+      <p class="hint">Risque mesuré sur <b>3 ans d'historique</b>. La prévision de l'IA est retirée : son dernier test
+        (<a href="#/risque/ia">voir</a>) n'est pas probant.</p>
+    ) : <p class="hint">Risque mesuré sur <b>3 ans d'historique</b>.</p>;
+  }
+  return (
+    <div class="field" style={{ marginTop: 6 }}>Risque mesuré avec
+      <div class="seg full" role="group" aria-label="Source de volatilité">
+        <button class={!volIA ? "on" : ""} onClick={() => ecrireParametres({ sourceVol: "historique" })}>Historique 3 ans</button>
+        <button class={volIA ? "on" : ""} disabled={!dispo} onClick={() => ecrireParametres({ sourceVol: "ia" })}>{libelleIA}</button>
+      </div>
+      <small class="muted">Prévision de l'IA sur 6 mois <BadgeTeste />{!dispo && " · disponible après la prochaine synchronisation"}</small>
+    </div>
+  );
+}
+
 /** Jauge visuelle du risque : calme ↔ agité, avec le repère du S&P 500 (~18 %). */
-function JaugeRisque({ vol, source }: { vol: number; source: string }) {
+function JaugeRisque({ vol, source, teste }: { vol: number; source: string; teste?: boolean }) {
   const pos = (v: number) => `${Math.max(0, Math.min(100, ((v - 0.05) / 0.35) * 100))}%`;
   const mot = vol < 0.12 ? "calme" : vol < 0.2 ? "comme le marché" : vol < 0.28 ? "agité" : "très agité";
   return (
     <div style={{ marginTop: 10 }}>
-      <div class="barre-proba"><span>Risque : <b>{pct(vol, 0, false)}</b> de volatilité par an ({source})</span><b>{mot}</b></div>
+      <div class="barre-proba"><span>Risque : <b>{pct(vol, 0, false)}</b> de volatilité par an ({source}{teste && <>, <BadgeTeste texte="testé" /></>})</span><b>{mot}</b></div>
       <div class="jauge"><span class="curseur" style={{ left: pos(vol) }} /><span class="spx" style={{ left: pos(0.18) }}>S&P 500</span></div>
       <div class="jauge-labels"><span>calme</span><span>agité</span></div>
     </div>
@@ -312,7 +351,7 @@ function Frontiere({ frontiere, choisi, cible }: { frontiere: { rendement: numbe
         plugins: { legend: { position: "bottom" } },
         scales: {
           x: { type: "linear", title: { display: true, text: "Risque (volatilité %/an)", color: cssVar("--muted") } },
-          y: { title: { display: true, text: "Rentabilité attendue %/an", color: cssVar("--muted") } },
+          y: { title: { display: true, text: "Rentabilité de long terme %/an (hypothèse)", color: cssVar("--muted") } },
         },
       },
     };

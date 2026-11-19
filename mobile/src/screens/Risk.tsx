@@ -4,6 +4,7 @@ import { BarreSeuil, Card, ChartBox, cssVar, Details, HelpButton, Loading, Offli
 import { corr, dateFr, ilYA, num, pb, pct, signClass } from "../format";
 import { Relance } from "./Relance";
 import { isIG } from "./Stock";
+import { useFiabiliteVol } from "../fiabilite";
 
 export function Risk({ tab, go }: { tab: "credit" | "ia"; go: (h: string) => void }) {
   return (
@@ -105,6 +106,10 @@ function Models() {
   return (
     <>
       <OfflineNote res={models.res} />
+      <FiabiliteRisque />
+      <h2 class="h3">Prévoir le rendement : en test</h2>
+      <p class="hint" style={{ marginTop: 0 }}>Ces classements par rendement futur restent au laboratoire : aucun n'a passé le test,
+        ils ne servent à aucune décision dans l'appli (Accueil, Portefeuille, Positions, Marché).</p>
       <div class="chips wrap" role="group" aria-label="Horizon du modèle">
         {CHOIX.map((c) => <button class={`chip ${choix === c.k ? "on" : ""}`} onClick={() => setChoix(c.k)}>{c.label}</button>)}
       </div>
@@ -116,6 +121,55 @@ function Models() {
         <Relance />
       </Card>
     </>
+  );
+}
+
+/** La seule prévision utilisée pour décider : son dernier test et son bilan en conditions réelles. */
+function FiabiliteRisque() {
+  const f = useFiabiliteVol();
+  if (f.loading && !f.connu) return <Loading />;
+  const r = f.reel;
+  return (
+    <Card title="Le modèle de risque est-il toujours fiable ?" class={`edge-${f.probant ? "good" : "bad"}`} id="fiabilite">
+      <p class="verdict" style={{ marginTop: 0 }}>
+        <span class={`badge ${f.probant ? "good" : "bad"}`}>{f.probant ? "Probant" : f.connu ? "Non probant" : "Pas encore testé"}</span>{" "}
+        {f.probant ? "La volatilité prévue sur 6 mois est affichée dans l'appli et peut servir au portefeuille."
+          : "La volatilité prévue n'est affichée nulle part : l'appli utilise la volatilité des 3 dernières années."}</p>
+      {f.connu && (
+        <>
+          <h3 class="h3">Dernier test ({dateFr(f.date)})</h3>
+          <div class="stats">
+            <Stat label="IA" value={corr(f.ic)} sub="lien avec le risque réel (IC)" tone={f.probant ? "good" : ""} />
+            <Stat label="Référence" value={corr(f.icBase)} sub="volatilité des 3 derniers mois" />
+            <Stat label="IA meilleure" value={pct(f.part, 0, false)} sub="des dates testées" />
+          </div>
+          <BarreSeuil t={f.t} seuil={f.seuil} />
+          <p class="hint">Test sur 2013-2026, sur des années que le modèle n'a jamais vues. L'IC (Information Coefficient) mesure, de 0 à 100 %,
+            si les titres prévus agités l'ont vraiment été. L'IA doit battre nettement la référence : t = {num(f.t, 1)} pour un seuil
+            de {num(f.seuil, 1)} (seuil relevé pour chaque essai fait, afin que le hasard ne passe pas).</p>
+        </>
+      )}
+      <h3 class="h3">En conditions réelles</h3>
+      {r && r.n_dates > 0 ? (
+        <>
+          <p class="verdict"><span class={`badge ${r.verdict === "probant" ? "good" : r.verdict === "non probant" ? "bad" : "neutral"}`}>{r.verdict}</span>{" "}
+            {r.n_dates} prévisions hebdomadaires jugées 6 mois plus tard (jusqu'au {dateFr(r.derniere_date_jugee)}).</p>
+          <div class="stats">
+            <Stat label="IA" value={corr(r.ic_ia)} sub="IC réel" />
+            <Stat label="Référence" value={corr(r.ic_reference)} sub="IC réel" />
+            <Stat label="IA meilleure" value={pct(r.part_dates_gagnantes, 0, false)} sub="des semaines" />
+          </div>
+          <BarreSeuil t={r.t_stat} seuil={r.seuil} />
+        </>
+      ) : (
+        <p class="hint" style={{ marginTop: 0 }}>{r?.premiere_prevision
+          ? <>Prévisions enregistrées chaque semaine depuis le {dateFr(r.premiere_prevision)}. Premier bilan possible le <b>{dateFr(r.premier_bilan)}</b>
+            {" "}(il faut attendre 6 mois pour connaître le risque réel).</>
+          : "Le suivi commence à la prochaine synchronisation : la prévision de chaque titre sera enregistrée chaque semaine, puis comparée 6 mois plus tard au risque réellement observé."}</p>
+      )}
+      <p class="hint">Prochain re-test automatique : <b>{dateFr(f.prochainTest.toISOString())}</b>. Si le modèle cesse d'être probant,
+        l'appli le retire d'elle-même.</p>
+    </Card>
   );
 }
 

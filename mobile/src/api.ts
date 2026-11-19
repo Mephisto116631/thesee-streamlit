@@ -2,6 +2,7 @@
 // (supabase_schema.sql) : impossible d'écrire avec. Toutes les tables sont
 // pré-calculées par le cron (publish.py).
 import { createClient } from "@supabase/supabase-js";
+import type { LaboVol } from "./fiabilite";
 
 const URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -19,11 +20,16 @@ export interface Snapshot {
   high_52w: number | null; low_52w: number | null;
   roe: number | null; margin: number | null; ev_ebitda: number | null; debt_eq: number | null;
   z_score: number | null; rating_sp: string | null; proba_hausse: number | null;
-  vol_ia?: number | null;   // volatilité prévue par l'IA de risque (6 mois)
+  vol_ia?: number | null;   // volatilité prévue par l'IA de risque (6 mois), publiée seulement si probante
+  // Comptes officiels déposés à la SEC (mis à jour chaque semaine)
+  bpa_sec?: number | null; vc_action_sec?: number | null; roe_sec?: number | null; rentabilite_brute?: number | null;
+  endettement?: number | null; part_encaissee?: number | null; comptes_date?: string | null;
 }
 export interface SectorMedian {
   secteur: string; n: number; chg_20d: number | null; chg_1y: number | null; rsi_14: number | null;
   volatility: number | null; roe: number | null; margin: number | null; ev_ebitda: number | null; debt_eq: number | null;
+  per?: number | null; cours_vc?: number | null; roe_sec?: number | null; rentabilite_brute?: number | null;
+  endettement?: number | null; part_encaissee?: number | null;
 }
 export interface Facteur { feature: string; label: string; valeur: number | null; impact: number }
 export interface Signal { symbol: string; kind: string; date: string; proba_hausse: number; facteurs: Facteur[] }
@@ -140,6 +146,18 @@ export const api = {
     if (error) throw new Error(error.message);
     return data ?? null;
   }, null),
+
+  /** Dernier test de l'IA de volatilité à 6 mois + bilan en conditions réelles. */
+  fiabiliteVol: () => cached<{ labo: LaboVol | null; run: ModelRun | null }>("fiabilite-vol", async () => {
+    const [l, r] = await Promise.all([
+      sb!.from("experiences").select("verdict,t_stat,seuil_t_global,cree_le,ic:diagnostics->ic_moyen,ic_base:diagnostics->ic_base,"
+        + "gain:diagnostics->gain,part:diagnostics->part_dates_gagnantes")
+        .eq("nom", "risque_volatilite").eq("horizon", "6m").order("id", { ascending: false }).limit(1).maybeSingle(),
+      sb!.from("model_runs").select("*").eq("kind", "risque_volatilite_reel").maybeSingle(),
+    ]);
+    if (l.error) throw new Error(l.error.message);
+    return { labo: (l.data ?? null) as LaboVol | null, run: (r.data ?? null) as ModelRun | null };
+  }, { labo: null, run: null }),
 
   lastSync: () => cached<SyncLog | null>("sync", async () => {
     const { data, error } = await sb!.from("sync_log").select("*").order("started_at", { ascending: false }).limit(1).maybeSingle();
