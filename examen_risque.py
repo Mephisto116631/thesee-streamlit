@@ -16,6 +16,7 @@
 import numpy as np
 import pandas as pd
 
+import inference as inf
 import modele_horizon as mh
 import modele_risque as mr
 
@@ -508,6 +509,8 @@ def comparer_niveau(tb: pd.DataFrame, ta: pd.DataFrame | None = None, tp: pd.Dat
                 "seuil": seuil, "force": -dm["t"] / seuil, "n_effectif": n_eff}
 
     out = {"B": dm_contre_har(tb, "lvl_xgb")}
+    _b, _h = _pertes_par_date(tb, "lvl_xgb"), _pertes_par_date(tb, "lvl_har")
+    out["inference_v2"] = inf.rapport_dm((_b - _h.reindex(_b.index)).dropna().values, h / mh.PAS_ECHANTILLON)
     r1 = out["B"]["force"] >= 1.0
     if ta is not None and not ta.empty:
         out["A"] = dm_contre_har(ta, "lvl_xgb")
@@ -588,7 +591,8 @@ def comparer_echelle(t: pd.DataFrame, h: int = H) -> dict:
     n_mieux = sum(1 for v in par_fenetre.values() if v["qlike"] < v["qlike_har"])
     stable = n_mieux >= 3
     regles = {"1_niveau": bool(force >= 1.0), "2_crises": crises_ok, "3_stabilite": stable}
-    return {"qlike": float(a.mean()), "qlike_har": float(b.mean()), "ecart": dm["ecart"], "t": dm["t"], "seuil": seuil,
+    return {"inference_v2": inf.rapport_dm((a - b.reindex(a.index)).dropna().values, h / mh.PAS_ECHANTILLON),
+            "qlike": float(a.mean()), "qlike_har": float(b.mean()), "ecart": dm["ecart"], "t": dm["t"], "seuil": seuil,
             "force": float(force), "n_effectif": n_eff, "crises": crises, "par_fenetre": par_fenetre,
             "fenetres_meilleures": n_mieux, "calibration": calibration(t, "lvl_echelle"),
             "calibration_har": calibration(t, "lvl_har"), "regles": regles, "candidate": bool(all(regles.values()))}

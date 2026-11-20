@@ -498,6 +498,46 @@ Essai `examen_ia_contre_har`, 2008-2026, 919 dates, membres du S&P 500 à chaque
 - **Limites** : mêmes que § 4.10 ; n effectif ≈ 36 : un gain faible restera indétectable même s'il est réel (un échec ne prouve pas l'absence d'effet).
 - **Résultats** : § 9.
 
+### 4.12 Règles v2 de test (rédigées le 20/11/2026 ; valables pour les essais PROTOCOLÉS APRÈS cette date)
+- **Origine** : demande de l'utilisateur d'améliorer les tests, après l'essai § 8 (écart de QLIKE 0,014, erreur-type 0,058). Revue de littérature
+  (Patton 2011 ; Giacomini-White 2006 ; Lazarus-Lewis-Stock-Watson 2018 ; Coroneo-Iacone 2020 ; Quaedvlieg 2021 ; Holm 1979 ; Romano-Wolf 2005 ;
+  Hansen 2005 ; Hansen-Lunde-Nason 2011 ; Harvey-Liu-Zhu 2016 ; Harvey-Liu 2020 ; Benjamin et al. 2018 ; Bailey-López de Prado 2014).
+  Les chiffres de puissance de la revue sont des calculs de l'assistant : seule la taille du test a été vérifiée par simulation (ci-dessous).
+- **Diagnostic** : avec n effectif ≈ 36, l'écart minimal détectable (80 % de puissance, 5 %) est ≈ 0,16 de QLIKE, soit 10 fois l'écart observé.
+  Le t de −0,24 se lit « non informatif », **jamais** « équivalent ». Aucun changement de seuil ne corrige cela ; seule de l'information nouvelle le peut.
+- **Non-rétroactivité** : ces règles ne changent aucun verdict des essais §§ 8 et 9 (leurs règles étaient fixées avant, elles restent celles qui jugent).
+  Les statistiques v2 y sont ajoutées comme **constats**, dans `diagnostics.inference_v2`.
+
+| # | Règle v2 | État |
+|---|---|---|
+| 1 | **Rapport systématique** pour chaque comparaison : écart, erreur-type, t, p, IC 95 %, n effectif, ν, écart minimal détectable (MDE) et écart/MDE | **Fait** (`inference.rapport_dm`) |
+| 2 | **Puissance a priori** : un essai dont le MDE dépasse l'effet plausible est déclaré « sans pouvoir de conclure » avant d'être lancé ; il ne peut alors produire qu'une piste | À appliquer dans chaque protocole |
+| 3 | **Variance de long terme EWC** (Lazarus et al. 2018) avec ν = min(0,4·T^(2/3), T/(2h)), loi de Student à ν degrés de liberté, au lieu de Newey-West avec loi normale | **Fait** (`inference.variance_long_terme_ewc`) |
+| 4 | **Panel** : l'écart de perte est déjà moyenné sur les titres à chaque date (estimateur de type Driscoll-Kraay). Le gain de puissance du panel est donc **déjà inclus** dans l'erreur-type de 0,058 | Constat : pas de gain restant de ce côté |
+| 5 | **Famille confirmatoire corrigée par Holm** (jamais moins puissant que Bonferroni) ; SPA / StepM quand on compare N variantes à une référence ; MCS pour le rapport | Holm **fait** (`inference.holm`) ; SPA/StepM/MCS à faire |
+| 6 | **Compteur d'essais** : t maximal attendu par hasard pour N essais (`inference.t_max_attendu`) rapporté à côté du meilleur t | **Fait** |
+| 7 | **Deux niveaux de preuve** : *piste* = t ≥ 2 (p < 5 %), même signe sur ≥ 3 des 4 fenêtres ; *publication* = p corrigé < 0,5 % (t ≈ 3), effet ≥ minimum économique déclaré, **et réplication** sur des données non utilisées (autre période ou autre indice) avec t ≥ 2 | Règle écrite ; remplace « force ≥ 100 % » pour les essais futurs |
+| 8 | **Référence recalibrée** : toute IA de niveau est comparée à HAR direct à 126 jours remis à l'échelle (l'essai § 9) en plus de HAR brut | Essai § 9 |
+| 9 | **Test multi-horizon** (1, 5, 22, 63, 126 jours ; Quaedvlieg 2021) : la seule source nouvelle d'information (n effectif ≈ 200 à 1 mois). La décision produit reste à 126 jours | À faire (nouvel essai) |
+| 10 | **Test d'équivalence** (TOST, marge déclarée) quand l'objectif est de montrer « pas pire » ; exige MDE < marge | À appliquer |
+| 11 | **Purge et embargo ≥ horizon (126 jours)**, placebos maintenus | Déjà en place pour l'embargo |
+| 12 | **Perte primaire QLIKE, secondaire MSE**, pré-déclarées | En place (MSE à ajouter) |
+
+- **Vérification de la taille du test** (simulation, 1 500 tirages, T = 919 dates, chevauchement de 25 dates, nulle vraie, seuil nominal 5 %) :
+
+| Méthode | Taux de rejet à tort |
+|---|---|
+| Écart-type naïf (indépendance) | **70,5 %** |
+| Newey-West, h−1 retards, loi normale | 13,3 % |
+| EWC, ν = 0,4·T^(2/3) = 38 (Lazarus et al.) | 9,0 % |
+| **EWC, ν plafonné à T/(2h) = 18 (règle v2)** | **5,9 %** |
+
+  Lecture : le test utilisé jusque-là sur-rejette (13 % au lieu de 5 %), donc ses « échecs » ne viennent pas d'un test trop sévère : il était, au
+  contraire, plutôt généreux. Le plafond ν ≤ T/(2h) ramène la taille près de 5 % ; c'est la règle heuristique de la revue, validée ici **dans ce seul
+  schéma** (chevauchement pur, sans persistance supplémentaire).
+- **Ce qui n'est pas résolu** : la puissance. Les règles 2, 9 et 10 sont les seules qui l'améliorent ou la rendent lisible. La règle 7 abaisse le seuil
+  d'exploration mais exige une réplication avant toute publication.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
