@@ -538,6 +538,46 @@ Essai `examen_ia_contre_har`, 2008-2026, 919 dates, membres du S&P 500 à chaque
 - **Ce qui n'est pas résolu** : la puissance. Les règles 2, 9 et 10 sont les seules qui l'améliorent ou la rendent lisible. La règle 7 abaisse le seuil
   d'exploration mais exige une réplication avant toute publication.
 
+### 4.13 Essai « test multi-horizon » (protocole écrit le 20/11/2026, AVANT l'essai ; règles v2 du § 4.12)
+- **Question** : l'IA de niveau (variante B du § 4.10 : XGBoost corrigeant HAR) bat-elle HAR **à court et moyen terme**, là où la littérature
+  (Christensen, Siggaard et Veliyev 2023 ; Bollerslev, Patton et Quaedvlieg 2016) trouve des gains, et où l'on dispose de bien plus de périodes
+  indépendantes (≈ 920 × 5 / h : 184 à 22 jours, 73 à 63 jours, contre 37 à 126 jours) ?
+- **Ce que l'essai ne peut PAS faire (déclaré à l'avance)** : la décision du produit reste le risque à 6 mois. Un gain à court terme **ne prouve rien** à
+  126 jours. Il ne peut donner qu'une **piste** (§ 4.12, règle 7) ; toute publication exigerait un protocole séparé à 126 jours avec réplication.
+- **Horizons** : 5, 22, 63, 126 jours de bourse (le jour seul est écarté : sa volatilité réalisée, une seule observation, est trop bruitée pour QLIKE).
+- **Modèles** : à chaque horizon h, HAR direct (variance future de l'horizon h régressée sur v1, v5, v22, v63, ajustée sur le passé) et B (cible
+  `ln σ_h − ln σ_HAR,h`, mêmes variables que § 4.10, XGBoost prudent fixe, lissage de Duan). Même procédure que § 4.10 : 4 fenêtres de test depuis 2008,
+  embargo = durée de l'horizon, membres du S&P 500 à chaque date.
+- **Statistique primaire (aSPA simplifié)** : `d_t = moyenne sur h de [QLIKE_B,h,t − QLIKE_HAR,h,t]`, avec **poids égaux** déclarés à l'avance, sur les dates
+  communes aux 4 horizons. Test : EWC, ν = min(0,4·T^(2/3), T/(2·h_max)) avec h_max = 126 jours (le plus prudent), loi de Student (§ 4.12, règle 3).
+  Le test uniforme uSPA de Quaedvlieg n'est **pas** implémenté (il exige un bootstrap par blocs) : il est remplacé, comme contrôle plus conservateur,
+  par **Holm sur les 4 tests par horizon**.
+- **Règles de décision, fixées AVANT l'essai**
+  1. **Piste** si les trois conditions sont réunies : (a) `t_aSPA ≤ −2` (B meilleure) ; (b) `d_t` moyen < 0 dans au moins 3 des 4 blocs de dates consécutifs de même taille ;
+     (c) le placebo (même modèle, cible mélangée) ne bat pas HAR de façon significative (`t_placebo > −2`).
+  2. **Fuite probable** si `t_placebo ≤ −2` : arrêt, recherche d'une fuite, résultat écarté.
+  3. **B pire que HAR** si `t_aSPA ≥ +2` (sur-apprentissage) : rapporté, pas de suite.
+  4. **Équivalence (TOST, § 4.12 règle 10)** : marge Δ = 0,01 de QLIKE (≈ 3 % de la QLIKE de HAR). Équivalence seulement si l'IC à 90 % de `d_t` ⊂ [−Δ, +Δ].
+     Elle n'est concluable que si le MDE rapporté est < Δ ; sinon on écrit « sans pouvoir de conclure ».
+  5. **Constats (pas des conditions)** : t, p, erreur-type, IC 95 %, n effectif, MDE, écart/MDE **à chaque horizon** ; Holm sur les 4 horizons ; ratio en crise (2008-2009, 2020, 2022) ; IC (ordre) à chaque horizon.
+- **Puissance annoncée a priori (§ 4.12, règle 2)** : à 126 jours, l'erreur-type de l'écart B − HAR était de 0,058 (Newey-West, § 8) et de 0,017 pour HAR × k (EWC, § 9) :
+  la fourchette est large. Si l'on suppose un écart-type par observation comparable et un n effectif ∝ 1/h, l'erreur-type vaudrait environ 0,03 à 22 jours et 0,015 à 5 jours,
+  donc un MDE de l'ordre de **0,04 à 0,08** pour l'aSPA. C'est **plus grand que les écarts plausibles à 126 jours (0,003 à 0,014)** : l'essai peut détecter des gains
+  nettement plus gros à court terme (comme ceux de la littérature), mais **pas** prouver l'équivalence. Cette estimation est grossière et sera remplacée par le MDE mesuré.
+- **Lecture d'un échec (à l'avance)**
+
+| Observation | Conclusion |
+|---|---|
+| Piste (règle 1) | L'IA apporte quelque chose à court terme ; suite possible : protocole à 126 jours avec réplication (S&P MidCap 400), jamais une publication directe |
+| t_aSPA entre −2 et +2, MDE > 0,02 | Sans pouvoir de conclure : pas de preuve, pas de preuve du contraire |
+| t_aSPA entre −2 et +2, MDE < Δ et IC 90 % ⊂ [−Δ, Δ] | Équivalence démontrée : HAR suffit à toutes les échéances testées |
+| Gain à 5 ou 22 jours seulement (Holm) | Gain de court terme, sans lien avec le portefeuille semestriel ; pourrait servir un suivi mensuel du risque (à protocoler) |
+| Placebo significatif | Fuite ou défaut du banc d'essai : arrêt |
+
+- **Limites** : mêmes que § 4.10 ; poids égaux arbitraires mais déclarés ; uSPA absent ; les dates communes aux 4 horizons se chevauchent entre horizons (l'EWC à ν prudent en tient compte de façon approximative) ;
+  4 horizons × 4 fenêtres = peu de blocs indépendants au total.
+- **Résultats** : § 10.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
