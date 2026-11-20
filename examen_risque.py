@@ -535,3 +535,60 @@ def comparer_niveau(tb: pd.DataFrame, ta: pd.DataFrame | None = None, tp: pd.Dat
     })
     out["candidate"] = bool(r1 and placebo_ok and crises_ok)
     return out
+
+
+# ------------------------------------------------------------------------------
+# Essai « HAR remis à l'échelle » (protocole : docs/METHODE.md § 4.11, écrit avant l'essai)
+# ------------------------------------------------------------------------------
+N_CANDIDATS_ECHELLE = 8          # 7 essais déjà comptés + celui-ci
+
+
+def walk_forward_echelle(data: pd.DataFrame, h: int = H) -> pd.DataFrame:
+    """HAR × k : k² = moyenne(σ_réelle² / σ_HAR²) sur l'entraînement de chaque fenêtre (passé seulement)."""
+    dates = np.sort(data["date"].unique())
+    bornes = np.array_split(dates[len(dates) // 3:], mh.N_FENETRES)
+    embargo = pd.Timedelta(days=int(h * 7 / 5) + 1)
+    sorties = []
+    for k_, bloc in enumerate(bornes):
+        debut = pd.Timestamp(bloc[0])
+        train = data[data["date"] < debut - embargo]
+        test = data[data["date"].isin(bloc)].copy()
+        if len(train) < 2000 or test.empty:
+            continue
+        coef = har_ajuster(train)
+        lvl_tr = har_prevoir(train, coef)
+        ok = np.isfinite(lvl_tr) & (lvl_tr > 0) & (train["brut"].values > 0)
+        k = float(np.sqrt(np.mean(train["brut"].values[ok] ** 2 / lvl_tr[ok] ** 2)))
+        test["lvl_har"] = har_prevoir(test, coef)
+        test["lvl_echelle"] = test["lvl_har"] * k
+        test["fenetre"], test["k"] = k_, k
+        sorties.append(test)
+    return pd.concat(sorties, ignore_index=True) if sorties else pd.DataFrame()
+
+
+def comparer_echelle(t: pd.DataFrame, h: int = H) -> dict:
+    """Règles 1 à 4 du § 4.11."""
+    a, b = _pertes_par_date(t, "lvl_echelle"), _pertes_par_date(t, "lvl_har")
+    n_eff = max(1.0, len(a) * mh.PAS_ECHANTILLON / h)
+    seuil = mh.seuil_t(n_eff, n_candidats=N_CANDIDATS_ECHELLE)
+    dm = diebold_mariano(a, b, decalage=max(1, h // mh.PAS_ECHANTILLON))
+    force = -dm["t"] / seuil
+    crises = {}
+    for nom, (d0, d1) in CRISES.items():
+        i = (a.index >= pd.Timestamp(d0)) & (a.index <= pd.Timestamp(d1))
+        if i.sum() >= 3:
+            crises[nom] = {"ratio": float(a[i].mean() / b.reindex(a.index)[i].mean()), "n_dates": int(i.sum())}
+    cles = [c for c in crises if c.startswith("2008") or c.startswith("2020")]
+    crises_ok = bool(cles) and all(crises[c]["ratio"] <= 1.10 for c in cles)
+    par_fenetre = {}
+    for f, g in t.groupby("fenetre"):
+        pe, ph = _pertes_par_date(g, "lvl_echelle"), _pertes_par_date(g, "lvl_har")
+        par_fenetre[int(f)] = {"qlike": float(pe.mean()), "qlike_har": float(ph.mean()), "k": float(g["k"].iloc[0]),
+                               "debut": str(pd.Timestamp(g["date"].min()).date())}
+    n_mieux = sum(1 for v in par_fenetre.values() if v["qlike"] < v["qlike_har"])
+    stable = n_mieux >= 3
+    regles = {"1_niveau": bool(force >= 1.0), "2_crises": crises_ok, "3_stabilite": stable}
+    return {"qlike": float(a.mean()), "qlike_har": float(b.mean()), "ecart": dm["ecart"], "t": dm["t"], "seuil": seuil,
+            "force": float(force), "n_effectif": n_eff, "crises": crises, "par_fenetre": par_fenetre,
+            "fenetres_meilleures": n_mieux, "calibration": calibration(t, "lvl_echelle"),
+            "calibration_har": calibration(t, "lvl_har"), "regles": regles, "candidate": bool(all(regles.values()))}

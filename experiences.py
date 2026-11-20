@@ -85,6 +85,8 @@ EXPERIENCES_EXAMEN = {
     "examen_ia_contre_har": "L'IA bat-elle HAR sur l'ordre des titres ? Sinon : HAR seul. Backtest hybride contre HAR seul (frais, révision 6 mois)",
     # Essai du 20/11/2026 (docs/METHODE.md § 4.10) : protocole écrit avant l'essai
     "examen_xgb_niveau": "XGBoost sur le NIVEAU de volatilité (cible ln σ − ln σ HAR) contre HAR, QLIKE, placebo, crises",
+    # Essai du 20/11/2026 (docs/METHODE.md § 4.11) : protocole écrit avant l'essai
+    "examen_echelle_har": "HAR remis à l'échelle (un facteur k appris sur le passé) contre HAR, QLIKE, crises, stabilité",
     "examen_marge": "Marge de sécurité apprise sur le passé ; rythmes de révision mensuel, semestriel, annuel avec frais ; fourchette avec l'hybride",
 }
 DEBUT_EXAMEN = "1998-01-01"
@@ -220,6 +222,13 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
                 v = ("candidate (règles 1, 2 et 3 réunies)" if c["candidate"]
                      else "non candidate : " + ", ".join(k for k, ok in c["regles"].items() if not ok))
                 _inserer(cli, lot, nom, v, c, ic=c["ic"]["xgb"], t=c["B"]["t"], seuil=c["B"]["seuil"], n_essais=7)
+            elif nom == "examen_echelle_har":
+                te = ex.walk_forward_echelle(data)
+                c = ex.comparer_echelle(te)
+                c["debut_test"] = str(pd.Timestamp(te["date"].min()).date())
+                v = ("candidat (règles 1, 2 et 3 réunies)" if c["candidate"]
+                     else "non candidat : " + ", ".join(k for k, ok in c["regles"].items() if not ok))
+                _inserer(cli, lot, nom, v, c, ic=c["ecart"], t=c["t"], seuil=c["seuil"], n_essais=8)
             elif nom == "examen_marge":
                 tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
                 res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",

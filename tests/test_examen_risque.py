@@ -200,3 +200,16 @@ def test_niveau_xgb_tourne_et_le_placebo_ne_gagne_pas():
     c = ex.comparer_niveau(tb, None, tp, h=10)
     assert {"B", "placebo", "regles", "candidate"} <= set(c)
     assert c["placebo"]["qlike"] >= c["B"]["qlike"] - 1e-9      # une cible mélangée ne peut pas mieux faire que la vraie
+
+
+def test_echelle_mecanique_et_optimalite_du_facteur():
+    """lvl_echelle = lvl_har × k ; et le facteur de forme fermée minimise bien la QLIKE sur l'échantillon où il est appris."""
+    data = _echantillon_niveau(graine=3)
+    t = ex.walk_forward_echelle(data, h=10)
+    assert not t.empty and np.allclose(t["lvl_echelle"], t["lvl_har"] * t["k"])
+    c = ex.comparer_echelle(t, h=10)
+    assert {"force", "regles", "candidate", "par_fenetre"} <= set(c) and len(c["par_fenetre"]) == t["fenetre"].nunique()
+    r, p = t["brut"].values ** 2, t["lvl_har"].values ** 2
+    k_opt = np.sqrt(np.mean(r / p))
+    q = lambda k: ex.qlike(np.sqrt(p) * k, np.sqrt(r)).mean()
+    assert q(k_opt) <= min(q(k_opt * 0.9), q(k_opt * 1.1), q(1.0)) + 1e-12
