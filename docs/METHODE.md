@@ -242,7 +242,7 @@ très bien la volatilité future) : seul ce gain est testé.
 
 - **Limites déclarées** : biais du survivant partiel (Yahoo ne couvre pas les titres disparus) ; cibles à 6 mois qui se chevauchent (Newey-West, décalage
   de 25 semaines) ; HAR de la phase d'entraînement évalué sur ses propres données ; une seule période de test (2008-2026).
-- **Résultats** : à venir (§ 8).
+- **Résultats** : § 8.
 
 ## 5. Résultats du backtest de la base large (PR #25)
 
@@ -470,3 +470,48 @@ Essai `examen_ia_contre_har`, 2008-2026, 919 dates, membres du S&P 500 à chaque
 | 5. Fourchette | déclenchée puis satisfaite (8,8 % → 6,4 %) | Projection selon une loi de Student à 5 degrés |
 | 6. IA contre HAR | validée (208 % du seuil) | L'IA reste ; HAR seul en repli automatique |
 
+---
+
+## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
+
+Protocole : § 4.10, inchangé depuis son commit. 919 dates de test, du 20/02/2008, 4 fenêtres, n effectif 36,5, seuil de Student corrigé pour 7 essais : **2,86**.
+
+### 8.1 Règles de décision
+
+| Règle | Résultat | Verdict |
+|---|---|---|
+| 1. Niveau : B bat HAR (force ≥ 100 %) | QLIKE 0,3186 contre 0,3325 ; t = −0,24 ; **force 8 %** | **Échec** (écart non significatif) |
+| 2. Placebo ne bat pas HAR (force < 100 % et écart ≥ 0) | QLIKE 0,3293 : **écart −0,0032** (force 8 %) | **Échec à la lettre** (voir 8.3) |
+| 3. Crises : ratio B / HAR ≤ 1,10 en 2008-2009 et 2020 | 2008-2009 : 0,94 ; **2020 : 1,30** | **Échec** |
+| **Candidate à la publication** | non | **B n'est pas candidate** |
+
+### 8.2 Constats (règles 4 et 5, et variante A)
+
+| Mesure | HAR | B (XGBoost sur HAR) | A (XGBoost seul) | Placebo de B |
+|---|---|---|---|---|
+| QLIKE (plus bas = mieux) | 0,3325 | 0,3186 | 0,3251 | 0,3293 |
+| Force de la preuve contre HAR | — | 8 % | 5 % | 8 % |
+| IC (ordre des titres) | 74,9 % | 77,8 % | — | — |
+| Biais médian prévu / réel | +27 % | **+7 %** | — | — |
+| Part de prévisions sous-estimées | 23 % | **41 %** | — | — |
+
+Ratio de QLIKE B / HAR par période (< 1 : B meilleure) : 2015-2016 : 0,42 · 2011 : 0,86 · fin 2018 : 0,76 · 2008-2009 : 0,94 · **2020 : 1,30** · **2022 : 1,65**.
+
+### 8.3 Lecture, selon la grille écrite à l'avance (§ 4.10)
+
+- **Ligne « B ≈ HAR »** : l'écart de QLIKE (−4 % pour B) est **loin du seuil** (force 8 %, il en faudrait 100 %). Avec n effectif = 36, un gain de cette taille ne se distingue pas du hasard. **Conclusion retenue : on ne détecte pas d'information de niveau que HAR n'ait pas déjà.** Ce n'est pas la preuve que B est équivalente à HAR, seulement qu'on ne peut pas dire qu'elle fait mieux.
+- **A ≈ B** (0,3251 contre 0,3186, forces 5 % et 8 %) : l'ancrage sur HAR ne change pas le résultat.
+- **Crises** : B est la plus mauvaise là où le coût d'une sous-estimation est le plus fort : 2020 (×1,30) et 2022 (×1,65). Cela rejoint le défaut déjà connu de l'IA (§ 6.1). Sa meilleure calibration moyenne (+7 % contre +27 %) a un prix : 41 % de sous-estimations contre 23 % pour HAR. La QLIKE punit ce déplacement.
+- **Placebo (règle 2)** : la règle est **déclenchée à la lettre**, mais **ce n'est pas une fuite**. Un modèle entraîné sur une cible mélangée prévoit en gros une constante, donc il ne fait que **remettre HAR à l'échelle** : il corrige son biais de +27 %. Cette correction seule gagne 0,0032 de QLIKE. La règle 2 était mal posée : le placebo était censé tester une fuite, pas l'effet d'un simple changement d'échelle. Aucune décision ne repose dessus, car la règle 1 échoue indépendamment.
+- **Observation après coup (non prévue au protocole, donc à ne pas retenir comme preuve)** : si on retire cet effet d'échelle, le gain de B sur le placebo est de l'ordre de 0,0107 de QLIKE. Il n'a pas été testé statistiquement.
+- **Ordre des titres** : l'IC du classement par niveau de B (77,8 %) est proche de celui de l'IA publiée (78,3 %) et au-dessus de HAR (74,9 %). Le gain d'ordre existe, mais il est déjà dans l'hybride.
+
+### 8.4 Décision
+
+Aucun changement : l'hybride (ordre de l'IA, niveau de HAR) reste en place. B n'est pas adoptée.
+
+### 8.5 Suites possibles (chacune serait un nouvel essai compté, soumis à l'accord de l'utilisateur)
+1. **Remise à l'échelle de HAR seule** : le placebo suggère qu'un facteur correctif du biais de HAR (appris sur le passé) gagne un peu de QLIKE sans aucune IA. À tester comme essai à part, avec son protocole.
+2. **Modèle de plus faible capacité** (ridge sur les logs), pour limiter la sous-estimation en crise.
+3. **Variable de régime** (VIX) pour les chocs de 2020 et 2022.
+4. Laisser le niveau à HAR : l'essai n'a rien à lui reprocher qu'il soit possible de prouver.
