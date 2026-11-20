@@ -576,7 +576,63 @@ Essai `examen_ia_contre_har`, 2008-2026, 919 dates, membres du S&P 500 à chaque
 
 - **Limites** : mêmes que § 4.10 ; poids égaux arbitraires mais déclarés ; uSPA absent ; les dates communes aux 4 horizons se chevauchent entre horizons (l'EWC à ν prudent en tient compte de façon approximative) ;
   4 horizons × 4 fenêtres = peu de blocs indépendants au total.
+- **Précision de lecture, ajoutée le 20/11/2026 à 13 h 20 UTC, AVANT le résultat** (run n° 42 en file, aucune donnée de l'essai vue) :
+  la règle 2 n'est **pas modifiée** et s'applique à la lettre. Mais le § 8.3 a montré qu'un placebo à cible mélangée ne prévoit qu'une constante,
+  donc qu'il **remet HAR à l'échelle**. À 5 et 22 jours, le test a beaucoup plus de puissance qu'à 126 jours : un simple gain d'échelle peut y devenir
+  significatif et déclencher la règle 2 sans aucune fuite. Si la règle 2 se déclenche, on rapportera donc en plus, comme **constat** :
+  (i) le placebo comparé à HAR × k (le facteur d'échelle du § 4.11, appris sur l'entraînement au même horizon) ;
+  (ii) la lecture « effet d'échelle » si placebo ≈ HAR × k, « fuite à chercher » sinon. Le verdict à la lettre (« fuite probable »,
+  donc pas de piste) reste celui qui compte ; la lecture ne sert qu'à orienter la suite.
 - **Résultats** : § 10.
+
+### 4.14 Essai « HAR-X : HAR + volatilité implicite (VIX) » (protocole écrit le 20/11/2026, AVANT tout code ; règles v2 du § 4.12)
+- **Origine** : les essais §§ 8, 9 et 10 n'utilisent que les **cours passés**. HAR en extrait déjà presque tout ; le reste vient surtout des chocs
+  de marché (2020, 2022), là où les IA de niveau échouent. Le § 4.12 (règles 2 et 9) dit que seule une **information nouvelle** peut changer
+  la donne. La volatilité implicite (VIX) est la seule information **tournée vers l'avenir** disponible gratuitement depuis 1990. La littérature
+  la trouve informative au-delà de HAR pour la volatilité de marché (Busch, Christensen et Nielsen 2011 ; Christensen et Prabhala 1998).
+- **Question** : ajouter le VIX à HAR améliore-t-il la prévision du **niveau** de volatilité de chaque titre ?
+- **Hypothèses** : H0 : QLIKE(HAR-X) = QLIKE(HAR). H1 : QLIKE(HAR-X) < QLIKE(HAR).
+- **Modèle** (une seule variante, pas de réglage) : HAR direct du § 4.10 (variance future régressée sur v1, v5, v22, v63, moindres carrés sur le
+  passé) avec **une variable de plus** : `x = β̂² × (VIX / 100)² / 252`, la variance quotidienne que le marché des options anticipe pour la part
+  « marché » du titre (β̂ : bêta sur 1 an, déjà calculé, sans information future). VIX : clôture `^VIX` (Yahoo), au jour de la prévision.
+  Mêmes dates, fenêtres, embargo (= horizon) et membres du S&P 500 que § 4.10. Aucune IA.
+- **Horizons** : **126 jours** (primaire : c'est l'horizon du produit) et **22 jours** (secondaire). La littérature trouve l'apport du VIX
+  plus fort à 1 mois, ce qui correspond à l'échéance du VIX lui-même.
+- **Multiplicité** : 1 essai de plus dans la famille « références » ; famille confirmatoire de 2 tests (126 et 22 jours), corrigée par **Holm**.
+- **Statistique** : `d_t = QLIKE_HAR-X − QLIKE_HAR` par date (moyenne sur les titres), `inference.rapport_dm`, EWC avec ν = min(0,4·T^(2/3), T/(2h)), loi de Student.
+- **Règles de décision, fixées AVANT l'essai** (§ 4.12, règle 7)
+  1. **Piste** (à chaque horizon) : t ≤ −2 et `d_t` moyen < 0 dans au moins 3 des 4 fenêtres de test.
+  2. **Candidat à la publication** (126 jours seulement) : (a) p unilatéral corrigé par Holm < 0,5 % ; (b) écart ≤ **−0,01** de QLIKE (minimum économique,
+     ≈ 3 % de la QLIKE de HAR, même marge Δ que le § 4.13) ; (c) ratio de QLIKE HAR-X / HAR ≤ 1,10 en 2008-2009 **et** en 2020 ; (d) **réplication** sur le
+     S&P MidCap 400 (titres jamais utilisés, `universe.get_sp400_tickers`) avec t ≤ −2 dans le même sens.
+  3. **Placebo** : même modèle avec un VIX **décalé de 252 jours** (vraie série, mauvais moment). Il garde la forme et l'échelle du VIX mais perd sa
+     valeur de prévision. Il ne doit pas battre HAR (t > −2). Sinon le gain viendrait de la variable en plus, pas de l'information : résultat écarté.
+     Ce placebo évite le défaut du § 8 : les deux modèles gardent les 5 coefficients de HAR, il n'y a aucun effet d'échelle à « remettre ».
+  4. **Pire que HAR** si t ≥ +2 : rapporté, pas de suite.
+  5. **Équivalence** (TOST, Δ = 0,01) concluable seulement si le MDE < Δ ; sinon « sans pouvoir de conclure ».
+  6. **Constats** (pas des conditions) : coefficient du VIX par fenêtre et son signe, biais médian, part de sous-estimations, ratio par crise (dont 2022),
+     IC (ordre des titres), MSE en perte secondaire, `t_max_attendu` pour le nombre total d'essais.
+  7. Les règles 2 (a) à (d) réunies rendent HAR-X **candidat** au remplacement de HAR dans l'hybride (le niveau seulement ; l'ordre reste à l'IA).
+     Aucun changement de l'appli sans décision écrite de l'utilisateur et PR séparée.
+- **Puissance annoncée a priori (§ 4.12, règle 2)** : à 126 jours, le MDE mesuré au § 9 est ≈ 0,05. Un gain de 0,01 à 0,03 (ordre de grandeur plausible si le
+  VIX aide surtout en début de crise) n'est **pas** détectable à 126 jours : l'horizon primaire risque d'être « sans pouvoir de conclure ». À 22 jours, le MDE
+  attendu (≈ 0,02 à 0,03, § 4.13) rend un gain de cette taille **détectable**. C'est pourquoi une piste à 22 jours est l'issue la plus probable si le VIX aide.
+  Le MDE mesuré remplacera cette estimation.
+- **Lecture d'un échec (à l'avance)**
+
+| Observation | Conclusion |
+|---|---|
+| Candidat (règle 2) | Le VIX apporte au niveau ce que les cours n'ont pas ; proposition de l'intégrer au niveau de l'hybride (décision de l'utilisateur) |
+| Piste à 22 jours seulement | Le VIX aide à 1 mois, pas prouvé à 6 mois ; pourrait servir un risque « à court terme » affiché (à protocoler), pas le portefeuille semestriel |
+| Piste à 126 jours sans réplication midcaps | Peut-être propre au S&P 500 ou à la période : non publié |
+| t entre −2 et +2, MDE > 0,02 | Sans pouvoir de conclure : on ne sait pas, et les seules données publiques ne permettront pas de savoir à 6 mois |
+| Placebo significatif | Le gain vient du degré de liberté, pas de l'anticipation : écarté |
+| Coefficient du VIX instable ou de signe changeant selon les fenêtres | Relation non stable : écarté même si la moyenne est bonne |
+| Pire en crise (règle 2 c) | Le VIX réagit trop tard ou trop fort aux chocs : écarté |
+
+- **Limites** : un seul VIX pour tous les titres (pas de volatilité implicite par titre, payante) ; le bêta de 1 an peut changer en crise ;
+  n effectif ≈ 36 à 126 jours ; les midcaps n'ont pas de composition historique (biais du survivant reconnu).
+- **Résultats** : § 11.
 
 ---
 
