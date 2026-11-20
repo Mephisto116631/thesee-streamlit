@@ -27,7 +27,8 @@ Document de reprise pour une nouvelle session (Claude Code). Tout est en frança
 | XGBoost sur le niveau (B : cible `ln σ − ln σ_HAR` ; A : cible `ln σ` ; placebo) | § 4.10 | § 8 | **B non candidate** : QLIKE 0,3186 contre 0,3325 (HAR), force 8 % (seuil 2,86), crises 2020 ×1,30 et 2022 ×1,65, placebo à la lettre déclenché (il remet HAR à l'échelle : défaut de la règle, pas fuite) |
 | HAR remis à l'échelle (un facteur k appris sur le passé) | § 4.11 | § 9 | **Non candidat** : écart −0,0027, force 6 %, 2008-2009 ×1,16, 2 fenêtres sur 4 ; k stable ≈ 0,95 → HAR est déjà calibré en moyenne ; le « biais de 27 % » est un effet d'asymétrie (médiane) |
 | Règles v2 de test (littérature : Patton 2011, Giacomini-White 2006, Lazarus et al. 2018, Coroneo-Iacone 2020, Quaedvlieg 2021, Holm 1979, Harvey-Liu 2020…) | § 4.12 | simulation de taille | Test précédent sur-rejetait (NW + normale : 13 % au lieu de 5 % ; naïf : 70 %) ; **EWC avec ν = min(0,4·T^(2/3), T/(2h)) : 5,9 %** |
-| Multi-horizon (5, 22, 63, 126 jours ; IA de niveau B contre HAR) | § 4.13 | **à lire (§ 10 à écrire)** | en cours |
+| Multi-horizon (5, 22, 63, 126 jours ; IA de niveau B contre HAR) | § 4.13 | § 10 | **Sans pouvoir de conclure** : t_aSPA = +0,06, MDE 0,160 ; meilleur indice à 5 jours (−0,018, t −1,34, MDE 0,039) ; MDE à 22 jours 0,108, bien au-dessus de l'estimation a priori ; 2020 très défavorable à B |
+| HAR-X : HAR + VIX × β² | § 4.14 (+ additif puissance) | § 11 | **protocole écrit, code à faire** |
 
 Constat transversal : avec n effectif ≈ 36 à 126 jours, le MDE est ≈ 0,05 à 0,16 de QLIKE, bien au-dessus des écarts discutés (0,003 à 0,014). Les essais disent « pas de gain détectable », pas « pas de gain ». Le panel de titres est **déjà** inclus (l'écart de perte est moyenné par date, estimateur de type Driscoll-Kraay) : pas de gain de puissance de ce côté.
 
@@ -56,7 +57,8 @@ from experiences where nom = 'examen_multi_horizon' order by lot desc limit 1;
 - Ne pas utiliser `pkill -f` avec un motif présent dans sa propre commande (tue le shell). Ne pas chaîner des `sleep` : utiliser un moniteur (boucle `until`).
 - Le calcul n'est pas faisable depuis ce conteneur (Yahoo bloqué) : tout se lance par GitHub Actions. Les tests synthétiques tournent en local (`python3 -m pytest -q tests/test_examen_risque.py tests/test_inference.py`, ≈ 2 minutes pour `test_examen_risque`).
 - Les données Yahoo bougent légèrement entre deux runs (3ᵉ-4ᵉ décimale de QLIKE) : deux lots d'un même essai ne sont pas identiques à l'octet.
-- Un fichier modifié sous `paths` de `experiences.yml` relance le workflow à chaque push ; regrouper les changements de code et pousser les documents seuls (`docs/`) sans déclencher de run.
+- **Correction (20/11/2026)** : sur une PR, le filtre `paths` regarde **tout le diff de la PR**, pas seulement le dernier commit. Tant que la PR touche un fichier de `paths`, **chaque** push (même `docs/` seul) relance le laboratoire et annule le run en file. Attendre la fin d'un run avant de pousser quoi que ce soit sur la branche.
+- Archive : l'ancienne branche est sauvegardée sous `archive/test-modele-relatif` (même commit `f5eef85`) ; la branche `test-modele-relatif` peut être supprimée depuis l'interface GitHub (l'outil de l'assistant ne peut pas supprimer de branche).
 - Préférences de l'utilisateur sur les essais : description méthodique et scientifique de ce qui est fait, règles écrites avant, conclusions tirables en cas d'échec ; réponses courtes.
 
 ## 6. Fichiers clés

@@ -632,6 +632,15 @@ Essai `examen_ia_contre_har`, 2008-2026, 919 dates, membres du S&P 500 à chaque
 
 - **Limites** : un seul VIX pour tous les titres (pas de volatilité implicite par titre, payante) ; le bêta de 1 an peut changer en crise ;
   n effectif ≈ 36 à 126 jours ; les midcaps n'ont pas de composition historique (biais du survivant reconnu).
+- **Additif du 20/11/2026, 14 h 10 UTC, AVANT tout code de HAR-X** (après le résultat du § 10, qui ne porte pas sur HAR-X) : le § 10 a mesuré les
+  écarts minimaux détectables (MDE) entre B et HAR à chaque horizon : **0,039 à 5 jours, 0,108 à 22 jours, 0,273 à 63 jours, 0,200 à 126 jours**.
+  Mon estimation a priori pour 22 jours (≈ 0,02 à 0,03) était donc **trop optimiste**. À court terme, la volatilité réalisée sur peu de jours est très
+  bruitée, et la QLIKE l'est aussi. Nuance : le MDE dépend de l'écart entre les deux prévisions comparées. HAR-X ne diffère de HAR que par une
+  variable : ses prévisions resteront très proches de celles de HAR, comme HAR × k au § 9 (MDE 0,051 à 126 jours, contre 0,20 pour B). On s'attend
+  donc à un MDE de HAR-X nettement plus petit que celui de B, mais **non mesuré**. **Ajout au protocole** (aucune règle de décision modifiée) :
+  **5 jours** devient un horizon de **constat** (le seul où le MDE mesuré est < 0,04), sans entrer dans la famille confirmatoire (126 et 22 jours).
+  Le MDE de HAR-X sera rapporté à chaque horizon. Si à 126 et 22 jours il dépasse 0,03, l'essai sera déclaré « sans pouvoir de conclure »
+  (§ 4.12, règle 2) quel que soit t.
 - **Résultats** : § 11.
 
 ---
@@ -723,3 +732,65 @@ Aucun changement. L'hybride (ordre de l'IA, niveau de HAR) reste en place.
 2. **Seul levier restant sur la puissance : l'information nouvelle** (§ 4.12, règle 9) : un test multi-horizon (1, 5, 22, 63, 126 jours) donnerait environ 200 périodes indépendantes à 1 mois.
    Il répondrait à une question un peu différente (le gain existe-t-il à court terme ?) sans prouver le gain à 6 mois. À protocoler avant de lancer.
 3. **Rapports de puissance** : désormais, chaque essai doit publier son MDE ; ceux-ci montrent que la plupart des écarts discutés (0,003 à 0,014) sont de 5 à 30 % du MDE.
+
+---
+
+## 10. Résultats de l'essai « multi-horizon » (PR #28, lot du 20/11/2026 13:22 UTC, run n° 43)
+
+Protocole : § 4.13, inchangé depuis son commit, plus la précision de lecture de 13 h 20 UTC (écrite avant le résultat ; elle n'a pas servi, voir
+règle 2). 911 dates communes aux 4 horizons, du 20/02/2008 au 19/05/2026, 4 fenêtres, membres du S&P 500 à chaque date. Journaux du run sans
+`[LABO][ERREUR]`. Dans le même run, les re-tests du produit sont inchangés : hybride publié, l'IA reste, `risque_volatilite` 6 mois probant (t 6,50).
+
+### 10.1 Règles de décision (§ 4.13)
+
+| Règle | Résultat | Verdict |
+|---|---|---|
+| 1. Piste : t_aSPA ≤ −2, ≥ 3 blocs sur 4 négatifs, placebo non significatif | t_aSPA = **+0,06** ; blocs négatifs 3/4 ; placebo t = −0,55 | **Non** (t loin de −2) |
+| 2. Fuite probable : t_placebo ≤ −2 | t_placebo = −0,55 (écart −0,007, IC 95 % [−0,033 ; +0,019]) | **Non** : pas de fuite, pas d'effet d'échelle significatif |
+| 3. B pire que HAR : t_aSPA ≥ +2 | t = +0,06 | Non |
+| 4. Équivalence (TOST, Δ = 0,01) | IC 90 % [−0,091 ; +0,097] ⊄ [−0,01 ; +0,01] ; MDE 0,160 > Δ | **Non concluable** |
+| **Verdict** | | **Sans pouvoir de conclure** |
+
+### 10.2 Constats par horizon (écart = QLIKE de B − QLIKE de HAR ; < 0 : B meilleure)
+
+| Horizon | Écart | Erreur-type | t (ν) | p | IC 95 % | n effectif | MDE (80 %) | Écart / MDE | Holm |
+|---|---|---|---|---|---|---|---|---|---|
+| 5 jours | **−0,018** | 0,013 | −1,34 (37) | 0,19 | [−0,045 ; +0,009] | 340 | **0,039** | 47 % | non rejeté |
+| 22 jours | −0,009 | 0,038 | −0,25 (37) | 0,81 | [−0,086 ; +0,067] | 206 | 0,108 | 9 % | non rejeté |
+| 63 jours | +0,054 | 0,095 | +0,56 (36) | 0,58 | [−0,139 ; +0,246] | 84 | 0,273 | 20 % | non rejeté |
+| 126 jours | −0,014 | 0,067 | −0,20 (18) | 0,84 | [−0,155 ; +0,128] | 44 | 0,200 | 7 % | non rejeté |
+| **aSPA (moyenne)** | +0,003 | 0,054 | +0,06 (18) | 0,95 | [−0,111 ; +0,117] | 63 | 0,160 | 2 % | — |
+
+- **Ordre des titres (IC)**, B contre HAR : 49,8 % contre 47,4 % (5 j) ; 68,6 % contre 65,2 % (22 j) ; 76,2 % contre 73,4 % (63 j) ; 77,8 % contre 74,9 % (126 j).
+  B classe mieux à **tous** les horizons (+2,4 à +3,4 points), comme l'IA publiée.
+- **Crises** (écart moyen de la moyenne sur les horizons) : 2008-2009 −0,061 (B meilleure) ; 2011 −0,027 ; 2015-2016 −0,031 ; fin 2018 +0,194 ;
+  **2020 +0,782** (B très mauvaise) ; 2022 +0,031. Même défaut que § 8 : l'IA de niveau se trompe le plus lors d'un choc soudain (Covid).
+- **Blocs de dates** (moyenne de d_t) : −0,042 ; −0,130 ; **+0,197** ; −0,013. Le bloc défavorable contient le Covid.
+
+### 10.3 Lecture, selon la grille écrite à l'avance (§ 4.13)
+- **Ligne « t_aSPA entre −2 et +2, MDE > 0,02 »** : **sans pouvoir de conclure**. Pas de preuve d'un gain de B sur HAR, pas de preuve du contraire.
+- **Le multi-horizon n'a pas apporté la puissance espérée.** Plus de périodes indépendantes (n effectif 340 à 5 jours, 206 à 22 jours) mais des pertes beaucoup
+  plus bruitées : la volatilité réalisée sur 5 ou 22 jours est elle-même très imprécise. Le MDE mesuré à 22 jours (**0,108**) est 4 à 5 fois l'estimation
+  a priori (0,02 à 0,03). L'estimation a priori du § 4.13 supposait un bruit par observation comparable à celui de 126 jours ; c'était faux.
+- **Seul indice** : à 5 jours, B fait −0,018 (t = −1,34, p = 0,19), soit 47 % du MDE. Ce n'est **pas** une piste au sens de la règle 1, et ce n'est pas un
+  signal : à retenir seulement comme l'horizon où un futur test aurait le plus de chances de voir quelque chose.
+- **Placebo** : non significatif (t = −0,55). La précision de lecture de 13 h 20 n'a pas eu à servir. Contrairement au § 8, l'effet d'échelle du placebo
+  ne ressort pas ici (son écart, −0,007, est dans le bruit).
+- **Ordre des titres** : le gain d'IC de B (+2,4 à +3,4 points) se retrouve à tous les horizons. C'est cohérent avec l'IA publiée, qui garde l'ordre dans l'hybride.
+
+### 10.4 Décision
+Aucun changement. L'hybride (ordre de l'IA, niveau de HAR) reste en place. Bilan des trois essais sur le niveau (§§ 8, 9, 10) : **aucune IA ni recalibration
+ne bat HAR de façon détectable sur le niveau, à aucun horizon de 5 jours à 6 mois**. Avec les seuls cours passés, c'est la limite de l'information
+disponible, pas celle du modèle.
+
+### 10.5 Limites
+- Poids égaux entre horizons (arbitraires, déclarés) ; test uniforme uSPA absent (remplacé par Holm).
+- Les dates communes aux 4 horizons se chevauchent entre horizons : l'EWC à ν = 18 en tient compte de façon approximative.
+- Un seul tirage de placebo.
+- Données Yahoo : reproductibilité à la 3ᵉ-4ᵉ décimale (§ 9).
+
+### 10.6 Suite
+La seule voie restante est une **information nouvelle** : l'essai HAR-X (§ 4.14, avec son additif de 14 h 10 sur la puissance), qui ajoute la volatilité implicite (VIX).
+Le multi-horizon est retiré des essais lancés par défaut : c'était un essai de recherche ponctuel, pas un re-test du produit. Le relancer chaque mois
+reviendrait à regarder plusieurs fois la même hypothèse.
+
