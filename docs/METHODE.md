@@ -470,6 +470,34 @@ Essai `examen_ia_contre_har`, 2008-2026, 919 dates, membres du S&P 500 à chaque
 | 5. Fourchette | déclenchée puis satisfaite (8,8 % → 6,4 %) | Projection selon une loi de Student à 5 degrés |
 | 6. IA contre HAR | validée (208 % du seuil) | L'IA reste ; HAR seul en repli automatique |
 
+### 4.11 Essai « HAR remis à l'échelle » (protocole écrit le 20/11/2026, AVANT l'essai)
+- **Origine** : le placebo de l'essai § 4.10 a gagné 0,0032 de QLIKE sur HAR en ne faisant que le remettre à l'échelle (§ 8.3). Hypothèse née
+  **après** un résultat : elle est donc testée ici comme un essai neuf, sans réutiliser les chiffres du § 8.
+- **Question** : un simple facteur multiplicatif, appris sur le passé, améliore-t-il la QLIKE de HAR, sans aucune IA ?
+- **Hypothèses** : H0 : QLIKE(HAR × k) = QLIKE(HAR). H1 : QLIKE(HAR × k) < QLIKE(HAR).
+- **Méthode** : une seule variante, un seul paramètre. Dans chaque fenêtre, HAR est ajusté sur l'entraînement (comme § 4.10), puis
+  `k² = moyenne(σ_réelle² / σ_HAR²)` sur l'entraînement (c'est le facteur qui minimise la QLIKE d'entraînement, forme fermée).
+  Niveau prévu = `σ_HAR × k`. Mêmes dates, mêmes fenêtres et même embargo que § 4.10. **Aucun réglage**, aucun modèle d'IA.
+- **Multiplicité** : 1 essai de plus dans la famille « références » (7 déjà comptés) : seuil de Student corrigé pour **8**.
+- **Règles de décision, fixées AVANT l'essai**
+  1. **Niveau** : Diebold-Mariano sur la QLIKE, HAR × k contre HAR. Gain réel si `force = −t / seuil ≥ 100 %`.
+  2. **Crises** : ratio de QLIKE (HAR × k) / HAR ≤ 1,10 en 2008-2009 **et** en 2020. Sinon écarté même si la règle 1 est vraie.
+  3. **Stabilité** : HAR × k meilleur que HAR dans au moins 3 des 4 fenêtres de test.
+  4. **Constats** (pas des conditions) : valeur de k par fenêtre, biais médian, part de sous-estimations, ratio par crise (dont 2022).
+  5. **Pas de placebo** : il n'y a qu'un paramètre appris, il ne peut rien mémoriser. Le contrôle est le cas k = 1, qui est HAR.
+  6. Les règles 1, 2 et 3 réunies rendent HAR × k *candidat* au remplacement de HAR dans l'hybride. Aucun changement de l'appli sans décision
+     écrite de l'utilisateur et PR séparée.
+- **Lecture d'un échec (à l'avance)**
+
+| Observation | Conclusion |
+|---|---|
+| Règle 1 échoue (force < 100 %) | Le biais de HAR n'est pas corrigeable de façon détectable : HAR reste tel quel |
+| Règle 1 réussit, règle 2 échoue | Le gain vient de périodes calmes et se paie en crise : rejeté (la sous-estimation en crise est le risque à éviter) |
+| Règles 1 et 2 réussissent, règle 3 échoue | Gain concentré sur une fenêtre : non fiable, rejeté |
+| k très différent d'une fenêtre à l'autre | Le biais n'est pas stable : un facteur fixe est inadapté |
+- **Limites** : mêmes que § 4.10 ; n effectif ≈ 36 : un gain faible restera indétectable même s'il est réel (un échec ne prouve pas l'absence d'effet).
+- **Résultats** : § 9.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
