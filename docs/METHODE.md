@@ -583,3 +583,47 @@ Aucun changement : l'hybride (ordre de l'IA, niveau de HAR) reste en place. B n'
 2. **Modèle de plus faible capacité** (ridge sur les logs), pour limiter la sous-estimation en crise.
 3. **Variable de régime** (VIX) pour les chocs de 2020 et 2022.
 4. Laisser le niveau à HAR : l'essai n'a rien à lui reprocher qu'il soit possible de prouver.
+
+---
+
+## 9. Résultats de l'essai « HAR remis à l'échelle » (PR #28, lancé le 20/11/2026)
+
+Protocole : § 4.11, inchangé depuis son commit. Verdict jugé par les règles de ce protocole (lot du 12:44 UTC) ; les statistiques v2 (§ 4.12) viennent du second
+lot (12:55 UTC), ajoutées comme **constats**. Les deux lots divergent à la 3ᵉ ou 4ᵉ décimale (Yahoo a corrigé quelques cours entre les deux) : limite de
+reproductibilité à retenir, elle est bien plus petite que tout écart discuté ici. 919 dates de test, n effectif 36,5, seuil de Student corrigé pour 8 essais : **2,91**.
+
+### 9.1 Règles de décision (§ 4.11)
+
+| Règle | Résultat | Verdict |
+|---|---|---|
+| 1. Niveau : HAR × k bat HAR (force ≥ 100 %) | QLIKE 0,3298 contre 0,3325 ; écart −0,0027 ; t = −0,19 ; **force 6 %** | **Échec** |
+| 2. Crises : ratio ≤ 1,10 en 2008-2009 et 2020 | 2020 : 1,04 ; **2008-2009 : 1,16** | **Échec** |
+| 3. Stabilité : meilleur dans ≥ 3 fenêtres sur 4 | **2 sur 4** | **Échec** |
+| **Candidat** | non | **HAR × k n'est pas candidat** |
+
+### 9.2 Constats
+
+- **Facteur k** : 0,945 ; 0,949 ; 0,943 ; 0,966 selon la fenêtre. **Très stable**, mais proche de 1 : HAR, ajusté en moindres carrés sur la variance, est déjà quasi calibré **en moyenne**
+  (il ne surestime que de 5 % en moyenne).
+- **Biais médian** : +27 % pour HAR, +21 % pour HAR × k. Le « biais de 27 % » du § 6.2 est donc surtout un **effet d'asymétrie** : une prévision correcte de la moyenne d'une variable
+  asymétrique surestime sa médiane. Ce n'était pas un défaut de HAR à corriger (point soulevé par la revue de littérature, Patton 2011).
+- **Par fenêtre** (QLIKE de HAR × k / HAR) : 2008-2012 : 0,438 / 0,413 (HAR meilleur) · 2012-2017 : 0,303 / 0,353 (HAR × k meilleur) · 2017-2021 : 0,429 / 0,410 (HAR meilleur) · 2021-2026 : 0,148 / 0,154 (HAR × k meilleur).
+  Le gain n'a pas de signe stable.
+- **Statistiques v2** (écart −0,0028) : erreur-type EWC 0,0173 (ν = 18) ; IC à 95 % **[−0,039 ; +0,034]** ; p = 0,87 ; n effectif 37 ; **écart minimal détectable 0,051**, soit l'écart observé = 5 % du MDE.
+
+### 9.3 Lecture, selon la grille écrite à l'avance (§ 4.11)
+
+- **Règle 1 échoue** : le biais d'échelle de HAR n'est pas corrigeable de façon détectable. HAR reste tel quel.
+- **Réconciliation avec le § 8** : le placebo du § 8 avait gagné 0,0032 de QLIKE sur HAR ; ici le facteur k seul en gagne 0,0027, du même ordre. Ce gain est **minuscule et non significatif** : l'hypothèse née de l'observation du placebo n'est pas confirmée.
+- **Conséquence pour l'essai § 8** : l'écart de B sur le placebo (0,0107, observation après coup) reste sans test. Il n'est pas démontré non plus que B apporte de l'information au-delà d'une recalibration.
+- **Limite honnête** : le test ne peut détecter que des écarts d'environ 0,05 ; un gain réel de 0,003 reste invisible. On peut dire « pas de gain détectable », pas « pas de gain ».
+
+### 9.4 Décision
+
+Aucun changement. L'hybride (ordre de l'IA, niveau de HAR) reste en place.
+
+### 9.5 Bilan des deux essais sur le niveau (§§ 8 et 9) et suite
+1. **HAR brut est une référence solide à 6 mois** : ni XGBoost (§ 8) ni une recalibration simple (§ 9) ne le battent de façon détectable avec la puissance dont on dispose.
+2. **Seul levier restant sur la puissance : l'information nouvelle** (§ 4.12, règle 9) : un test multi-horizon (1, 5, 22, 63, 126 jours) donnerait environ 200 périodes indépendantes à 1 mois.
+   Il répondrait à une question un peu différente (le gain existe-t-il à court terme ?) sans prouver le gain à 6 mois. À protocoler avant de lancer.
+3. **Rapports de puissance** : désormais, chaque essai doit publier son MDE ; ceux-ci montrent que la plupart des écarts discutés (0,003 à 0,014) sont de 5 à 30 % du MDE.
