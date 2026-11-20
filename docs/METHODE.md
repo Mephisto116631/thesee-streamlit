@@ -199,6 +199,51 @@ très bien la volatilité future) : seul ce gain est testé.
      l'hybride puis avec HAR seul est rapporté : risque réel, rendement net, limite tenue. C'est un constat, pas une condition.
 - **Résultats** : § 7.
 
+### 4.10 Essai « XGBoost sur le niveau de volatilité » (protocole écrit le 20/11/2026, AVANT tout résultat)
+- **Question (demande de l'utilisateur)** : l'IA actuelle apprend le **rang** du jour (`y` = rang du risque relatif). Elle ignore donc le niveau
+  global (un krach double toutes les volatilités sans changer les rangs) et emprunte celui de HAR. Un XGBoost qui prévoit directement
+  le **niveau** apporte-t-il quelque chose que HAR n'a pas ?
+- **Hypothèses**
+  - H0 : à information égale, XGBoost n'améliore pas la QLIKE de HAR (différence nulle ou en faveur de HAR).
+  - H1 : XGBoost, en corrigeant HAR à partir de variables supplémentaires, a une QLIKE plus basse que HAR.
+- **Variantes** (2 essais, ajoutés à la famille « références », qui en compte déjà 5 : seuil corrigé pour **7**)
+  - **B (hypothèse principale)** : cible `ln(σ réalisée 6 mois) − ln(σ HAR)`. Niveau prévu = `σ HAR × exp(prévision) × lissage`.
+  - **A (diagnostic)** : cible `ln(σ réalisée 6 mois)`, sans HAR comme point de départ. Niveau prévu = `exp(prévision) × lissage`.
+  - A n'est pas candidat à la publication seul. Si A ≈ B, l'ancrage sur HAR n'apporte rien ; si A ≪ B, HAR est indispensable.
+- **Variables** (toutes connues à la date t) : les rangs de `modele_horizon.FEATURES`, plus des niveaux en logarithme :
+  `ln σ 3 mois`, `ln σ EWMA`, `ln σ 5 jours`, `ln σ 22 jours`, `ln σ HAR`, **niveau de marché** (médiane du jour de `ln σ 3 mois`) et sa
+  **dispersion** (écart-type du jour).
+- **Modèle** : XGBoost « prudent » fixe (300 arbres, profondeur 2). **Aucun réglage choisi sur les données** : pas de degré de liberté en plus.
+- **Lissage** : prévoir un logarithme sous-estime la variance moyenne. Facteur `sqrt(moyenne(exp(2 × résidu)))`, calculé sur les résidus
+  d'entraînement de chaque fenêtre. Limite assumée : résidus d'entraînement trop petits (sur-apprentissage), donc lissage possiblement
+  insuffisant. **Pas de retouche après coup** : le biais éventuel est rapporté.
+- **Protocole** : identique à `examen_risque.walk_forward` (membres du S&P 500 à chaque date, 4 fenêtres de test depuis 2008, embargo de la durée
+  de l'horizon, HAR ajusté sur le passé seulement, 919 dates). Mêmes dates de test que l'examen de la PR #26.
+- **Règles de décision, fixées AVANT l'essai**
+  1. **Niveau (primaire)** : Diebold-Mariano sur la QLIKE, B contre HAR. B bat HAR si `force = −t / seuil ≥ 100 %` (seuil de Student corrigé pour 7).
+  2. **Placebo** : même modèle B entraîné sur une cible mélangée. Il ne doit pas battre HAR (force < 100 % ET écart de QLIKE ≥ 0). Sinon : fuite ou
+     défaut du banc d'essai, on arrête et on cherche, et le résultat 1 est écarté.
+  3. **Crises** : QLIKE de B / QLIKE de HAR en 2008-2009 et en 2020, rapport ≤ 1,10 dans les deux. Sinon B est écartée même si la règle 1 est vraie
+     (le défaut connu de l'IA est la sous-estimation dans les chocs).
+  4. **Ordre** : IC de B (classement des niveaux prévus) rapporté contre HAR (74,9 %) et l'hybride (78,3 %). Constat, pas condition.
+  5. **Calibration** : biais médian et par décile rapportés, constat.
+  6. **Publication** : les règles 1, 2 et 3 réunies rendent B *candidate* au remplacement du niveau HAR dans l'hybride. Elle ne change **rien** à
+     l'appli sans une décision écrite de l'utilisateur et une PR séparée (essai de laboratoire seulement).
+- **Lecture d'un échec (à l'avance)**
+
+| Observation | Conclusion | Suite possible (nouvel essai, compté) |
+|---|---|---|
+| B ≈ HAR (force entre −100 % et +100 %) | HAR contient déjà l'information utile ; XGBoost n'apporte que l'ordre | Rien : HAR + IA pour l'ordre reste le meilleur choix |
+| B moins bonne que HAR (force ≥ 100 % pour HAR) | Sur-apprentissage ou lissage insuffisant | Modèle de plus faible capacité (régression ridge sur les logs) |
+| B meilleure en moyenne mais ratio > 1,10 en crise | Dépendance au régime | Ajouter VIX / régime de marché aux variables |
+| Placebo qui gagne | Fuite ou artefact du banc d'essai | Arrêt, recherche de la fuite |
+| A ≈ B | L'ancrage sur HAR ne compte pas | — |
+| A ≪ B | HAR indispensable ; XGBoost seul ne sait pas poser le niveau | — |
+
+- **Limites déclarées** : biais du survivant partiel (Yahoo ne couvre pas les titres disparus) ; cibles à 6 mois qui se chevauchent (Newey-West, décalage
+  de 25 semaines) ; HAR de la phase d'entraînement évalué sur ses propres données ; une seule période de test (2008-2026).
+- **Résultats** : § 8.
+
 ## 5. Résultats du backtest de la base large (PR #25)
 
 Expérience `backtest_base_large`, lancée le 19/11/2026 :
@@ -424,4 +469,328 @@ Essai `examen_ia_contre_har`, 2008-2026, 919 dates, membres du S&P 500 à chaque
 | 4. Placebo | validée (moyenne −1,5 %) | — |
 | 5. Fourchette | déclenchée puis satisfaite (8,8 % → 6,4 %) | Projection selon une loi de Student à 5 degrés |
 | 6. IA contre HAR | validée (208 % du seuil) | L'IA reste ; HAR seul en repli automatique |
+
+### 4.11 Essai « HAR remis à l'échelle » (protocole écrit le 20/11/2026, AVANT l'essai)
+- **Origine** : le placebo de l'essai § 4.10 a gagné 0,0032 de QLIKE sur HAR en ne faisant que le remettre à l'échelle (§ 8.3). Hypothèse née
+  **après** un résultat : elle est donc testée ici comme un essai neuf, sans réutiliser les chiffres du § 8.
+- **Question** : un simple facteur multiplicatif, appris sur le passé, améliore-t-il la QLIKE de HAR, sans aucune IA ?
+- **Hypothèses** : H0 : QLIKE(HAR × k) = QLIKE(HAR). H1 : QLIKE(HAR × k) < QLIKE(HAR).
+- **Méthode** : une seule variante, un seul paramètre. Dans chaque fenêtre, HAR est ajusté sur l'entraînement (comme § 4.10), puis
+  `k² = moyenne(σ_réelle² / σ_HAR²)` sur l'entraînement (c'est le facteur qui minimise la QLIKE d'entraînement, forme fermée).
+  Niveau prévu = `σ_HAR × k`. Mêmes dates, mêmes fenêtres et même embargo que § 4.10. **Aucun réglage**, aucun modèle d'IA.
+- **Multiplicité** : 1 essai de plus dans la famille « références » (7 déjà comptés) : seuil de Student corrigé pour **8**.
+- **Règles de décision, fixées AVANT l'essai**
+  1. **Niveau** : Diebold-Mariano sur la QLIKE, HAR × k contre HAR. Gain réel si `force = −t / seuil ≥ 100 %`.
+  2. **Crises** : ratio de QLIKE (HAR × k) / HAR ≤ 1,10 en 2008-2009 **et** en 2020. Sinon écarté même si la règle 1 est vraie.
+  3. **Stabilité** : HAR × k meilleur que HAR dans au moins 3 des 4 fenêtres de test.
+  4. **Constats** (pas des conditions) : valeur de k par fenêtre, biais médian, part de sous-estimations, ratio par crise (dont 2022).
+  5. **Pas de placebo** : il n'y a qu'un paramètre appris, il ne peut rien mémoriser. Le contrôle est le cas k = 1, qui est HAR.
+  6. Les règles 1, 2 et 3 réunies rendent HAR × k *candidat* au remplacement de HAR dans l'hybride. Aucun changement de l'appli sans décision
+     écrite de l'utilisateur et PR séparée.
+- **Lecture d'un échec (à l'avance)**
+
+| Observation | Conclusion |
+|---|---|
+| Règle 1 échoue (force < 100 %) | Le biais de HAR n'est pas corrigeable de façon détectable : HAR reste tel quel |
+| Règle 1 réussit, règle 2 échoue | Le gain vient de périodes calmes et se paie en crise : rejeté (la sous-estimation en crise est le risque à éviter) |
+| Règles 1 et 2 réussissent, règle 3 échoue | Gain concentré sur une fenêtre : non fiable, rejeté |
+| k très différent d'une fenêtre à l'autre | Le biais n'est pas stable : un facteur fixe est inadapté |
+- **Limites** : mêmes que § 4.10 ; n effectif ≈ 36 : un gain faible restera indétectable même s'il est réel (un échec ne prouve pas l'absence d'effet).
+- **Résultats** : § 9.
+
+### 4.12 Règles v2 de test (rédigées le 20/11/2026 ; valables pour les essais PROTOCOLÉS APRÈS cette date)
+- **Origine** : demande de l'utilisateur d'améliorer les tests, après l'essai § 8 (écart de QLIKE 0,014, erreur-type 0,058). Revue de littérature
+  (Patton 2011 ; Giacomini-White 2006 ; Lazarus-Lewis-Stock-Watson 2018 ; Coroneo-Iacone 2020 ; Quaedvlieg 2021 ; Holm 1979 ; Romano-Wolf 2005 ;
+  Hansen 2005 ; Hansen-Lunde-Nason 2011 ; Harvey-Liu-Zhu 2016 ; Harvey-Liu 2020 ; Benjamin et al. 2018 ; Bailey-López de Prado 2014).
+  Les chiffres de puissance de la revue sont des calculs de l'assistant : seule la taille du test a été vérifiée par simulation (ci-dessous).
+- **Diagnostic** : avec n effectif ≈ 36, l'écart minimal détectable (80 % de puissance, 5 %) est ≈ 0,16 de QLIKE, soit 10 fois l'écart observé.
+  Le t de −0,24 se lit « non informatif », **jamais** « équivalent ». Aucun changement de seuil ne corrige cela ; seule de l'information nouvelle le peut.
+- **Non-rétroactivité** : ces règles ne changent aucun verdict des essais §§ 8 et 9 (leurs règles étaient fixées avant, elles restent celles qui jugent).
+  Les statistiques v2 y sont ajoutées comme **constats**, dans `diagnostics.inference_v2`.
+
+| # | Règle v2 | État |
+|---|---|---|
+| 1 | **Rapport systématique** pour chaque comparaison : écart, erreur-type, t, p, IC 95 %, n effectif, ν, écart minimal détectable (MDE) et écart/MDE | **Fait** (`inference.rapport_dm`) |
+| 2 | **Puissance a priori** : un essai dont le MDE dépasse l'effet plausible est déclaré « sans pouvoir de conclure » avant d'être lancé ; il ne peut alors produire qu'une piste | À appliquer dans chaque protocole |
+| 3 | **Variance de long terme EWC** (Lazarus et al. 2018) avec ν = min(0,4·T^(2/3), T/(2h)), loi de Student à ν degrés de liberté, au lieu de Newey-West avec loi normale | **Fait** (`inference.variance_long_terme_ewc`) |
+| 4 | **Panel** : l'écart de perte est déjà moyenné sur les titres à chaque date (estimateur de type Driscoll-Kraay). Le gain de puissance du panel est donc **déjà inclus** dans l'erreur-type de 0,058 | Constat : pas de gain restant de ce côté |
+| 5 | **Famille confirmatoire corrigée par Holm** (jamais moins puissant que Bonferroni) ; SPA / StepM quand on compare N variantes à une référence ; MCS pour le rapport | Holm **fait** (`inference.holm`) ; SPA/StepM/MCS à faire |
+| 6 | **Compteur d'essais** : t maximal attendu par hasard pour N essais (`inference.t_max_attendu`) rapporté à côté du meilleur t | **Fait** |
+| 7 | **Deux niveaux de preuve** : *piste* = t ≥ 2 (p < 5 %), même signe sur ≥ 3 des 4 fenêtres ; *publication* = p corrigé < 0,5 % (t ≈ 3), effet ≥ minimum économique déclaré, **et réplication** sur des données non utilisées (autre période ou autre indice) avec t ≥ 2 | Règle écrite ; remplace « force ≥ 100 % » pour les essais futurs |
+| 8 | **Référence recalibrée** : toute IA de niveau est comparée à HAR direct à 126 jours remis à l'échelle (l'essai § 9) en plus de HAR brut | Essai § 9 |
+| 9 | **Test multi-horizon** (1, 5, 22, 63, 126 jours ; Quaedvlieg 2021) : la seule source nouvelle d'information (n effectif ≈ 200 à 1 mois). La décision produit reste à 126 jours | À faire (nouvel essai) |
+| 10 | **Test d'équivalence** (TOST, marge déclarée) quand l'objectif est de montrer « pas pire » ; exige MDE < marge | À appliquer |
+| 11 | **Purge et embargo ≥ horizon (126 jours)**, placebos maintenus | Déjà en place pour l'embargo |
+| 12 | **Perte primaire QLIKE, secondaire MSE**, pré-déclarées | En place (MSE à ajouter) |
+
+- **Vérification de la taille du test** (simulation, 1 500 tirages, T = 919 dates, chevauchement de 25 dates, nulle vraie, seuil nominal 5 %) :
+
+| Méthode | Taux de rejet à tort |
+|---|---|
+| Écart-type naïf (indépendance) | **70,5 %** |
+| Newey-West, h−1 retards, loi normale | 13,3 % |
+| EWC, ν = 0,4·T^(2/3) = 38 (Lazarus et al.) | 9,0 % |
+| **EWC, ν plafonné à T/(2h) = 18 (règle v2)** | **5,9 %** |
+
+  Lecture : le test utilisé jusque-là sur-rejette (13 % au lieu de 5 %), donc ses « échecs » ne viennent pas d'un test trop sévère : il était, au
+  contraire, plutôt généreux. Le plafond ν ≤ T/(2h) ramène la taille près de 5 % ; c'est la règle heuristique de la revue, validée ici **dans ce seul
+  schéma** (chevauchement pur, sans persistance supplémentaire).
+- **Ce qui n'est pas résolu** : la puissance. Les règles 2, 9 et 10 sont les seules qui l'améliorent ou la rendent lisible. La règle 7 abaisse le seuil
+  d'exploration mais exige une réplication avant toute publication.
+
+### 4.13 Essai « test multi-horizon » (protocole écrit le 20/11/2026, AVANT l'essai ; règles v2 du § 4.12)
+- **Question** : l'IA de niveau (variante B du § 4.10 : XGBoost corrigeant HAR) bat-elle HAR **à court et moyen terme**, là où la littérature
+  (Christensen, Siggaard et Veliyev 2023 ; Bollerslev, Patton et Quaedvlieg 2016) trouve des gains, et où l'on dispose de bien plus de périodes
+  indépendantes (≈ 920 × 5 / h : 184 à 22 jours, 73 à 63 jours, contre 37 à 126 jours) ?
+- **Ce que l'essai ne peut PAS faire (déclaré à l'avance)** : la décision du produit reste le risque à 6 mois. Un gain à court terme **ne prouve rien** à
+  126 jours. Il ne peut donner qu'une **piste** (§ 4.12, règle 7) ; toute publication exigerait un protocole séparé à 126 jours avec réplication.
+- **Horizons** : 5, 22, 63, 126 jours de bourse (le jour seul est écarté : sa volatilité réalisée, une seule observation, est trop bruitée pour QLIKE).
+- **Modèles** : à chaque horizon h, HAR direct (variance future de l'horizon h régressée sur v1, v5, v22, v63, ajustée sur le passé) et B (cible
+  `ln σ_h − ln σ_HAR,h`, mêmes variables que § 4.10, XGBoost prudent fixe, lissage de Duan). Même procédure que § 4.10 : 4 fenêtres de test depuis 2008,
+  embargo = durée de l'horizon, membres du S&P 500 à chaque date.
+- **Statistique primaire (aSPA simplifié)** : `d_t = moyenne sur h de [QLIKE_B,h,t − QLIKE_HAR,h,t]`, avec **poids égaux** déclarés à l'avance, sur les dates
+  communes aux 4 horizons. Test : EWC, ν = min(0,4·T^(2/3), T/(2·h_max)) avec h_max = 126 jours (le plus prudent), loi de Student (§ 4.12, règle 3).
+  Le test uniforme uSPA de Quaedvlieg n'est **pas** implémenté (il exige un bootstrap par blocs) : il est remplacé, comme contrôle plus conservateur,
+  par **Holm sur les 4 tests par horizon**.
+- **Règles de décision, fixées AVANT l'essai**
+  1. **Piste** si les trois conditions sont réunies : (a) `t_aSPA ≤ −2` (B meilleure) ; (b) `d_t` moyen < 0 dans au moins 3 des 4 blocs de dates consécutifs de même taille ;
+     (c) le placebo (même modèle, cible mélangée) ne bat pas HAR de façon significative (`t_placebo > −2`).
+  2. **Fuite probable** si `t_placebo ≤ −2` : arrêt, recherche d'une fuite, résultat écarté.
+  3. **B pire que HAR** si `t_aSPA ≥ +2` (sur-apprentissage) : rapporté, pas de suite.
+  4. **Équivalence (TOST, § 4.12 règle 10)** : marge Δ = 0,01 de QLIKE (≈ 3 % de la QLIKE de HAR). Équivalence seulement si l'IC à 90 % de `d_t` ⊂ [−Δ, +Δ].
+     Elle n'est concluable que si le MDE rapporté est < Δ ; sinon on écrit « sans pouvoir de conclure ».
+  5. **Constats (pas des conditions)** : t, p, erreur-type, IC 95 %, n effectif, MDE, écart/MDE **à chaque horizon** ; Holm sur les 4 horizons ; ratio en crise (2008-2009, 2020, 2022) ; IC (ordre) à chaque horizon.
+- **Puissance annoncée a priori (§ 4.12, règle 2)** : à 126 jours, l'erreur-type de l'écart B − HAR était de 0,058 (Newey-West, § 8) et de 0,017 pour HAR × k (EWC, § 9) :
+  la fourchette est large. Si l'on suppose un écart-type par observation comparable et un n effectif ∝ 1/h, l'erreur-type vaudrait environ 0,03 à 22 jours et 0,015 à 5 jours,
+  donc un MDE de l'ordre de **0,04 à 0,08** pour l'aSPA. C'est **plus grand que les écarts plausibles à 126 jours (0,003 à 0,014)** : l'essai peut détecter des gains
+  nettement plus gros à court terme (comme ceux de la littérature), mais **pas** prouver l'équivalence. Cette estimation est grossière et sera remplacée par le MDE mesuré.
+- **Lecture d'un échec (à l'avance)**
+
+| Observation | Conclusion |
+|---|---|
+| Piste (règle 1) | L'IA apporte quelque chose à court terme ; suite possible : protocole à 126 jours avec réplication (S&P MidCap 400), jamais une publication directe |
+| t_aSPA entre −2 et +2, MDE > 0,02 | Sans pouvoir de conclure : pas de preuve, pas de preuve du contraire |
+| t_aSPA entre −2 et +2, MDE < Δ et IC 90 % ⊂ [−Δ, Δ] | Équivalence démontrée : HAR suffit à toutes les échéances testées |
+| Gain à 5 ou 22 jours seulement (Holm) | Gain de court terme, sans lien avec le portefeuille semestriel ; pourrait servir un suivi mensuel du risque (à protocoler) |
+| Placebo significatif | Fuite ou défaut du banc d'essai : arrêt |
+
+- **Limites** : mêmes que § 4.10 ; poids égaux arbitraires mais déclarés ; uSPA absent ; les dates communes aux 4 horizons se chevauchent entre horizons (l'EWC à ν prudent en tient compte de façon approximative) ;
+  4 horizons × 4 fenêtres = peu de blocs indépendants au total.
+- **Précision de lecture, ajoutée le 20/11/2026 à 13 h 20 UTC, AVANT le résultat** (run n° 42 en file, aucune donnée de l'essai vue) :
+  la règle 2 n'est **pas modifiée** et s'applique à la lettre. Mais le § 8.3 a montré qu'un placebo à cible mélangée ne prévoit qu'une constante,
+  donc qu'il **remet HAR à l'échelle**. À 5 et 22 jours, le test a beaucoup plus de puissance qu'à 126 jours : un simple gain d'échelle peut y devenir
+  significatif et déclencher la règle 2 sans aucune fuite. Si la règle 2 se déclenche, on rapportera donc en plus, comme **constat** :
+  (i) le placebo comparé à HAR × k (le facteur d'échelle du § 4.11, appris sur l'entraînement au même horizon) ;
+  (ii) la lecture « effet d'échelle » si placebo ≈ HAR × k, « fuite à chercher » sinon. Le verdict à la lettre (« fuite probable »,
+  donc pas de piste) reste celui qui compte ; la lecture ne sert qu'à orienter la suite.
+- **Résultats** : § 10.
+
+### 4.14 Essai « HAR-X : HAR + volatilité implicite (VIX) » (protocole écrit le 20/11/2026, AVANT tout code ; règles v2 du § 4.12)
+- **Origine** : les essais §§ 8, 9 et 10 n'utilisent que les **cours passés**. HAR en extrait déjà presque tout ; le reste vient surtout des chocs
+  de marché (2020, 2022), là où les IA de niveau échouent. Le § 4.12 (règles 2 et 9) dit que seule une **information nouvelle** peut changer
+  la donne. La volatilité implicite (VIX) est la seule information **tournée vers l'avenir** disponible gratuitement depuis 1990. La littérature
+  la trouve informative au-delà de HAR pour la volatilité de marché (Busch, Christensen et Nielsen 2011 ; Christensen et Prabhala 1998).
+- **Question** : ajouter le VIX à HAR améliore-t-il la prévision du **niveau** de volatilité de chaque titre ?
+- **Hypothèses** : H0 : QLIKE(HAR-X) = QLIKE(HAR). H1 : QLIKE(HAR-X) < QLIKE(HAR).
+- **Modèle** (une seule variante, pas de réglage) : HAR direct du § 4.10 (variance future régressée sur v1, v5, v22, v63, moindres carrés sur le
+  passé) avec **une variable de plus** : `x = β̂² × (VIX / 100)² / 252`, la variance quotidienne que le marché des options anticipe pour la part
+  « marché » du titre (β̂ : bêta sur 1 an, déjà calculé, sans information future). VIX : clôture `^VIX` (Yahoo), au jour de la prévision.
+  Mêmes dates, fenêtres, embargo (= horizon) et membres du S&P 500 que § 4.10. Aucune IA.
+- **Horizons** : **126 jours** (primaire : c'est l'horizon du produit) et **22 jours** (secondaire). La littérature trouve l'apport du VIX
+  plus fort à 1 mois, ce qui correspond à l'échéance du VIX lui-même.
+- **Multiplicité** : 1 essai de plus dans la famille « références » ; famille confirmatoire de 2 tests (126 et 22 jours), corrigée par **Holm**.
+- **Statistique** : `d_t = QLIKE_HAR-X − QLIKE_HAR` par date (moyenne sur les titres), `inference.rapport_dm`, EWC avec ν = min(0,4·T^(2/3), T/(2h)), loi de Student.
+- **Règles de décision, fixées AVANT l'essai** (§ 4.12, règle 7)
+  1. **Piste** (à chaque horizon) : t ≤ −2 et `d_t` moyen < 0 dans au moins 3 des 4 fenêtres de test.
+  2. **Candidat à la publication** (126 jours seulement) : (a) p unilatéral corrigé par Holm < 0,5 % ; (b) écart ≤ **−0,01** de QLIKE (minimum économique,
+     ≈ 3 % de la QLIKE de HAR, même marge Δ que le § 4.13) ; (c) ratio de QLIKE HAR-X / HAR ≤ 1,10 en 2008-2009 **et** en 2020 ; (d) **réplication** sur le
+     S&P MidCap 400 (titres jamais utilisés, `universe.get_sp400_tickers`) avec t ≤ −2 dans le même sens.
+  3. **Placebo** : même modèle avec un VIX **décalé de 252 jours** (vraie série, mauvais moment). Il garde la forme et l'échelle du VIX mais perd sa
+     valeur de prévision. Il ne doit pas battre HAR (t > −2). Sinon le gain viendrait de la variable en plus, pas de l'information : résultat écarté.
+     Ce placebo évite le défaut du § 8 : les deux modèles gardent les 5 coefficients de HAR, il n'y a aucun effet d'échelle à « remettre ».
+  4. **Pire que HAR** si t ≥ +2 : rapporté, pas de suite.
+  5. **Équivalence** (TOST, Δ = 0,01) concluable seulement si le MDE < Δ ; sinon « sans pouvoir de conclure ».
+  6. **Constats** (pas des conditions) : coefficient du VIX par fenêtre et son signe, biais médian, part de sous-estimations, ratio par crise (dont 2022),
+     IC (ordre des titres), MSE en perte secondaire, `t_max_attendu` pour le nombre total d'essais.
+  7. Les règles 2 (a) à (d) réunies rendent HAR-X **candidat** au remplacement de HAR dans l'hybride (le niveau seulement ; l'ordre reste à l'IA).
+     Aucun changement de l'appli sans décision écrite de l'utilisateur et PR séparée.
+- **Puissance annoncée a priori (§ 4.12, règle 2)** : à 126 jours, le MDE mesuré au § 9 est ≈ 0,05. Un gain de 0,01 à 0,03 (ordre de grandeur plausible si le
+  VIX aide surtout en début de crise) n'est **pas** détectable à 126 jours : l'horizon primaire risque d'être « sans pouvoir de conclure ». À 22 jours, le MDE
+  attendu (≈ 0,02 à 0,03, § 4.13) rend un gain de cette taille **détectable**. C'est pourquoi une piste à 22 jours est l'issue la plus probable si le VIX aide.
+  Le MDE mesuré remplacera cette estimation.
+- **Lecture d'un échec (à l'avance)**
+
+| Observation | Conclusion |
+|---|---|
+| Candidat (règle 2) | Le VIX apporte au niveau ce que les cours n'ont pas ; proposition de l'intégrer au niveau de l'hybride (décision de l'utilisateur) |
+| Piste à 22 jours seulement | Le VIX aide à 1 mois, pas prouvé à 6 mois ; pourrait servir un risque « à court terme » affiché (à protocoler), pas le portefeuille semestriel |
+| Piste à 126 jours sans réplication midcaps | Peut-être propre au S&P 500 ou à la période : non publié |
+| t entre −2 et +2, MDE > 0,02 | Sans pouvoir de conclure : on ne sait pas, et les seules données publiques ne permettront pas de savoir à 6 mois |
+| Placebo significatif | Le gain vient du degré de liberté, pas de l'anticipation : écarté |
+| Coefficient du VIX instable ou de signe changeant selon les fenêtres | Relation non stable : écarté même si la moyenne est bonne |
+| Pire en crise (règle 2 c) | Le VIX réagit trop tard ou trop fort aux chocs : écarté |
+
+- **Limites** : un seul VIX pour tous les titres (pas de volatilité implicite par titre, payante) ; le bêta de 1 an peut changer en crise ;
+  n effectif ≈ 36 à 126 jours ; les midcaps n'ont pas de composition historique (biais du survivant reconnu).
+- **Additif du 20/11/2026, 14 h 10 UTC, AVANT tout code de HAR-X** (après le résultat du § 10, qui ne porte pas sur HAR-X) : le § 10 a mesuré les
+  écarts minimaux détectables (MDE) entre B et HAR à chaque horizon : **0,039 à 5 jours, 0,108 à 22 jours, 0,273 à 63 jours, 0,200 à 126 jours**.
+  Mon estimation a priori pour 22 jours (≈ 0,02 à 0,03) était donc **trop optimiste**. À court terme, la volatilité réalisée sur peu de jours est très
+  bruitée, et la QLIKE l'est aussi. Nuance : le MDE dépend de l'écart entre les deux prévisions comparées. HAR-X ne diffère de HAR que par une
+  variable : ses prévisions resteront très proches de celles de HAR, comme HAR × k au § 9 (MDE 0,051 à 126 jours, contre 0,20 pour B). On s'attend
+  donc à un MDE de HAR-X nettement plus petit que celui de B, mais **non mesuré**. **Ajout au protocole** (aucune règle de décision modifiée) :
+  **5 jours** devient un horizon de **constat** (le seul où le MDE mesuré est < 0,04), sans entrer dans la famille confirmatoire (126 et 22 jours).
+  Le MDE de HAR-X sera rapporté à chaque horizon. Si à 126 et 22 jours il dépasse 0,03, l'essai sera déclaré « sans pouvoir de conclure »
+  (§ 4.12, règle 2) quel que soit t.
+- **Résultats** : § 11.
+
+---
+
+## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
+
+Protocole : § 4.10, inchangé depuis son commit. 919 dates de test, du 20/02/2008, 4 fenêtres, n effectif 36,5, seuil de Student corrigé pour 7 essais : **2,86**.
+
+### 8.1 Règles de décision
+
+| Règle | Résultat | Verdict |
+|---|---|---|
+| 1. Niveau : B bat HAR (force ≥ 100 %) | QLIKE 0,3186 contre 0,3325 ; t = −0,24 ; **force 8 %** | **Échec** (écart non significatif) |
+| 2. Placebo ne bat pas HAR (force < 100 % et écart ≥ 0) | QLIKE 0,3293 : **écart −0,0032** (force 8 %) | **Échec à la lettre** (voir 8.3) |
+| 3. Crises : ratio B / HAR ≤ 1,10 en 2008-2009 et 2020 | 2008-2009 : 0,94 ; **2020 : 1,30** | **Échec** |
+| **Candidate à la publication** | non | **B n'est pas candidate** |
+
+### 8.2 Constats (règles 4 et 5, et variante A)
+
+| Mesure | HAR | B (XGBoost sur HAR) | A (XGBoost seul) | Placebo de B |
+|---|---|---|---|---|
+| QLIKE (plus bas = mieux) | 0,3325 | 0,3186 | 0,3251 | 0,3293 |
+| Force de la preuve contre HAR | — | 8 % | 5 % | 8 % |
+| IC (ordre des titres) | 74,9 % | 77,8 % | — | — |
+| Biais médian prévu / réel | +27 % | **+7 %** | — | — |
+| Part de prévisions sous-estimées | 23 % | **41 %** | — | — |
+
+Ratio de QLIKE B / HAR par période (< 1 : B meilleure) : 2015-2016 : 0,42 · 2011 : 0,86 · fin 2018 : 0,76 · 2008-2009 : 0,94 · **2020 : 1,30** · **2022 : 1,65**.
+
+### 8.3 Lecture, selon la grille écrite à l'avance (§ 4.10)
+
+- **Ligne « B ≈ HAR »** : l'écart de QLIKE (−4 % pour B) est **loin du seuil** (force 8 %, il en faudrait 100 %). Avec n effectif = 36, un gain de cette taille ne se distingue pas du hasard. **Conclusion retenue : on ne détecte pas d'information de niveau que HAR n'ait pas déjà.** Ce n'est pas la preuve que B est équivalente à HAR, seulement qu'on ne peut pas dire qu'elle fait mieux.
+- **A ≈ B** (0,3251 contre 0,3186, forces 5 % et 8 %) : l'ancrage sur HAR ne change pas le résultat.
+- **Crises** : B est la plus mauvaise là où le coût d'une sous-estimation est le plus fort : 2020 (×1,30) et 2022 (×1,65). Cela rejoint le défaut déjà connu de l'IA (§ 6.1). Sa meilleure calibration moyenne (+7 % contre +27 %) a un prix : 41 % de sous-estimations contre 23 % pour HAR. La QLIKE punit ce déplacement.
+- **Placebo (règle 2)** : la règle est **déclenchée à la lettre**, mais **ce n'est pas une fuite**. Un modèle entraîné sur une cible mélangée prévoit en gros une constante, donc il ne fait que **remettre HAR à l'échelle** : il corrige son biais de +27 %. Cette correction seule gagne 0,0032 de QLIKE. La règle 2 était mal posée : le placebo était censé tester une fuite, pas l'effet d'un simple changement d'échelle. Aucune décision ne repose dessus, car la règle 1 échoue indépendamment.
+- **Observation après coup (non prévue au protocole, donc à ne pas retenir comme preuve)** : si on retire cet effet d'échelle, le gain de B sur le placebo est de l'ordre de 0,0107 de QLIKE. Il n'a pas été testé statistiquement.
+- **Ordre des titres** : l'IC du classement par niveau de B (77,8 %) est proche de celui de l'IA publiée (78,3 %) et au-dessus de HAR (74,9 %). Le gain d'ordre existe, mais il est déjà dans l'hybride.
+
+### 8.4 Décision
+
+Aucun changement : l'hybride (ordre de l'IA, niveau de HAR) reste en place. B n'est pas adoptée.
+
+### 8.5 Suites possibles (chacune serait un nouvel essai compté, soumis à l'accord de l'utilisateur)
+1. **Remise à l'échelle de HAR seule** : le placebo suggère qu'un facteur correctif du biais de HAR (appris sur le passé) gagne un peu de QLIKE sans aucune IA. À tester comme essai à part, avec son protocole.
+2. **Modèle de plus faible capacité** (ridge sur les logs), pour limiter la sous-estimation en crise.
+3. **Variable de régime** (VIX) pour les chocs de 2020 et 2022.
+4. Laisser le niveau à HAR : l'essai n'a rien à lui reprocher qu'il soit possible de prouver.
+
+---
+
+## 9. Résultats de l'essai « HAR remis à l'échelle » (PR #28, lancé le 20/11/2026)
+
+Protocole : § 4.11, inchangé depuis son commit. Verdict jugé par les règles de ce protocole (lot du 12:44 UTC) ; les statistiques v2 (§ 4.12) viennent du second
+lot (12:55 UTC), ajoutées comme **constats**. Les deux lots divergent à la 3ᵉ ou 4ᵉ décimale (Yahoo a corrigé quelques cours entre les deux) : limite de
+reproductibilité à retenir, elle est bien plus petite que tout écart discuté ici. 919 dates de test, n effectif 36,5, seuil de Student corrigé pour 8 essais : **2,91**.
+
+### 9.1 Règles de décision (§ 4.11)
+
+| Règle | Résultat | Verdict |
+|---|---|---|
+| 1. Niveau : HAR × k bat HAR (force ≥ 100 %) | QLIKE 0,3298 contre 0,3325 ; écart −0,0027 ; t = −0,19 ; **force 6 %** | **Échec** |
+| 2. Crises : ratio ≤ 1,10 en 2008-2009 et 2020 | 2020 : 1,04 ; **2008-2009 : 1,16** | **Échec** |
+| 3. Stabilité : meilleur dans ≥ 3 fenêtres sur 4 | **2 sur 4** | **Échec** |
+| **Candidat** | non | **HAR × k n'est pas candidat** |
+
+### 9.2 Constats
+
+- **Facteur k** : 0,945 ; 0,949 ; 0,943 ; 0,966 selon la fenêtre. **Très stable**, mais proche de 1 : HAR, ajusté en moindres carrés sur la variance, est déjà quasi calibré **en moyenne**
+  (il ne surestime que de 5 % en moyenne).
+- **Biais médian** : +27 % pour HAR, +21 % pour HAR × k. Le « biais de 27 % » du § 6.2 est donc surtout un **effet d'asymétrie** : une prévision correcte de la moyenne d'une variable
+  asymétrique surestime sa médiane. Ce n'était pas un défaut de HAR à corriger (point soulevé par la revue de littérature, Patton 2011).
+- **Par fenêtre** (QLIKE de HAR × k / HAR) : 2008-2012 : 0,438 / 0,413 (HAR meilleur) · 2012-2017 : 0,303 / 0,353 (HAR × k meilleur) · 2017-2021 : 0,429 / 0,410 (HAR meilleur) · 2021-2026 : 0,148 / 0,154 (HAR × k meilleur).
+  Le gain n'a pas de signe stable.
+- **Statistiques v2** (écart −0,0028) : erreur-type EWC 0,0173 (ν = 18) ; IC à 95 % **[−0,039 ; +0,034]** ; p = 0,87 ; n effectif 37 ; **écart minimal détectable 0,051**, soit l'écart observé = 5 % du MDE.
+
+### 9.3 Lecture, selon la grille écrite à l'avance (§ 4.11)
+
+- **Règle 1 échoue** : le biais d'échelle de HAR n'est pas corrigeable de façon détectable. HAR reste tel quel.
+- **Réconciliation avec le § 8** : le placebo du § 8 avait gagné 0,0032 de QLIKE sur HAR ; ici le facteur k seul en gagne 0,0027, du même ordre. Ce gain est **minuscule et non significatif** : l'hypothèse née de l'observation du placebo n'est pas confirmée.
+- **Conséquence pour l'essai § 8** : l'écart de B sur le placebo (0,0107, observation après coup) reste sans test. Il n'est pas démontré non plus que B apporte de l'information au-delà d'une recalibration.
+- **Limite honnête** : le test ne peut détecter que des écarts d'environ 0,05 ; un gain réel de 0,003 reste invisible. On peut dire « pas de gain détectable », pas « pas de gain ».
+
+### 9.4 Décision
+
+Aucun changement. L'hybride (ordre de l'IA, niveau de HAR) reste en place.
+
+### 9.5 Bilan des deux essais sur le niveau (§§ 8 et 9) et suite
+1. **HAR brut est une référence solide à 6 mois** : ni XGBoost (§ 8) ni une recalibration simple (§ 9) ne le battent de façon détectable avec la puissance dont on dispose.
+2. **Seul levier restant sur la puissance : l'information nouvelle** (§ 4.12, règle 9) : un test multi-horizon (1, 5, 22, 63, 126 jours) donnerait environ 200 périodes indépendantes à 1 mois.
+   Il répondrait à une question un peu différente (le gain existe-t-il à court terme ?) sans prouver le gain à 6 mois. À protocoler avant de lancer.
+3. **Rapports de puissance** : désormais, chaque essai doit publier son MDE ; ceux-ci montrent que la plupart des écarts discutés (0,003 à 0,014) sont de 5 à 30 % du MDE.
+
+---
+
+## 10. Résultats de l'essai « multi-horizon » (PR #28, lot du 20/11/2026 13:22 UTC, run n° 43)
+
+Protocole : § 4.13, inchangé depuis son commit, plus la précision de lecture de 13 h 20 UTC (écrite avant le résultat ; elle n'a pas servi, voir
+règle 2). 911 dates communes aux 4 horizons, du 20/02/2008 au 19/05/2026, 4 fenêtres, membres du S&P 500 à chaque date. Journaux du run sans
+`[LABO][ERREUR]`. Dans le même run, les re-tests du produit sont inchangés : hybride publié, l'IA reste, `risque_volatilite` 6 mois probant (t 6,50).
+
+### 10.1 Règles de décision (§ 4.13)
+
+| Règle | Résultat | Verdict |
+|---|---|---|
+| 1. Piste : t_aSPA ≤ −2, ≥ 3 blocs sur 4 négatifs, placebo non significatif | t_aSPA = **+0,06** ; blocs négatifs 3/4 ; placebo t = −0,55 | **Non** (t loin de −2) |
+| 2. Fuite probable : t_placebo ≤ −2 | t_placebo = −0,55 (écart −0,007, IC 95 % [−0,033 ; +0,019]) | **Non** : pas de fuite, pas d'effet d'échelle significatif |
+| 3. B pire que HAR : t_aSPA ≥ +2 | t = +0,06 | Non |
+| 4. Équivalence (TOST, Δ = 0,01) | IC 90 % [−0,091 ; +0,097] ⊄ [−0,01 ; +0,01] ; MDE 0,160 > Δ | **Non concluable** |
+| **Verdict** | | **Sans pouvoir de conclure** |
+
+### 10.2 Constats par horizon (écart = QLIKE de B − QLIKE de HAR ; < 0 : B meilleure)
+
+| Horizon | Écart | Erreur-type | t (ν) | p | IC 95 % | n effectif | MDE (80 %) | Écart / MDE | Holm |
+|---|---|---|---|---|---|---|---|---|---|
+| 5 jours | **−0,018** | 0,013 | −1,34 (37) | 0,19 | [−0,045 ; +0,009] | 340 | **0,039** | 47 % | non rejeté |
+| 22 jours | −0,009 | 0,038 | −0,25 (37) | 0,81 | [−0,086 ; +0,067] | 206 | 0,108 | 9 % | non rejeté |
+| 63 jours | +0,054 | 0,095 | +0,56 (36) | 0,58 | [−0,139 ; +0,246] | 84 | 0,273 | 20 % | non rejeté |
+| 126 jours | −0,014 | 0,067 | −0,20 (18) | 0,84 | [−0,155 ; +0,128] | 44 | 0,200 | 7 % | non rejeté |
+| **aSPA (moyenne)** | +0,003 | 0,054 | +0,06 (18) | 0,95 | [−0,111 ; +0,117] | 63 | 0,160 | 2 % | — |
+
+- **Ordre des titres (IC)**, B contre HAR : 49,8 % contre 47,4 % (5 j) ; 68,6 % contre 65,2 % (22 j) ; 76,2 % contre 73,4 % (63 j) ; 77,8 % contre 74,9 % (126 j).
+  B classe mieux à **tous** les horizons (+2,4 à +3,4 points), comme l'IA publiée.
+- **Crises** (écart moyen de la moyenne sur les horizons) : 2008-2009 −0,061 (B meilleure) ; 2011 −0,027 ; 2015-2016 −0,031 ; fin 2018 +0,194 ;
+  **2020 +0,782** (B très mauvaise) ; 2022 +0,031. Même défaut que § 8 : l'IA de niveau se trompe le plus lors d'un choc soudain (Covid).
+- **Blocs de dates** (moyenne de d_t) : −0,042 ; −0,130 ; **+0,197** ; −0,013. Le bloc défavorable contient le Covid.
+
+### 10.3 Lecture, selon la grille écrite à l'avance (§ 4.13)
+- **Ligne « t_aSPA entre −2 et +2, MDE > 0,02 »** : **sans pouvoir de conclure**. Pas de preuve d'un gain de B sur HAR, pas de preuve du contraire.
+- **Le multi-horizon n'a pas apporté la puissance espérée.** Plus de périodes indépendantes (n effectif 340 à 5 jours, 206 à 22 jours) mais des pertes beaucoup
+  plus bruitées : la volatilité réalisée sur 5 ou 22 jours est elle-même très imprécise. Le MDE mesuré à 22 jours (**0,108**) est 4 à 5 fois l'estimation
+  a priori (0,02 à 0,03). L'estimation a priori du § 4.13 supposait un bruit par observation comparable à celui de 126 jours ; c'était faux.
+- **Seul indice** : à 5 jours, B fait −0,018 (t = −1,34, p = 0,19), soit 47 % du MDE. Ce n'est **pas** une piste au sens de la règle 1, et ce n'est pas un
+  signal : à retenir seulement comme l'horizon où un futur test aurait le plus de chances de voir quelque chose.
+- **Placebo** : non significatif (t = −0,55). La précision de lecture de 13 h 20 n'a pas eu à servir. Contrairement au § 8, l'effet d'échelle du placebo
+  ne ressort pas ici (son écart, −0,007, est dans le bruit).
+- **Ordre des titres** : le gain d'IC de B (+2,4 à +3,4 points) se retrouve à tous les horizons. C'est cohérent avec l'IA publiée, qui garde l'ordre dans l'hybride.
+
+### 10.4 Décision
+Aucun changement. L'hybride (ordre de l'IA, niveau de HAR) reste en place. Bilan des trois essais sur le niveau (§§ 8, 9, 10) : **aucune IA ni recalibration
+ne bat HAR de façon détectable sur le niveau, à aucun horizon de 5 jours à 6 mois**. Avec les seuls cours passés, c'est la limite de l'information
+disponible, pas celle du modèle.
+
+### 10.5 Limites
+- Poids égaux entre horizons (arbitraires, déclarés) ; test uniforme uSPA absent (remplacé par Holm).
+- Les dates communes aux 4 horizons se chevauchent entre horizons : l'EWC à ν = 18 en tient compte de façon approximative.
+- Un seul tirage de placebo.
+- Données Yahoo : reproductibilité à la 3ᵉ-4ᵉ décimale (§ 9).
+
+### 10.6 Suite
+La seule voie restante est une **information nouvelle** : l'essai HAR-X (§ 4.14, avec son additif de 14 h 10 sur la puissance), qui ajoute la volatilité implicite (VIX).
+Le multi-horizon est retiré des essais lancés par défaut : c'était un essai de recherche ponctuel, pas un re-test du produit. Le relancer chaque mois
+reviendrait à regarder plusieurs fois la même hypothèse.
 

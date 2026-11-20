@@ -16,6 +16,7 @@
 import numpy as np
 import pandas as pd
 
+import inference as inf
 import modele_horizon as mh
 import modele_risque as mr
 
@@ -435,3 +436,220 @@ def pbo(rendements: pd.DataFrame, n_blocs: int = 16) -> dict:
         logits.append(np.log(rang / (1 - rang)))
     logits = np.array(logits)
     return {"pbo": float((logits <= 0).mean()), "n_variantes": N, "n_combinaisons": len(logits)}
+
+
+# ------------------------------------------------------------------------------
+# Essai « XGBoost sur le niveau » (protocole : docs/METHODE.md § 4.10, écrit avant l'essai)
+# ------------------------------------------------------------------------------
+FEATURES_NIVEAU = ["ln_vol_3m", "ln_ewma", "ln_v5", "ln_v22", "ln_har", "ln_marche", "disp_marche"]
+N_CANDIDATS_NIVEAU = 7          # 5 essais déjà comptés dans la famille « références » + A et B
+
+
+def _ln(x) -> pd.Series:
+    return np.log(np.maximum(pd.Series(x, dtype=float), 1e-8))
+
+
+def ajouter_niveaux(df: pd.DataFrame, coef_har: np.ndarray) -> pd.DataFrame:
+    """Variables de niveau (en logarithme), toutes connues à la date t."""
+    df = df.copy()
+    df["lvl_har"] = har_prevoir(df, coef_har)
+    df["ln_vol_3m"] = _ln(df["lvl_vol_3m"]).values
+    df["ln_ewma"] = _ln(df["lvl_ewma"]).values
+    df["ln_v5"] = 0.5 * _ln(df["v5"] * 252).values
+    df["ln_v22"] = 0.5 * _ln(df["v22"] * 252).values
+    df["ln_har"] = _ln(df["lvl_har"]).values
+    g = df.groupby("date")["ln_vol_3m"]
+    df["ln_marche"] = g.transform("median")
+    df["disp_marche"] = g.transform("std")
+    return df.replace([np.inf, -np.inf], np.nan)
+
+
+def walk_forward_niveau(data: pd.DataFrame, variante: str = "B", h: int = H, melange: bool = False,
+                        graine: int = 0) -> pd.DataFrame:
+    """Prévision du NIVEAU de volatilité par XGBoost prudent (config fixe, aucun réglage).
+    variante « A » : cible ln(σ réalisée) ; « B » : cible ln(σ réalisée / σ HAR). `melange` : placebo."""
+    feats = list(mh.FEATURES) + FEATURES_NIVEAU
+    dates = np.sort(data["date"].unique())
+    bornes = np.array_split(dates[len(dates) // 3:], mh.N_FENETRES)
+    embargo = pd.Timedelta(days=int(h * 7 / 5) + 1)
+    sorties = []
+    for k, bloc in enumerate(bornes):
+        debut = pd.Timestamp(bloc[0])
+        train = data[data["date"] < debut - embargo]
+        test = data[data["date"].isin(bloc)].copy()
+        if len(train) < 2000 or test.empty:
+            continue
+        coef = har_ajuster(train)
+        train, test = ajouter_niveaux(train, coef), ajouter_niveaux(test, coef)
+        train = train[(train["brut"] > 0) & (train["lvl_har"] > 0)]
+        ancre = np.log(train["lvl_har"]) if variante == "B" else 0.0
+        y = np.log(train["brut"]) - ancre
+        if melange:
+            y = pd.Series(np.random.default_rng(graine + k).permutation(y.values), index=y.index)
+        m = mh._modele("xgb_prudent").fit(train[feats], y)
+        lissage = float(np.sqrt(np.mean(np.exp(2 * (y.values - m.predict(train[feats]))))))
+        base = test["lvl_har"].values if variante == "B" else 1.0
+        test["lvl_xgb"] = base * np.exp(m.predict(test[feats])) * lissage
+        test["fenetre"], test["lissage"] = k, lissage
+        sorties.append(test)
+    return pd.concat(sorties, ignore_index=True) if sorties else pd.DataFrame()
+
+
+def comparer_niveau(tb: pd.DataFrame, ta: pd.DataFrame | None = None, tp: pd.DataFrame | None = None,
+                    h: int = H) -> dict:
+    """Règles 1 à 5 du § 4.10. tb : variante B ; ta : variante A (diagnostic) ; tp : placebo de B."""
+    lag = max(1, h // mh.PAS_ECHANTILLON)
+
+    def dm_contre_har(t, col):
+        a, b = _pertes_par_date(t, col), _pertes_par_date(t, "lvl_har")
+        n_eff = max(1.0, len(a) * mh.PAS_ECHANTILLON / h)
+        seuil = mh.seuil_t(n_eff, n_candidats=N_CANDIDATS_NIVEAU)
+        dm = diebold_mariano(a, b, decalage=lag)
+        return {"qlike": float(a.mean()), "qlike_har": float(b.mean()), "ecart": dm["ecart"], "t": dm["t"],
+                "seuil": seuil, "force": -dm["t"] / seuil, "n_effectif": n_eff}
+
+    out = {"B": dm_contre_har(tb, "lvl_xgb")}
+    _b, _h = _pertes_par_date(tb, "lvl_xgb"), _pertes_par_date(tb, "lvl_har")
+    out["inference_v2"] = inf.rapport_dm((_b - _h.reindex(_b.index)).dropna().values, h / mh.PAS_ECHANTILLON)
+    r1 = out["B"]["force"] >= 1.0
+    if ta is not None and not ta.empty:
+        out["A"] = dm_contre_har(ta, "lvl_xgb")
+    placebo_ok = True
+    if tp is not None and not tp.empty:
+        out["placebo"] = dm_contre_har(tp, "lvl_xgb")
+        placebo_ok = not (out["placebo"]["force"] >= 1.0 or out["placebo"]["ecart"] < 0)
+    # Règle 3 : crises (rapport des QLIKE moyennes B / HAR, dates de test dans la crise)
+    pb, ph = _pertes_par_date(tb, "lvl_xgb"), _pertes_par_date(tb, "lvl_har")
+    crises = {}
+    for nom, (d0, d1) in CRISES.items():
+        i = (pb.index >= pd.Timestamp(d0)) & (pb.index <= pd.Timestamp(d1))
+        if i.sum() >= 3:
+            crises[nom] = {"ratio": float(pb[i].mean() / ph.reindex(pb.index)[i].mean()), "n_dates": int(i.sum())}
+    cles = [k for k in crises if k.startswith("2008") or k.startswith("2020")]
+    crises_ok = bool(cles) and all(crises[k]["ratio"] <= 1.10 for k in cles)
+    tt = tb.assign(rel=tb["brut"])
+    out.update({
+        "crises": crises, "crises_ok": crises_ok, "placebo_ok": placebo_ok,
+        "ic": {"xgb": float(mh._ic_par_date(tt.dropna(subset=["lvl_xgb"]), "lvl_xgb").mean()),
+               "har": float(mh._ic_par_date(tt.dropna(subset=["lvl_har"]), "lvl_har").mean())},
+        "calibration": calibration(tb, "lvl_xgb"), "calibration_har": calibration(tb, "lvl_har"),
+        "lissage_moyen": float(tb["lissage"].mean()),
+        "regles": {"1_niveau": bool(r1), "2_placebo": placebo_ok, "3_crises": crises_ok},
+    })
+    out["candidate"] = bool(r1 and placebo_ok and crises_ok)
+    return out
+
+
+# ------------------------------------------------------------------------------
+# Essai « HAR remis à l'échelle » (protocole : docs/METHODE.md § 4.11, écrit avant l'essai)
+# ------------------------------------------------------------------------------
+N_CANDIDATS_ECHELLE = 8          # 7 essais déjà comptés + celui-ci
+
+
+def walk_forward_echelle(data: pd.DataFrame, h: int = H) -> pd.DataFrame:
+    """HAR × k : k² = moyenne(σ_réelle² / σ_HAR²) sur l'entraînement de chaque fenêtre (passé seulement)."""
+    dates = np.sort(data["date"].unique())
+    bornes = np.array_split(dates[len(dates) // 3:], mh.N_FENETRES)
+    embargo = pd.Timedelta(days=int(h * 7 / 5) + 1)
+    sorties = []
+    for k_, bloc in enumerate(bornes):
+        debut = pd.Timestamp(bloc[0])
+        train = data[data["date"] < debut - embargo]
+        test = data[data["date"].isin(bloc)].copy()
+        if len(train) < 2000 or test.empty:
+            continue
+        coef = har_ajuster(train)
+        lvl_tr = har_prevoir(train, coef)
+        ok = np.isfinite(lvl_tr) & (lvl_tr > 0) & (train["brut"].values > 0)
+        k = float(np.sqrt(np.mean(train["brut"].values[ok] ** 2 / lvl_tr[ok] ** 2)))
+        test["lvl_har"] = har_prevoir(test, coef)
+        test["lvl_echelle"] = test["lvl_har"] * k
+        test["fenetre"], test["k"] = k_, k
+        sorties.append(test)
+    return pd.concat(sorties, ignore_index=True) if sorties else pd.DataFrame()
+
+
+def comparer_echelle(t: pd.DataFrame, h: int = H) -> dict:
+    """Règles 1 à 4 du § 4.11."""
+    a, b = _pertes_par_date(t, "lvl_echelle"), _pertes_par_date(t, "lvl_har")
+    n_eff = max(1.0, len(a) * mh.PAS_ECHANTILLON / h)
+    seuil = mh.seuil_t(n_eff, n_candidats=N_CANDIDATS_ECHELLE)
+    dm = diebold_mariano(a, b, decalage=max(1, h // mh.PAS_ECHANTILLON))
+    force = -dm["t"] / seuil
+    crises = {}
+    for nom, (d0, d1) in CRISES.items():
+        i = (a.index >= pd.Timestamp(d0)) & (a.index <= pd.Timestamp(d1))
+        if i.sum() >= 3:
+            crises[nom] = {"ratio": float(a[i].mean() / b.reindex(a.index)[i].mean()), "n_dates": int(i.sum())}
+    cles = [c for c in crises if c.startswith("2008") or c.startswith("2020")]
+    crises_ok = bool(cles) and all(crises[c]["ratio"] <= 1.10 for c in cles)
+    par_fenetre = {}
+    for f, g in t.groupby("fenetre"):
+        pe, ph = _pertes_par_date(g, "lvl_echelle"), _pertes_par_date(g, "lvl_har")
+        par_fenetre[int(f)] = {"qlike": float(pe.mean()), "qlike_har": float(ph.mean()), "k": float(g["k"].iloc[0]),
+                               "debut": str(pd.Timestamp(g["date"].min()).date())}
+    n_mieux = sum(1 for v in par_fenetre.values() if v["qlike"] < v["qlike_har"])
+    stable = n_mieux >= 3
+    regles = {"1_niveau": bool(force >= 1.0), "2_crises": crises_ok, "3_stabilite": stable}
+    return {"inference_v2": inf.rapport_dm((a - b.reindex(a.index)).dropna().values, h / mh.PAS_ECHANTILLON),
+            "qlike": float(a.mean()), "qlike_har": float(b.mean()), "ecart": dm["ecart"], "t": dm["t"], "seuil": seuil,
+            "force": float(force), "n_effectif": n_eff, "crises": crises, "par_fenetre": par_fenetre,
+            "fenetres_meilleures": n_mieux, "calibration": calibration(t, "lvl_echelle"),
+            "calibration_har": calibration(t, "lvl_har"), "regles": regles, "candidate": bool(all(regles.values()))}
+
+
+# ------------------------------------------------------------------------------
+# Essai « multi-horizon » (protocole : docs/METHODE.md § 4.13, écrit avant l'essai)
+# ------------------------------------------------------------------------------
+HORIZONS_MULTI = [5, 22, 63, 126]
+MARGE_EQUIVALENCE = 0.01          # Δ de QLIKE pour le test d'équivalence (TOST), fixée avant l'essai
+
+
+def _ecarts_par_horizon(par_h: dict[int, pd.DataFrame]) -> pd.DataFrame:
+    """Une colonne par horizon : QLIKE(B) − QLIKE(HAR) par date (moyenne sur les titres), dates communes."""
+    cols = {}
+    for h, t in par_h.items():
+        cols[h] = _pertes_par_date(t, "lvl_xgb") - _pertes_par_date(t, "lvl_har")
+    return pd.DataFrame(cols).dropna()
+
+
+def comparer_multi(par_h: dict[int, pd.DataFrame], placebo: dict[int, pd.DataFrame] | None = None) -> dict:
+    """Règles 1 à 5 du § 4.13. Statistique primaire : moyenne (poids égaux) des écarts de QLIKE sur les horizons."""
+    from scipy import stats
+    D = _ecarts_par_horizon(par_h)
+    h_max = max(par_h)
+    d = D.mean(axis=1)
+    out = {"horizons": sorted(par_h), "n_dates_communes": int(len(D))}
+    r = inf.rapport_dm(d.values, h_max / mh.PAS_ECHANTILLON)
+    nu = r.get("nu", 18)
+    tq = float(stats.t.ppf(0.95, nu))
+    r["ic90"] = [r["ecart"] - tq * r["erreur_type"], r["ecart"] + tq * r["erreur_type"]]
+    out["aspa"] = r
+    out["par_horizon"] = {int(h): inf.rapport_dm(D[h].values, h / mh.PAS_ECHANTILLON) for h in D.columns}
+    out["holm"] = inf.holm({str(h): v["p_bilatere"] for h, v in out["par_horizon"].items()})
+    blocs = np.array_split(d.values, 4)
+    out["blocs_negatifs"] = int(sum(b.mean() < 0 for b in blocs))
+    out["blocs"] = [float(b.mean()) for b in blocs]
+    out["ic"] = {int(h): {"xgb": float(mh._ic_par_date(t.assign(rel=t["brut"]).dropna(subset=["lvl_xgb"]), "lvl_xgb").mean()),
+                          "har": float(mh._ic_par_date(t.assign(rel=t["brut"]).dropna(subset=["lvl_har"]), "lvl_har").mean())}
+                 for h, t in par_h.items()}
+    crises = {}
+    for nom, (d0, d1) in CRISES.items():
+        i = (d.index >= pd.Timestamp(d0)) & (d.index <= pd.Timestamp(d1))
+        if i.sum() >= 3:
+            crises[nom] = {"ecart_moyen": float(d[i].mean()), "n_dates": int(i.sum())}
+    out["crises"] = crises
+    t_pl = None
+    if placebo:
+        rp = inf.rapport_dm(_ecarts_par_horizon(placebo).mean(axis=1).values, h_max / mh.PAS_ECHANTILLON)
+        out["placebo"] = rp
+        t_pl = rp.get("t")
+    t = r.get("t", 0.0)
+    out["regles"] = {
+        "1_piste": bool(t <= -2 and out["blocs_negatifs"] >= 3 and (t_pl is None or t_pl > -2)),
+        "2_fuite_probable": bool(t_pl is not None and t_pl <= -2),
+        "3_B_pire": bool(t >= 2),
+        "4_equivalence": bool(r["ic90"][0] > -MARGE_EQUIVALENCE and r["ic90"][1] < MARGE_EQUIVALENCE),
+    }
+    out["peut_conclure_equivalence"] = bool(r["mde_80"] < MARGE_EQUIVALENCE)
+    return out
