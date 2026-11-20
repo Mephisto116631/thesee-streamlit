@@ -596,3 +596,60 @@ def comparer_echelle(t: pd.DataFrame, h: int = H) -> dict:
             "force": float(force), "n_effectif": n_eff, "crises": crises, "par_fenetre": par_fenetre,
             "fenetres_meilleures": n_mieux, "calibration": calibration(t, "lvl_echelle"),
             "calibration_har": calibration(t, "lvl_har"), "regles": regles, "candidate": bool(all(regles.values()))}
+
+
+# ------------------------------------------------------------------------------
+# Essai « multi-horizon » (protocole : docs/METHODE.md § 4.13, écrit avant l'essai)
+# ------------------------------------------------------------------------------
+HORIZONS_MULTI = [5, 22, 63, 126]
+MARGE_EQUIVALENCE = 0.01          # Δ de QLIKE pour le test d'équivalence (TOST), fixée avant l'essai
+
+
+def _ecarts_par_horizon(par_h: dict[int, pd.DataFrame]) -> pd.DataFrame:
+    """Une colonne par horizon : QLIKE(B) − QLIKE(HAR) par date (moyenne sur les titres), dates communes."""
+    cols = {}
+    for h, t in par_h.items():
+        cols[h] = _pertes_par_date(t, "lvl_xgb") - _pertes_par_date(t, "lvl_har")
+    return pd.DataFrame(cols).dropna()
+
+
+def comparer_multi(par_h: dict[int, pd.DataFrame], placebo: dict[int, pd.DataFrame] | None = None) -> dict:
+    """Règles 1 à 5 du § 4.13. Statistique primaire : moyenne (poids égaux) des écarts de QLIKE sur les horizons."""
+    from scipy import stats
+    D = _ecarts_par_horizon(par_h)
+    h_max = max(par_h)
+    d = D.mean(axis=1)
+    out = {"horizons": sorted(par_h), "n_dates_communes": int(len(D))}
+    r = inf.rapport_dm(d.values, h_max / mh.PAS_ECHANTILLON)
+    nu = r.get("nu", 18)
+    tq = float(stats.t.ppf(0.95, nu))
+    r["ic90"] = [r["ecart"] - tq * r["erreur_type"], r["ecart"] + tq * r["erreur_type"]]
+    out["aspa"] = r
+    out["par_horizon"] = {int(h): inf.rapport_dm(D[h].values, h / mh.PAS_ECHANTILLON) for h in D.columns}
+    out["holm"] = inf.holm({str(h): v["p_bilatere"] for h, v in out["par_horizon"].items()})
+    blocs = np.array_split(d.values, 4)
+    out["blocs_negatifs"] = int(sum(b.mean() < 0 for b in blocs))
+    out["blocs"] = [float(b.mean()) for b in blocs]
+    out["ic"] = {int(h): {"xgb": float(mh._ic_par_date(t.assign(rel=t["brut"]).dropna(subset=["lvl_xgb"]), "lvl_xgb").mean()),
+                          "har": float(mh._ic_par_date(t.assign(rel=t["brut"]).dropna(subset=["lvl_har"]), "lvl_har").mean())}
+                 for h, t in par_h.items()}
+    crises = {}
+    for nom, (d0, d1) in CRISES.items():
+        i = (d.index >= pd.Timestamp(d0)) & (d.index <= pd.Timestamp(d1))
+        if i.sum() >= 3:
+            crises[nom] = {"ecart_moyen": float(d[i].mean()), "n_dates": int(i.sum())}
+    out["crises"] = crises
+    t_pl = None
+    if placebo:
+        rp = inf.rapport_dm(_ecarts_par_horizon(placebo).mean(axis=1).values, h_max / mh.PAS_ECHANTILLON)
+        out["placebo"] = rp
+        t_pl = rp.get("t")
+    t = r.get("t", 0.0)
+    out["regles"] = {
+        "1_piste": bool(t <= -2 and out["blocs_negatifs"] >= 3 and (t_pl is None or t_pl > -2)),
+        "2_fuite_probable": bool(t_pl is not None and t_pl <= -2),
+        "3_B_pire": bool(t >= 2),
+        "4_equivalence": bool(r["ic90"][0] > -MARGE_EQUIVALENCE and r["ic90"][1] < MARGE_EQUIVALENCE),
+    }
+    out["peut_conclure_equivalence"] = bool(r["mde_80"] < MARGE_EQUIVALENCE)
+    return out

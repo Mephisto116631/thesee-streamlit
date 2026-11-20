@@ -213,3 +213,13 @@ def test_echelle_mecanique_et_optimalite_du_facteur():
     k_opt = np.sqrt(np.mean(r / p))
     q = lambda k: ex.qlike(np.sqrt(p) * k, np.sqrt(r)).mean()
     assert q(k_opt) <= min(q(k_opt * 0.9), q(k_opt * 1.1), q(1.0)) + 1e-12
+
+
+def test_multi_horizon_mecanique_et_placebo():
+    data = _echantillon_niveau(graine=5)
+    par_h = {h: ex.walk_forward_niveau(data, "B", h=h) for h in (5, 22)}
+    plc = {h: ex.walk_forward_niveau(data, "B", h=h, melange=True) for h in (5, 22)}
+    c = ex.comparer_multi(par_h, plc)
+    assert {"aspa", "par_horizon", "holm", "regles", "blocs_negatifs", "placebo"} <= set(c)
+    assert set(c["par_horizon"]) == {5, 22} and c["aspa"]["mde_80"] > 0
+    assert not (c["regles"]["1_piste"] and c["regles"]["2_fuite_probable"])

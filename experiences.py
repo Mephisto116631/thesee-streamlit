@@ -87,6 +87,8 @@ EXPERIENCES_EXAMEN = {
     "examen_xgb_niveau": "XGBoost sur le NIVEAU de volatilité (cible ln σ − ln σ HAR) contre HAR, QLIKE, placebo, crises",
     # Essai du 20/11/2026 (docs/METHODE.md § 4.11) : protocole écrit avant l'essai
     "examen_echelle_har": "HAR remis à l'échelle (un facteur k appris sur le passé) contre HAR, QLIKE, crises, stabilité",
+    # Essai du 20/11/2026 (docs/METHODE.md § 4.13) : protocole écrit avant l'essai
+    "examen_multi_horizon": "IA de niveau contre HAR aux horizons 5, 22, 63 et 126 jours (aSPA simplifié, Holm, placebo, équivalence)",
     "examen_marge": "Marge de sécurité apprise sur le passé ; rythmes de révision mensuel, semestriel, annuel avec frais ; fourchette avec l'hybride",
 }
 DEBUT_EXAMEN = "1998-01-01"
@@ -229,6 +231,18 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
                 v = ("candidat (règles 1, 2 et 3 réunies)" if c["candidate"]
                      else "non candidat : " + ", ".join(k for k, ok in c["regles"].items() if not ok))
                 _inserer(cli, lot, nom, v, c, ic=c["ecart"], t=c["t"], seuil=c["seuil"], n_essais=8)
+            elif nom == "examen_multi_horizon":
+                par_h, plc = {}, {}
+                for hh in ex.HORIZONS_MULTI:
+                    d_h = data if hh == ex.H else ex.preparer(raw, snap["symbol"].tolist(), compo, secteurs, h=hh)[0]
+                    par_h[hh] = ex.walk_forward_niveau(d_h, "B", h=hh)
+                    plc[hh] = ex.walk_forward_niveau(d_h, "B", h=hh, melange=True)
+                    print(f"[LABO] multi-horizon : h = {hh} j terminé")
+                c = ex.comparer_multi(par_h, plc)
+                r = c["regles"]
+                v = ("piste" if r["1_piste"] else "fuite probable" if r["2_fuite_probable"] else "B pire que HAR" if r["3_B_pire"]
+                     else "équivalence démontrée" if (r["4_equivalence"] and c["peut_conclure_equivalence"]) else "sans pouvoir de conclure")
+                _inserer(cli, lot, nom, v, c, ic=c["aspa"]["ecart"], t=c["aspa"]["t"], seuil=2.0, n_essais=1)
             elif nom == "examen_marge":
                 tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
                 res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",
