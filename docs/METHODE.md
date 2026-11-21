@@ -641,6 +641,11 @@ Essai `examen_ia_contre_har`, 2008-2026, 919 dates, membres du S&P 500 à chaque
   **5 jours** devient un horizon de **constat** (le seul où le MDE mesuré est < 0,04), sans entrer dans la famille confirmatoire (126 et 22 jours).
   Le MDE de HAR-X sera rapporté à chaque horizon. Si à 126 et 22 jours il dépasse 0,03, l'essai sera déclaré « sans pouvoir de conclure »
   (§ 4.12, règle 2) quel que soit t.
+  *Précision du 21/11/2026, avant tout code* : « quel que soit t » contredit la règle v2 n° 2, qui dit qu'un essai peu puissant « ne peut produire
+  qu'une piste ». On applique la règle v2 : un horizon dont le MDE dépasse 0,03 ne peut être ni **candidat** ni **équivalent**, mais une **piste**
+  (règle 1 du § 4.14) y reste possible. Si aucune piste n'apparaît, le verdict est « sans pouvoir de conclure ». Les autres règles sont inchangées.
+  *Mise en œuvre* : la réplication sur le S&P MidCap 400 (règle 2 d) n'est calculée que si les règles 2 (a) à (c) sont réunies ; sinon elle ne
+  changerait pas le verdict, et l'essai économise ~15 minutes de téléchargement.
 - **Résultats** : § 11.
 
 ---
