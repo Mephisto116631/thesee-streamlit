@@ -39,7 +39,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           # Sur une PR et chaque mois : re-test de l'IA de volatilité et de l'hybride IA + HAR (docs/METHODE.md § 4.9)
-          EXPERIENCES: ${{ inputs.experiences || 'risque_volatilite,examen_hybride,examen_ia_contre_har,examen_harx_1m' }}
+          EXPERIENCES: ${{ inputs.experiences || 'risque_volatilite,examen_hybride,examen_ia_contre_har,examen_harx_1m_v2' }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python experiences.py

@@ -204,11 +204,12 @@ function ExamenApprofondi() {
           QLIKE : hybride {q(d.qlike?.hybride)} · HAR {q(d.qlike?.har)} · IA {q(d.qlike?.ia)}. IC : hybride {pct(d.ic?.hybride, 1, false)} contre
           {" "}{pct(d.ic?.vol_3m, 1, false)} pour la volatilité 3 mois (force de la preuve {pct(d.force_ic, 0, false)} du seuil).
           {d.publie ? " Publié : c'est la prévision utilisée dans l'appli." : " Non retenu : l'appli utilise HAR seul."}</>)}
-        {ligne("examen_harx_1m", "Risque du mois à venir (HAR + VIX), confirmé ailleurs ?", (v) => (v === "confirmé" ? "good" : "neutral"), (d) => {
+        {ligne("examen_harx_1m_v2", "Risque du mois à venir (HAR + VIX), confirmé ailleurs ?", (v) => (v === "confirmé" ? "good" : "neutral"), (d) => {
           const m = d.midcaps?.horizons?.["22"], s = d.sp500_reproduction?.horizons?.["22"];
           return <>Sur {d.midcaps?.n_titres ?? "—"} titres jamais utilisés (S&P MidCap 400) : perte QLIKE {q(m?.qlike?.harx)} avec le VIX contre {q(m?.qlike?.har)}
             {" "}sans (t = {num(m?.dm?.t, 2)}, doit être ≤ −2) ; VIX décalé d'un an (placebo) : t = {num(m?.placebo?.t, 2)}.
             {" "}S&P 500 : t = {num(s?.dm?.t, 2)}. Mauvais cas 5 % dépassé {pct(d.midcaps?.couverture?.harx?.part_depassements, 1, false)} des mois.
+            {" "}Données nettoyées ({pct(d.midcaps?.part_retiree, 1, false)} retirées{d.etape === 2 ? ", pertes winsorisées" : ""}).
             {d.decision === "confirme" ? " Affiché dans Portefeuille › Face aux chocs." : " Non affiché."}</>;
         })}
         {ligne("examen_marge", "Marge de sécurité et rythme de révision", (v) => (v.startsWith("limite tenue") ? "good" : "neutral"), (d) => {

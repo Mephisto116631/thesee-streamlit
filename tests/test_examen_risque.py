@@ -340,3 +340,51 @@ def test_ajouter_rendement_futur():
     r = ex.ajouter_rendement_futur(t, raw, 22)["ret_futur"].iloc[0]
     px = raw[raw["symbol"] == "T00"].set_index("date")["close"]
     assert np.isclose(r, px.iloc[22] / px.iloc[0] - 1)
+
+
+def test_nettoyer_retire_cours_aberrants_et_petits_cours():
+    jours = pd.bdate_range("2020-01-01", periods=200)
+    lignes = []
+    for i, d in enumerate(jours):
+        lignes.append({"symbol": "OK", "date": d, "close": 50 + 0.01 * i})
+        lignes.append({"symbol": "SAUT", "date": d, "close": 30.0 if i != 100 else 90.0})   # +200 % puis −67 % : aberrant
+        lignes.append({"symbol": "PENNY", "date": d, "close": 2.0})
+    raw = pd.DataFrame(lignes)
+    data = pd.DataFrame([{"date": d, "symbol": s} for d in jours[::5] for s in ["OK", "SAUT", "PENNY"]])
+    out, part = ex.nettoyer(data, raw, h=22)
+    assert set(out["symbol"]) >= {"OK"} and (out["symbol"] == "OK").sum() == (data["symbol"] == "OK").sum()
+    assert "PENNY" not in set(out["symbol"])
+    gardes = out.loc[out["symbol"] == "SAUT", "date"]
+    saut = jours[100]
+    # retiré si le saut est dans [t − 63, t + 22] séances, gardé loin du saut
+    assert not any((jours.get_loc(d) >= 100 - 22) and (jours.get_loc(d) <= 100 + 64) for d in gardes)
+    assert any(jours.get_loc(d) < 100 - 22 for d in gardes)
+    assert 0 < part < 1
+
+
+def test_perte_winsorisee_limite_les_extremes():
+    t = pd.DataFrame({"date": [pd.Timestamp("2020-01-03")] * 200, "lvl": [0.2] * 200,
+                      "brut": [0.2] * 199 + [20.0]})                                   # un titre aberrant
+    brute = ex._pertes_par_date(t, "lvl").iloc[0]
+    w = ex._pertes_par_date(t, "lvl", winsor=True).iloc[0]
+    assert w < brute / 10
+
+
+def test_etape_2_declenchee_par_le_seul_mde(monkeypatch):
+    appels = []
+    vrai = ex.comparer_harx
+
+    def faux(par_h, placebo_h, n_essais_total=10, winsor=False):
+        appels.append(winsor)
+        c = vrai(par_h, placebo_h, n_essais_total, winsor)
+        c["horizons"][ex.H_MOIS]["dm"]["mde_80"] = 0.5 if not winsor else 0.02   # étape 1 non informative
+        return c
+    monkeypatch.setattr(ex, "comparer_harx", faux)
+    raw, syms = _donnees_examen()
+    d = pd.bdate_range("2007-01-01", "2017-12-31")
+    vix = pd.Series(20 + np.random.default_rng(1).random(len(d)) * 5, index=d)
+    c = ex.essai_harx_1m(raw, syms, vix, nettoyage=True)
+    assert c["etape"] == 2 and appels == [False, True] and c["mde_etape_1"] == 0.5
+    appels.clear()
+    c = ex.essai_harx_1m(raw, syms, vix, nettoyage=True, winsor=False)       # S&P 500 : étape imposée
+    assert c["etape"] == 1 and appels == [False]
