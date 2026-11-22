@@ -724,6 +724,37 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
   réviser `BAA10Y` (rare, données de marché) ; midcaps sans composition historique.
 - **Résultats** : § 12.
 
+### 4.16 Essai « Confirmation de HAR-X à 1 mois » (protocole écrit le 22/11/2026, AVANT tout code ; règles v2 du § 4.12)
+- **Origine** : au § 11, HAR-X bat HAR à 22 jours (−8 % de QLIKE, t = −3,20, Holm < 0,5 %, 4 fenêtres sur 4, placebo propre). C'est une **piste** :
+  le § 4.14 et sa grille demandent une confirmation sur des données jamais utilisées avant tout affichage. L'utilisateur veut un « risque du mois
+  à venir » dans l'appli, s'il est confirmé.
+- **Question** : le gain du VIX à 22 jours se retrouve-t-il sur des titres que le § 11 n'a jamais vus ?
+- **Données** : **S&P MidCap 400** (`universe.get_sp400_tickers`), cours depuis 1998, sans composition historique (biais du survivant reconnu).
+  Même code que le § 11 : `walk_forward_harx` (HAR et HAR-X ajustés sur les mêmes lignes, 4 fenêtres, embargo = horizon), `ajouter_x_vix`,
+  bêta brut sur 1 an contre le SPY. Horizon **22 jours** seulement. Aucun réglage.
+- **Multiplicité** : 12ᵉ essai de la famille « références » ; un seul test confirmatoire (les midcaps), donc pas de correction supplémentaire.
+- **Règles de décision, fixées AVANT l'essai**
+  1. **Confirmé** si, sur les midcaps à 22 jours, toutes ces conditions tiennent : (a) t ≤ −2 et écart moyen < 0 ;
+     (b) d moyen < 0 dans au moins 3 des 4 fenêtres ; (c) placebo (VIX décalé de 252 jours) : t > −2 ; (d) coefficient du VIX de même signe dans les 4 fenêtres.
+  2. Sinon : **non confirmé**. Rien n'est affiché dans l'appli, et le § 11 reste une piste.
+  3. **Constats** (pas des conditions) : le même essai sur le S&P 500 (reproduction du § 11, sur des cours re-téléchargés) ; biais médian prévu / réel ;
+     **couverture** : part des couples (titre, date) où la baisse réalisée sur 22 jours dépasse le « mauvais cas 5 % » de HAR-X (loi de Student à
+     5 degrés, même loi que la projection de l'appli, rendement moyen supposé nul). Si cette part dépasse **7,5 %** (1,5 × 5 %, même seuil que la
+     règle 5 de la PR #27), l'appli l'écrit à côté du chiffre.
+  4. **Re-test mensuel** : l'essai rejoint les re-tests du laboratoire (le 2 de chaque mois). L'appli affiche le risque du mois seulement si le
+     **dernier** verdict est « confirmé ».
+- **Lecture (à l'avance)**
+
+| Observation | Conclusion |
+|---|---|
+| Confirmé | Le VIX aide à 1 mois au-delà du S&P 500 : affichage du « risque du mois à venir », avec son test |
+| Midcaps t entre −2 et 0 | Gain non retrouvé ailleurs : peut-être propre aux grandes valeurs ou à la période, pas d'affichage |
+| Placebo significatif sur les midcaps | Gain de degrés de liberté : écarté |
+| Couverture > 7,5 % | Affiché si confirmé, avec l'avertissement « le mauvais cas a été dépassé X % des mois » |
+
+- **Limites** : midcaps sans composition historique ; un seul VIX pour tous ; le bêta des midcaps est estimé contre le SPY.
+- **Résultats** : § 15.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
@@ -987,3 +1018,36 @@ Aucun changement. Les conseils externes du § 4.15 (« HAR étendu ») sont test
 
 À 6 mois, **HAR reste le meilleur niveau qu'on puisse justifier**. Les données publiques ne permettent pas de faire mieux de façon prouvable, et les modèles
 plus riches font pire en crise. La seule information qui aide vraiment est le VIX, et seulement à 1 mois.
+
+---
+
+## 13. Décision finale du modèle (22/11/2026, décision de l'utilisateur)
+
+Après cinq essais sur le niveau (§ 12.5), le modèle est **figé** :
+- **Ordre des titres** : l'IA de volatilité (prouvée, IC 78,3 % contre 74,9 % pour HAR, re-testée chaque mois).
+- **Niveau du risque à 6 mois** : **HAR**. C'est le plus simple, aucun concurrent ne le bat de façon prouvable, et il tient en crise.
+- **Garde-fous** : marge de sécurité, fourchette en loi de Student à 5 degrés, révision tous les 6 mois (§ 7).
+
+Toute nouvelle tentative sur le niveau à 6 mois devra apporter une **information nouvelle** (pas un modèle de plus sur les mêmes données),
+avec un protocole écrit et commité avant le code. Les données publiques actuelles (cours depuis 1998, VIX, crédit, pente des taux) ont été exploitées.
+
+Deux ajouts au produit, décidés le même jour :
+1. une carte **« stress test »** qui rejoue les crises passées (§ 14) : pas une prévision, donc rien à prouver statistiquement ;
+2. un **« risque du mois à venir »** par HAR-X, **seulement s'il est confirmé** (protocole § 4.16, résultats § 15).
+
+---
+
+## 14. Stress test historique (méthode écrite le 22/11/2026, avant le code)
+
+- **But** : montrer en euros ce que les grandes crises passées auraient fait au portefeuille **actuel**. C'est ce qui aide à tenir pendant un choc.
+  Ce n'est **pas une prévision** : aucune règle statistique n'est nécessaire, mais la méthode est fixée avant le code.
+- **Fenêtres** : trouvées sur le SPY, sans date choisie à la main, dans six plages de recherche :
+  2008 (01/10/2007 – 30/06/2009) ; 2011 (01/04/2011 – 31/12/2011) ; 2015-2016 (01/05/2015 – 29/02/2016) ; fin 2018 (01/09/2018 – 31/12/2018) ;
+  2020 (01/02/2020 – 30/06/2020) ; 2022 (01/01/2022 – 31/10/2022).
+  **Creux** = plus bas du SPY dans la plage ; **sommet** = plus haut du SPY entre le début de la plage et le creux.
+- **Rendement d'un titre** : cours au creux / cours au sommet − 1 (dernier cours connu à chaque date). Pas de cours au sommet (titre absent à l'époque) : `null`.
+- **Portefeuille** : somme des poids × rendements, poids fixés au sommet (on garde les titres pendant la chute, comme la révision semestrielle).
+  Titre sans cours à l'époque : rendement estimé = bêta (3 ans, celui de l'univers) × chute du SPY. La **part estimée** du portefeuille est affichée.
+- **Marché** : chute du SPY du sommet au creux, et **temps de retour** au sommet (jours de bourse jusqu'à un cours ≥ celui du sommet ; `null` si pas encore revenu).
+- **Limites (affichées)** : seuls les titres d'aujourd'hui sont rejoués (biais du survivant : les faillites de l'époque n'y sont pas) ;
+  rendements de prix sans dividendes ; le bêta d'aujourd'hui peut différer de celui de l'époque ; l'historique du serveur commence en 2005.
