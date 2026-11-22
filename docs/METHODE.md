@@ -755,6 +755,28 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
 - **Limites** : midcaps sans composition historique ; un seul VIX pour tous ; le bêta des midcaps est estimé contre le SPY.
 - **Résultats** : § 15.
 
+### 4.17 Essai « Confirmation de HAR-X à 1 mois, données nettoyées » (protocole écrit le 22/11/2026, après le résultat du § 15 et AVANT tout code ; décision de l'utilisateur)
+- **Origine** : la confirmation du § 4.16 est « non confirmée » (§ 15), mais **non informative**. Sur les midcaps, la QLIKE de HAR vaut 5,43, contre 0,36 sur
+  le S&P 500, et le MDE vaut 3,77, contre ~0,03 pour l'effet attendu. Quelques cours aberrants dominent la perte. L'utilisateur demande un nouvel
+  essai, avec un **nettoyage d'abord** et une normalisation seulement en second recours.
+- **Honnêteté** : c'est un **13ᵉ essai compté**. La règle de nettoyage est écrite ici, avant tout code et avant de regarder les données nettoyées.
+  Elle porte sur la **qualité des données**, pas sur le résultat, et s'applique à l'identique aux deux univers et à l'entraînement comme au test.
+  Le résultat est **définitif** dans les deux sens : pas de 3ᵉ tentative.
+- **Étape 1 — Nettoyage** : on retire un couple (titre, date) si (i) le cours de clôture à la date est < 5 $, ou (ii) un rendement quotidien du titre dépasse
+  ±50 % entre t − 63 et t + 22 séances. Ces cas sont des titres en détresse, des cours aberrants ou des divisions mal ajustées. La part retirée est rapportée
+  pour chaque univers.
+- **Étape 2 — Normalisation (seulement si l'étape 1 reste non informative)** : elle est déclenchée **uniquement** si le MDE des midcaps après nettoyage
+  dépasse **0,10**. C'est un critère de puissance, jamais le signe ou la valeur de t. La perte de chaque date devient alors la moyenne des QLIKE
+  **winsorisées** aux centiles 1 % et 99 % des titres de cette date, pour HAR, HAR-X et le placebo. Une seule étape est retenue comme résultat : la
+  dernière exécutée.
+- **Règle de décision** (identique au § 4.16, sur les midcaps à 22 jours) : (a) t ≤ −2 et écart < 0 ; (b) d moyen < 0 dans ≥ 3 fenêtres sur 4 ;
+  (c) placebo t > −2 ; (d) coefficient du VIX de même signe dans les 4 fenêtres. **Confirmé** : affichage du « risque du mois à venir ». **Sinon** :
+  abandon définitif de cet affichage.
+- **Constats** : reproduction sur le S&P 500 avec le même traitement ; couverture du mauvais cas 5 % ; biais médian ; part des données retirées ;
+  étape retenue (1 ou 2).
+- **Re-test mensuel** : cet essai remplace celui du § 4.16 dans les re-tests du laboratoire. L'appli suit son dernier verdict.
+- **Résultats** : § 16.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
@@ -1051,3 +1073,32 @@ Deux ajouts au produit, décidés le même jour :
 - **Marché** : chute du SPY du sommet au creux, et **temps de retour** au sommet (jours de bourse jusqu'à un cours ≥ celui du sommet ; `null` si pas encore revenu).
 - **Limites (affichées)** : seuls les titres d'aujourd'hui sont rejoués (biais du survivant : les faillites de l'époque n'y sont pas) ;
   rendements de prix sans dividendes ; le bêta d'aujourd'hui peut différer de celui de l'époque ; l'historique du serveur commence en 2005.
+
+---
+
+## 15. Résultats de la confirmation de HAR-X à 1 mois (§ 4.16 ; lot du 22/11/2026 23:23 UTC, run n° 47)
+
+| Condition (midcaps, 22 jours) | Résultat | Verdict |
+|---|---|---|
+| (a) t ≤ −2 et écart < 0 | écart −1,36 ; **t = −1,04** | **Échec** |
+| (b) d moyen < 0 dans ≥ 3 fenêtres sur 4 | 4 sur 4 (−0,004 ; −0,114 ; **−5,330** ; −0,004) | Réussi |
+| (c) placebo t > −2 | t = −0,05 | Réussi |
+| (d) signe du VIX stable | 0,41 à 0,94, toujours positif | Réussi |
+| **Verdict** | | **Non confirmé** (appliqué : rien n'est affiché) |
+
+**Constats** :
+- 398 midcaps. QLIKE HAR **5,43** contre HAR-X 4,07, alors qu'elle vaut ≈ 0,36 sur le S&P 500. MDE **3,77**. Biais médian de HAR-X **+69 %**.
+- Ratio de QLIKE par crise : tous < 1 (0,84 à 1,00).
+- HAR-X contre son placebo : t = −1,04.
+- **Reproduction S&P 500** : identique au § 11 (t = −3,20, écart −0,029, placebo t = +1,19).
+- **Couverture** : le mauvais cas 5 % n'est dépassé que 0,9 % des mois sur les midcaps et 1,7 % sur le S&P 500. Les prévisions sont **prudentes**.
+
+**Lecture** :
+- Le verdict « non confirmé » est appliqué tel qu'écrit.
+- Mais l'essai est **non informatif** : un seul bloc de dates (fenêtre 3, écart −5,33) porte presque toute la perte. Avec un MDE de 3,77, aucun effet
+  plausible (~0,03) n'était détectable.
+- Les signes vont tous dans le sens d'une confirmation (4 fenêtres sur 4, crises, placebo propre), mais ce n'est pas une preuve.
+- Cause probable : des cours aberrants ou des titres en détresse dans les données Yahoo des midcaps (sans composition historique), qui donnent des
+  volatilités réalisées énormes face à des prévisions normales. La QLIKE punit très fortement ces sous-estimations.
+
+**Décision de l'utilisateur** : un nouvel essai, données nettoyées d'abord (protocole § 4.17, écrit avant tout code, 13ᵉ essai, résultat définitif).
