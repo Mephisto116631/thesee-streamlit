@@ -994,3 +994,57 @@ def verdict_etendu(c: dict, replication: dict | None = None) -> str:
 def replication_etendu(t_mid: pd.DataFrame) -> dict:
     r = _dm_cols(t_mid, "lvl_m2", "lvl_har", H)
     return {"dm": r, "replique": bool(r.get("t", 0) <= -2 and r.get("ecart", 0) < 0)}
+
+
+# ------------------------------------------------------------------------------
+# Essai « Confirmation de HAR-X à 1 mois » (protocole : docs/METHODE.md § 4.16, écrit avant tout code)
+# ------------------------------------------------------------------------------
+H_MOIS = 22
+N_ESSAIS_HARX_1M = 12
+Z_STUDENT5_5PC = -2.015048372669157      # quantile 5 % de la loi de Student à 5 degrés (échelle σ, comme l'appli)
+SEUIL_COUVERTURE = 0.075                 # 1,5 × 5 % (règle 5 de la PR #27)
+
+
+def ajouter_rendement_futur(t: pd.DataFrame, market_raw: pd.DataFrame, h: int = H_MOIS) -> pd.DataFrame:
+    """Ajoute `ret_futur` : rendement du titre de la date t à t + h séances (pour la couverture, jamais comme entrée)."""
+    px = market_raw.pivot_table(index="date", columns="symbol", values="close").sort_index().ffill(limit=5)
+    fut = (px.shift(-h) / px - 1).stack(future_stack=True).rename("ret_futur")
+    fut.index.names = ["date", "symbol"]
+    return t.drop(columns=["ret_futur"], errors="ignore").merge(fut.reset_index(), on=["date", "symbol"], how="left")
+
+
+def couverture_1m(t: pd.DataFrame, col: str, h: int = H_MOIS) -> dict:
+    """Part des (titre, date) où la baisse sur h séances dépasse le « mauvais cas 5 % » : z(Student 5) × σ prévue × √(h/252)."""
+    ok = t[[col, "ret_futur"]].notna().all(axis=1) & (t[col] > 0)
+    seuil = Z_STUDENT5_5PC * t.loc[ok, col] * np.sqrt(h / 252)
+    part = float((t.loc[ok, "ret_futur"] < seuil).mean()) if ok.any() else None
+    return {"part_depassements": part, "attendu": 0.05, "n": int(ok.sum()),
+            "avertissement": bool(part is not None and part > SEUIL_COUVERTURE)}
+
+
+def verdict_harx_1m(c_mid: dict) -> tuple[str, dict]:
+    """Règle 1 du § 4.16 sur les midcaps à 22 jours. Retourne (verdict, conditions)."""
+    r = c_mid["horizons"][H_MOIS]
+    cond = {
+        "a_t_et_ecart": bool(r["dm"].get("t", 0) <= -2 and r["dm"].get("ecart", 0) < 0),
+        "b_fenetres": bool(r["fenetres_negatives"] >= 3),
+        "c_placebo": bool(r["placebo"].get("t", 0) > -2),
+        "d_signe_vix": bool(len({np.sign(v) for v in r["coef_vix_par_fenetre"].values()}) == 1),
+    }
+    if all(cond.values()):
+        return "confirmé", cond
+    return "non confirmé : " + ", ".join(k for k, ok in cond.items() if not ok), cond
+
+
+def essai_harx_1m(market_raw: pd.DataFrame, symboles: list[str], vix: pd.Series, composition=None, secteurs=None) -> dict:
+    """HAR et HAR-X à 22 jours sur un univers (§ 4.16) : comparaison, placebo, couverture."""
+    d = preparer(market_raw, symboles, composition, secteurs, h=H_MOIS)[0]
+    beta = beta_depuis_cours(market_raw, symboles)
+    t = walk_forward_harx(ajouter_x_vix(d, beta, vix), h=H_MOIS)
+    tp = walk_forward_harx(ajouter_x_vix(d, beta, vix, decalage=DECALAGE_PLACEBO_VIX), h=H_MOIS)
+    c = comparer_harx({H_MOIS: t}, {H_MOIS: tp}, n_essais_total=N_ESSAIS_HARX_1M)
+    t = ajouter_rendement_futur(t, market_raw)
+    c["couverture"] = {"harx": couverture_1m(t, "lvl_harx"), "har": couverture_1m(t, "lvl_har")}
+    c["n_titres"] = int(t["symbol"].nunique())
+    c["debut_test"] = str(pd.Timestamp(t["date"].min()).date()) if not t.empty else None
+    return c

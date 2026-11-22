@@ -302,3 +302,41 @@ def test_har_etendu_mecanique():
     assert {"1_piste", "3_placebo_ne_bat_pas_m1", "2abcd"} <= set(c["regles"])
     assert isinstance(ex.verdict_etendu(c), str)
     json.dumps(c, default=float)
+
+
+def _comparaison_1m(graine: int, permuter: bool):
+    data, beta, vix = _marche_vix(graine=graine)
+    if permuter:
+        vix = pd.Series(np.random.default_rng(9).permutation(vix.values), index=vix.index)
+    t = ex.walk_forward_harx(ex.ajouter_x_vix(data, beta, vix), h=ex.H_MOIS)
+    tp = ex.walk_forward_harx(ex.ajouter_x_vix(data, beta, vix, decalage=ex.DECALAGE_PLACEBO_VIX), h=ex.H_MOIS)
+    return ex.comparer_harx({ex.H_MOIS: t}, {ex.H_MOIS: tp})
+
+
+def test_harx_1m_confirme_si_le_vix_informe():
+    v, cond = ex.verdict_harx_1m(_comparaison_1m(0, False))
+    assert v == "confirmé" and all(cond.values())
+
+
+def test_harx_1m_non_confirme_si_vix_sans_information():
+    v, cond = ex.verdict_harx_1m(_comparaison_1m(3, True))
+    assert v.startswith("non confirmé") and not cond["a_t_et_ecart"]
+
+
+def test_couverture_1m():
+    rng = np.random.default_rng(4)
+    n = 20000
+    sig = rng.uniform(0.15, 0.4, n)
+    t = pd.DataFrame({"lvl": sig, "ret_futur": rng.standard_t(5, n) * sig * np.sqrt(22 / 252)})
+    c = ex.couverture_1m(t, "lvl")
+    assert abs(c["part_depassements"] - 0.05) < 0.01 and not c["avertissement"]   # loi juste : 5 %
+    t["ret_futur"] *= 2                                                                # risque sous-estimé de moitié
+    assert ex.couverture_1m(t, "lvl")["avertissement"]
+
+
+def test_ajouter_rendement_futur():
+    raw, syms = _donnees_examen()
+    t = pd.DataFrame({"date": [pd.Timestamp("2008-01-02")], "symbol": ["T00"]})
+    r = ex.ajouter_rendement_futur(t, raw, 22)["ret_futur"].iloc[0]
+    px = raw[raw["symbol"] == "T00"].set_index("date")["close"]
+    assert np.isclose(r, px.iloc[22] / px.iloc[0] - 1)
