@@ -9,6 +9,7 @@ import { libelleSource, univers as universFiable, useFiabiliteVol, type Fiabilit
 import { choisirRevision, prochaineRevision } from "../revision";
 import { MonteCarlo } from "./MonteCarlo";
 import { PlanAchat } from "./PlanAchat";
+import { FaceAuxChocs, type UniversJour } from "./FaceAuxChocs";
 
 const KEY = "thesee:objectif:v1";
 // Hold : horizons de 6 mois et plus (en dessous, c'est le mode court terme)
@@ -196,6 +197,9 @@ export function Portfolio() {
             {frais && <p class="hint">Frais à l'achat : <b>{num(frais.totalFrais, 2)} €</b> ({pct(frais.partFrais, 2, false)}) pour {frais.nbOrdres} ordres.</p>}
             <Verifier href="#/parametres/calculs/risque" />
           </Card>
+
+          {/* 2 bis. Face aux chocs : le mois à venir (si confirmé) et les crises passées rejouées */}
+          <FaceAuxChocs u={(reco.data?.univers_facteurs ?? undefined) as UniversJour | undefined} lignes={lignes} capital={e.capital} />
 
           {/* 3. Les titres */}
           <Card title={`Les ${lignes.length} titres`} repliable id="titres">

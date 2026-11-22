@@ -498,6 +498,14 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
                 for s, t in (reco.get("titres") or {}).items():
                     if s in vol_publiee:
                         t["vol_ia"] = float(vol_publiee[s])
+            # Stress test (docs/METHODE.md § 14) : crises passées rejouées sur les titres d'aujourd'hui
+            try:
+                u = reco.get("univers_facteurs") or {}
+                if u.get("symbols"):
+                    u["chocs"] = portefeuille.chocs_historiques(raw_horizon, u["symbols"])
+                    print(f"[PUBLISH] Stress test : {len((u['chocs'] or {}).get('crises', []))} crises rejouées")
+            except Exception as e:
+                print(f"[PUBLISH][WARN] Stress test non calculé : {e}")
             enregistrer_revision(reco, snap["date"].max())
             db.upsert_rows("portefeuille_recommande", [_clean({
                 "id": 1, "date": snap["date"].max(), **reco,
