@@ -91,6 +91,8 @@ EXPERIENCES_EXAMEN = {
     "examen_multi_horizon": "IA de niveau contre HAR aux horizons 5, 22, 63 et 126 jours (aSPA simplifié, Holm, placebo, équivalence)",
     # Essai du 21/11/2026 (docs/METHODE.md § 4.14) : protocole écrit avant tout code
     "examen_harx": "HAR-X (HAR + VIX × bêta²) contre HAR à 126, 22 et 5 jours ; placebo VIX décalé d'un an ; réplication midcaps",
+    # Essai du 22/11/2026 (docs/METHODE.md § 4.15) : protocole écrit avant tout code
+    "examen_har_etendu": "HAR étendu : M1 (retards longs, baisses, bêta, secteurs) et M2 (+ VIX, crédit, pente) contre HAR à 126 jours, placebo",
     "examen_marge": "Marge de sécurité apprise sur le passé ; rythmes de révision mensuel, semestriel, annuel avec frais ; fourchette avec l'hybride",
 }
 DEBUT_EXAMEN = "1998-01-01"
@@ -275,6 +277,30 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
                 r = c["horizons"][ex.H]["dm"]
                 _inserer(cli, lot, nom, ex.verdict_harx(c, rep), c, ic=r.get("ecart"), t=r.get("t"), seuil=2.0,
                          n_essais=ex.N_ESSAIS_HARX)
+            elif nom == "examen_har_etendu":
+                import fred
+                vix = _vix(DEBUT_EXAMEN)
+                macro = pd.DataFrame({k: fred._fetch_fred_serie(sid, start_date=DEBUT_EXAMEN).set_index("date")["valeur"]
+                                      for k, sid in mreg.SERIES_FRED.items()})
+                macro.index = pd.to_datetime(macro.index)
+                tables = ex.variables_cours(raw, snap["symbol"].tolist())
+                d, modeles = ex.modeles_etendus(ex.ajouter_etendu(data, tables, vix, macro))
+                dp, _ = ex.modeles_etendus(ex.ajouter_etendu(data, tables, vix, macro, decalage=ex.DECALAGE_PLACEBO_VIX))
+                te, tp = ex.walk_forward_lineaire(d, modeles), ex.walk_forward_lineaire(dp, modeles)
+                c = ex.comparer_etendu(te, tp)
+                c["debut_test"] = str(pd.Timestamp(te["date"].min()).date())
+                c["variables"] = modeles
+                rep = None
+                if c["regles"]["2abcd"] and c["regles"]["3_placebo_ne_bat_pas_m1"]:     # règle 2 (e), conditionnelle
+                    m = universe.get_sp400_tickers()
+                    raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
+                    data_m, _ = ex.preparer(raw_m, m["symbol"].tolist(), None)
+                    dm_, mod_m = ex.modeles_etendus(ex.ajouter_etendu(data_m, ex.variables_cours(raw_m, m["symbol"].tolist()), vix, macro))
+                    rep = ex.replication_etendu(ex.walk_forward_lineaire(dm_, mod_m))
+                    c["replication_midcap"] = rep
+                r = c["m2_contre_har"]
+                _inserer(cli, lot, nom, ex.verdict_etendu(c, rep), c, ic=r.get("ecart"), t=r.get("t"), seuil=2.0,
+                         n_essais=ex.N_ESSAIS_ETENDU)
             elif nom == "examen_marge":
                 tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
                 res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",

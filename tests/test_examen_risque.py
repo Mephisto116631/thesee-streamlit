@@ -277,3 +277,28 @@ def test_beta_brut_retrouve_le_beta():
     rm = pd.Series(rng.normal(0, 0.01, 600))
     ret = pd.DataFrame({"SPY": rm, "A": 1.5 * rm + rng.normal(0, 0.002, 600)})
     assert abs(ex.beta_brut(ret)["A"].iloc[-1] - 1.5) < 0.05
+
+
+def test_har_etendu_mecanique():
+    import json
+    raw, syms = _donnees_examen()
+    data, _ = ex.preparer(raw, syms, None, {s: "ABC"[i % 3] for i, s in enumerate(syms)})
+    tables = ex.variables_cours(raw, syms)
+    jours = tables["beta"].index
+    rng = np.random.default_rng(2)
+    vix = pd.Series(20 + rng.normal(0, 3, len(jours)), index=jours)
+    macro = pd.DataFrame({"credit": 2 + rng.normal(0, 0.3, len(jours)), "pente": rng.normal(0, 1, len(jours))}, index=jours)
+    d, modeles = ex.modeles_etendus(ex.ajouter_etendu(data, tables, vix, macro))
+    dp, _ = ex.modeles_etendus(ex.ajouter_etendu(data, tables, vix, macro, decalage=ex.DECALAGE_PLACEBO_VIX))
+    assert {"sect_B", "sect_C"} <= set(modeles["m1"]) and set(ex.COLS_MARCHE) <= set(modeles["m2"])
+    # semivariance négative : jamais plus grande que la variance totale sur la même fenêtre
+    v22 = ex.har_entrees(raw.pivot_table(index="date", columns="symbol", values="close").pct_change())["v22"]
+    rsm, v22 = tables["rsm22"].align(v22, join="inner")
+    assert ((rsm <= v22 + 1e-12) | rsm.isna()).all().all() and rsm.notna().any().any()
+    t = ex.walk_forward_lineaire(d, modeles)
+    tp = ex.walk_forward_lineaire(dp, modeles)
+    assert {"lvl_har", "lvl_m1", "lvl_m2"} <= set(t.columns) and t.attrs["coefs"]
+    c = ex.comparer_etendu(t, tp)
+    assert {"1_piste", "3_placebo_ne_bat_pas_m1", "2abcd"} <= set(c["regles"])
+    assert isinstance(ex.verdict_etendu(c), str)
+    json.dumps(c, default=float)
