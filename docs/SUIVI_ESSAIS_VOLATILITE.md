@@ -28,7 +28,8 @@ Document de reprise pour une nouvelle session (Claude Code). Tout est en frança
 | HAR remis à l'échelle (un facteur k appris sur le passé) | § 4.11 | § 9 | **Non candidat** : écart −0,0027, force 6 %, 2008-2009 ×1,16, 2 fenêtres sur 4 ; k stable ≈ 0,95 → HAR est déjà calibré en moyenne ; le « biais de 27 % » est un effet d'asymétrie (médiane) |
 | Règles v2 de test (littérature : Patton 2011, Giacomini-White 2006, Lazarus et al. 2018, Coroneo-Iacone 2020, Quaedvlieg 2021, Holm 1979, Harvey-Liu 2020…) | § 4.12 | simulation de taille | Test précédent sur-rejetait (NW + normale : 13 % au lieu de 5 % ; naïf : 70 %) ; **EWC avec ν = min(0,4·T^(2/3), T/(2h)) : 5,9 %** |
 | Multi-horizon (5, 22, 63, 126 jours ; IA de niveau B contre HAR) | § 4.13 | § 10 | **Sans pouvoir de conclure** : t_aSPA = +0,06, MDE 0,160 ; meilleur indice à 5 jours (−0,018, t −1,34, MDE 0,039) ; MDE à 22 jours 0,108, bien au-dessus de l'estimation a priori ; 2020 très défavorable à B |
-| HAR-X : HAR + VIX × β² | § 4.14 (+ additif puissance) | § 11 | **protocole écrit, code à faire** |
+| HAR-X : HAR + VIX × β² | § 4.14 (+ additif et précisions) | § 11 | **126 j : sans pouvoir de conclure (−4 %, t −0,86) ; 22 j : piste solide (−8 %, t −3,20, Holm < 0,5 %)** |
+| HAR étendu (conseils externes) | § 4.15 | § 12 | **sans pouvoir de conclure ; macro écartée (placebo) ; pire en crise** |
 
 Constat transversal : avec n effectif ≈ 36 à 126 jours, le MDE est ≈ 0,05 à 0,16 de QLIKE, bien au-dessus des écarts discutés (0,003 à 0,014). Les essais disent « pas de gain détectable », pas « pas de gain ». Le panel de titres est **déjà** inclus (l'écart de perte est moyenné par date, estimateur de type Driscoll-Kraay) : pas de gain de puissance de ce côté.
 
@@ -36,17 +37,11 @@ Décision en vigueur : **l'hybride (ordre des titres par l'IA, niveau par HAR) r
 
 ## 4. À faire ensuite (par ordre)
 
-1. **Lire le résultat de l'essai multi-horizon** (run lancé sur la PR #28 après le commit « examen_multi_horizon »), puis écrire le **§ 10 de `METHODE.md`** (même gabarit que §§ 8 et 9 : tableau des règles, constats, lecture selon la grille du § 4.13, décision, limites), commiter et pousser. Requête :
-
-```sql
-select lot, verdict, ic as ecart_aspa, t_stat, diagnostics
-from experiences where nom = 'examen_multi_horizon' order by lot desc limit 1;
-```
-
-   Clés de `diagnostics` : `aspa` (écart, erreur_type, t, nu, p_bilatere, ic95, ic90, n_effectif, mde_80, ecart_sur_mde), `par_horizon` (idem par horizon), `holm`, `blocs_negatifs`, `blocs`, `crises`, `ic`, `placebo`, `regles` (`1_piste`, `2_fuite_probable`, `3_B_pire`, `4_equivalence`), `peut_conclure_equivalence`.
-   Vérifier d'abord que le run est terminé (`gh run list -R Mephisto116631/thesee-streamlit -w "Laboratoire — essais du modèle" -L 3`) et qu'il n'y a pas d'erreur `[LABO][ERREUR]` dans ses journaux.
-2. Si **piste** : écrire (avant tout code) un protocole à 126 jours avec réplication sur des données non utilisées (par ex. S&P MidCap 400 via `universe.get_sp400_tickers`, `ex.autre_marche`). Une publication exige : p corrigé < 0,5 % (t ≈ 3), effet ≥ minimum économique déclaré, réplication à t ≥ 2 (§ 4.12, règle 7).
-3. Si **sans pouvoir de conclure** : ne pas relâcher les seuils. Pistes restantes : compléter avec le test uniforme de Quaedvlieg (bootstrap par blocs, non implémenté), ou valider par simulation la puissance (MDE) avant tout nouvel essai.
+1. **Fait (22/11/2026)** : multi-horizon (§ 10), HAR-X (§ 11), HAR étendu (§ 12). Bilan au § 12.5 : à 6 mois, HAR reste le meilleur niveau justifiable ;
+   le VIX n'aide prouvablement qu'à 1 mois. Requête des résultats : `select lot, verdict, diagnostics from experiences where nom in ('examen_harx','examen_har_etendu') order by lot desc;`
+2. **Choix du modèle avec l'utilisateur** : la recherche sur le niveau à 6 mois est close faute de puissance (données publiques épuisées). Décisions à prendre :
+   garder l'hybride tel quel ; ou protocoler un « risque du mois à venir » avec HAR-X (réplication midcaps à 22 jours d'abord) ; ou une carte « stress test » historique.
+3. Ne pas relâcher les seuils pour « sauver » un résultat ; tout nouvel essai = protocole écrit et commité avant le code.
 4. Faire décider l'utilisateur sur : fusion de la PR #28 dans `main` (laboratoire seulement), suppression de la branche `test-modele-relatif`, éventuel keepalive mensuel du workflow `sync.yml`.
 5. **Sécurité (en attente depuis longtemps)** : régénérer les clés Supabase et Alpha Vantage, exposées dans une ancienne conversation.
 

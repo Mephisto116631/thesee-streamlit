@@ -653,3 +653,344 @@ def comparer_multi(par_h: dict[int, pd.DataFrame], placebo: dict[int, pd.DataFra
     }
     out["peut_conclure_equivalence"] = bool(r["mde_80"] < MARGE_EQUIVALENCE)
     return out
+
+
+# ------------------------------------------------------------------------------
+# Essai « HAR-X : HAR + VIX » (protocole : docs/METHODE.md § 4.14, écrit avant tout code)
+# ------------------------------------------------------------------------------
+HORIZONS_HARX = [126, 22, 5]          # 126 : primaire ; 22 : secondaire ; 5 : constat (additif du § 4.14)
+FAMILLE_HARX = [126, 22]              # famille confirmatoire, corrigée par Holm
+ALPHA_HARX = 0.005                    # règle 2 (a) : p unilatéral corrigé < 0,5 %
+DECALAGE_PLACEBO_VIX = 252            # règle 3 : vrai VIX, un an trop tôt
+MDE_MAX_HARX = 0.03                   # additif : au-delà, ni candidat ni équivalence (règle v2 n° 2)
+SEUIL_CRISE_HARX = 1.10               # règle 2 (c)
+N_ESSAIS_HARX = 10                    # famille « références » : 8 (§ 9) + multi-horizon (§ 10) + HAR-X
+COLS_HAR = ["v1", "v5", "v22", "v63"]
+
+
+def beta_brut(ret: pd.DataFrame, rm: pd.Series | None = None) -> pd.DataFrame:
+    """Bêta sur 1 an (252 jours) de chaque titre contre le marché, valeurs brutes (pas des rangs), passé seulement."""
+    rm = ret[mh.INDICE] if rm is None else rm
+    return ret.rolling(252).cov(rm).div(rm.rolling(252).var(), axis=0)
+
+
+def beta_depuis_cours(market_raw: pd.DataFrame, symboles: list[str]) -> pd.DataFrame:
+    """Bêta brut sur 1 an à partir des cours bruts (les rendements de `preparer` n'ont pas l'indice)."""
+    m = market_raw[market_raw["symbol"].isin(set(symboles) | {mh.INDICE})]
+    px = m.pivot_table(index="date", columns="symbol", values="close").sort_index().ffill(limit=5)
+    return beta_brut(px.pct_change()).drop(columns=[mh.INDICE])
+
+
+def ajouter_x_vix(data: pd.DataFrame, beta: pd.DataFrame, vix: pd.Series, decalage: int = 0) -> pd.DataFrame:
+    """Ajoute `x = β̂² × (VIX/100)² / 252` (variance quotidienne « marché » anticipée par les options).
+    `decalage` > 0 : VIX de `decalage` jours de bourse plus tôt (placebo, règle 3). Clôture du jour de la prévision."""
+    v = vix.dropna().sort_index()
+    v = v.shift(decalage) if decalage else v
+    dates = pd.DatetimeIndex(np.sort(data["date"].unique()))
+    v = v.reindex(v.index.union(dates)).ffill(limit=5).reindex(dates)
+    b = beta.reindex(dates).stack(future_stack=True).rename("beta_brut")
+    b.index.names = ["date", "symbol"]
+    out = data.drop(columns=["beta_brut", "vix_j", "x_vix"], errors="ignore").merge(b.reset_index(), on=["date", "symbol"], how="left")
+    out["vix_j"] = out["date"].map(v)
+    out["x_vix"] = out["beta_brut"] ** 2 * (out["vix_j"] / 100) ** 2 / 252
+    return out
+
+
+def _mco(train: pd.DataFrame, cols: list[str]) -> np.ndarray:
+    X = np.column_stack([np.ones(len(train))] + [train[c].values for c in cols])
+    coef, *_ = np.linalg.lstsq(X, train["brut"].values ** 2 / 252, rcond=None)
+    return coef
+
+
+def _prevoir(df: pd.DataFrame, cols: list[str], coef: np.ndarray) -> np.ndarray:
+    X = np.column_stack([np.ones(len(df))] + [df[c].values for c in cols])
+    return np.sqrt(np.maximum(X @ coef, df["v63"].values * 0.25) * 252)      # même garde-fou que har_prevoir
+
+
+def walk_forward_harx(data: pd.DataFrame, h: int = H) -> pd.DataFrame:
+    """HAR et HAR-X ajustés sur les MÊMES lignes du passé (fenêtres et embargo de `walk_forward`), prévus sur les mêmes
+    lignes de test. `data` doit contenir `x_vix` (voir `ajouter_x_vix`). Seule différence entre les deux : la variable x."""
+    cols_x = COLS_HAR + ["x_vix"]
+    d = data[np.isfinite(data[cols_x + ["brut"]]).all(axis=1) & (data["brut"] > 0)]
+    dates = np.sort(data["date"].unique())
+    bornes = np.array_split(dates[len(dates) // 3:], mh.N_FENETRES)
+    embargo = pd.Timedelta(days=int(h * 7 / 5) + 1)
+    sorties = []
+    for k, bloc in enumerate(bornes):
+        debut = pd.Timestamp(bloc[0])
+        train = d[d["date"] < debut - embargo]
+        test = d[d["date"].isin(bloc)].copy()
+        if len(train) < 2000 or test.empty:
+            continue
+        c_har, c_x = _mco(train, COLS_HAR), _mco(train, cols_x)
+        test["lvl_har"] = _prevoir(test, COLS_HAR, c_har)
+        test["lvl_harx"] = _prevoir(test, cols_x, c_x)
+        test["fenetre"] = k
+        test["coef_vix"] = float(c_x[-1])
+        # Part de variance prévue venant du VIX (médiane), pour lire le coefficient en ordre de grandeur
+        var_prevue = np.maximum(test["lvl_harx"].values ** 2 / 252, 1e-12)
+        test["part_vix"] = float(np.median(c_x[-1] * test["x_vix"].values / var_prevue))
+        sorties.append(test)
+    return pd.concat(sorties, ignore_index=True) if sorties else pd.DataFrame()
+
+
+def _ecart_harx(t: pd.DataFrame) -> pd.Series:
+    return (_pertes_par_date(t, "lvl_harx") - _pertes_par_date(t, "lvl_har")).dropna()
+
+
+def comparer_harx(par_h: dict[int, pd.DataFrame], placebo_h: dict[int, pd.DataFrame], n_essais_total: int = N_ESSAIS_HARX) -> dict:
+    """Règles 1 à 7 du § 4.14 (et son additif). d = QLIKE(HAR-X) − QLIKE(HAR) par date ; d < 0 : HAR-X meilleur."""
+    from scipy import stats
+    out = {"horizons": {}, "n_essais_total": n_essais_total, "t_max_attendu": inf.t_max_attendu(n_essais_total)}
+    for h, t in sorted(par_h.items(), reverse=True):
+        d = _ecart_harx(t)
+        r = inf.rapport_dm(d.values, h / mh.PAS_ECHANTILLON)
+        fen = t.groupby("date")["fenetre"].first().reindex(d.index)
+        par_fen = d.groupby(fen).mean()
+        rp = inf.rapport_dm(_ecart_harx(placebo_h[h]).values, h / mh.PAS_ECHANTILLON) if h in placebo_h else {}
+        # Constat (précision du 22/11/2026, avant tout résultat) : x = β² × VIX² porte aussi le bêta, que le placebo garde.
+        # HAR-X contre son placebo isole l'apport du VIX lui-même (même bêta, VIX au bon moment ou un an trop tôt).
+        vp = (inf.rapport_dm((_pertes_par_date(t, "lvl_harx") - _pertes_par_date(placebo_h[h], "lvl_harx")).dropna().values,
+                             h / mh.PAS_ECHANTILLON) if h in placebo_h else {})
+        crises = {}
+        for nom, (d0, d1) in CRISES.items():
+            g = t[(t["date"] >= pd.Timestamp(d0)) & (t["date"] <= pd.Timestamp(d1))]
+            if g["date"].nunique() >= 3:
+                qh, qx = _pertes_par_date(g, "lvl_har").mean(), _pertes_par_date(g, "lvl_harx").mean()
+                crises[nom] = {"ratio_qlike_harx_sur_har": float(qx / qh) if qh > 0 else None, "n_dates": int(g["date"].nunique())}
+        ok = t[["lvl_har", "lvl_harx", "brut"]].notna().all(axis=1)
+        mse = {c: float(((t.loc[ok, c] - t.loc[ok, "brut"]) ** 2).mean()) for c in ["lvl_har", "lvl_harx"]}
+        tt = t.assign(rel=t["brut"])
+        res = {
+            "dm": r, "n_dates": int(len(d)),
+            "qlike": {"har": float(_pertes_par_date(t, "lvl_har").mean()), "harx": float(_pertes_par_date(t, "lvl_harx").mean())},
+            "par_fenetre": {int(k): float(v) for k, v in par_fen.items()},
+            "fenetres_negatives": int((par_fen < 0).sum()), "n_fenetres": int(len(par_fen)),
+            "coef_vix_par_fenetre": {int(k): float(v) for k, v in t.groupby("fenetre")["coef_vix"].first().items()},
+            "part_vix_par_fenetre": {int(k): float(v) for k, v in t.groupby("fenetre")["part_vix"].first().items()},
+            "placebo": rp, "harx_contre_placebo": vp, "crises": crises, "mse": mse,
+            "calibration": {"har": calibration(t, "lvl_har"), "harx": calibration(t, "lvl_harx")},
+            "ic": {"har": float(mh._ic_par_date(tt, "lvl_har").mean()), "harx": float(mh._ic_par_date(tt, "lvl_harx").mean())},
+        }
+        tq = float(stats.t.ppf(0.95, r.get("nu", 18)))
+        res["ic90"] = [r["ecart"] - tq * r["erreur_type"], r["ecart"] + tq * r["erreur_type"]] if "ecart" in r else None
+        out["horizons"][int(h)] = res
+    H_ = out["horizons"]
+    out["holm"] = inf.holm({str(h): H_[h]["dm"].get("p_unilateral_A_meilleur", 1.0) for h in FAMILLE_HARX if h in H_}, alpha=ALPHA_HARX)
+    regles = {}
+    for h, res in H_.items():
+        r, t_ = res["dm"], res["dm"].get("t", 0.0)
+        t_pl = res["placebo"].get("t")
+        mde_ok = r.get("mde_80", 1.0) <= MDE_MAX_HARX
+        regles[h] = {
+            "1_piste": bool(t_ <= -2 and r.get("ecart", 0) < 0 and res["fenetres_negatives"] >= 3),
+            "3_placebo_ne_bat_pas_har": bool(t_pl is None or t_pl > -2),
+            "4_pire_que_har": bool(t_ >= 2),
+            "5_equivalence": bool(mde_ok and r.get("mde_80", 1.0) < MARGE_EQUIVALENCE and res["ic90"] is not None
+                                  and res["ic90"][0] > -MARGE_EQUIVALENCE and res["ic90"][1] < MARGE_EQUIVALENCE),
+            "mde_permet_candidat": bool(mde_ok),
+            "coef_vix_signe_stable": bool(len({np.sign(v) for v in res["coef_vix_par_fenetre"].values()}) == 1),
+        }
+    r126 = H_.get(126)
+    if r126:
+        ratios = [r126["crises"].get(k, {}).get("ratio_qlike_harx_sur_har") for k in ("2008-2009 (crise financière)", "2020 (Covid)")]
+        regles[126].update({
+            "2a_holm": bool(out["holm"].get("126", {}).get("rejete", False)),
+            "2b_ecart_economique": bool(r126["dm"].get("ecart", 0) <= -MARGE_EQUIVALENCE),
+            "2c_crises": bool(all(x is not None and x <= SEUIL_CRISE_HARX for x in ratios)),
+        })
+        regles[126]["2abc"] = bool(regles[126]["mde_permet_candidat"] and regles[126]["2a_holm"]
+                                   and regles[126]["2b_ecart_economique"] and regles[126]["2c_crises"])
+    out["regles"] = regles
+    return out
+
+
+def replication_harx(t_mid: pd.DataFrame) -> dict:
+    """Règle 2 (d) : même essai sur le S&P MidCap 400, 126 jours ; t ≤ −2 dans le même sens."""
+    r = inf.rapport_dm(_ecart_harx(t_mid).values, H / mh.PAS_ECHANTILLON)
+    return {"dm": r, "replique": bool(r.get("t", 0) <= -2 and r.get("ecart", 0) < 0)}
+
+
+def verdict_harx(c: dict, replication: dict | None = None) -> str:
+    """Verdict selon le § 4.14 (ordre : placebo, candidat, piste, pire, équivalence, sans pouvoir de conclure)."""
+    R = c["regles"]
+    morceaux = []
+    for h in sorted(R, reverse=True):
+        r = R[h]
+        if h not in FAMILLE_HARX:
+            continue
+        if r["1_piste"] and not r["3_placebo_ne_bat_pas_har"]:
+            morceaux.append(f"{h} j : écarté (placebo significatif)")
+        elif h == 126 and r.get("2abc") and replication and replication["replique"] and r["coef_vix_signe_stable"]:
+            morceaux.append(f"{h} j : CANDIDAT")
+        elif r["1_piste"] and r["coef_vix_signe_stable"]:
+            morceaux.append(f"{h} j : piste")
+        elif r["1_piste"]:
+            morceaux.append(f"{h} j : écarté (coefficient du VIX instable)")
+        elif r["4_pire_que_har"]:
+            morceaux.append(f"{h} j : pire que HAR")
+        elif r["5_equivalence"]:
+            morceaux.append(f"{h} j : équivalent à HAR")
+        else:
+            morceaux.append(f"{h} j : sans pouvoir de conclure")
+    return " ; ".join(morceaux)
+
+
+# ------------------------------------------------------------------------------
+# Essai « HAR étendu » (protocole : docs/METHODE.md § 4.15, écrit avant tout code)
+# ------------------------------------------------------------------------------
+COLS_COURS = ["v126", "v252", "rsm22", "x_beta"]        # M1 : informations tirées des cours, au-delà de HAR
+COLS_MARCHE = ["x_vix", "credit_v63", "pente_v63"]      # M2 : marché (options) et macro, décalées au placebo
+N_ESSAIS_ETENDU = 11
+
+
+def variables_cours(market_raw: pd.DataFrame, symboles: list[str]) -> dict[str, pd.DataFrame]:
+    """Tables larges (date × titre), passé seulement : v126, v252, semivariance négative 22 j, β̂² × variance du SPY 22 j, β̂."""
+    m = market_raw[market_raw["symbol"].isin(set(symboles) | {mh.INDICE})]
+    px = m.pivot_table(index="date", columns="symbol", values="close").sort_index().ffill(limit=5)
+    ret = px.pct_change()
+    beta = beta_brut(ret)
+    r2 = ret.pow(2)
+    var_m22 = r2[mh.INDICE].rolling(22).mean()
+    out = {"v126": r2.rolling(126).mean(), "v252": r2.rolling(252).mean(),
+           "rsm22": r2.where(ret < 0, 0.0).where(ret.notna()).rolling(22).mean(),
+           "x_beta": beta.pow(2).mul(var_m22, axis=0), "beta": beta}
+    return {k: v.drop(columns=[mh.INDICE]) for k, v in out.items()}
+
+
+def ajouter_etendu(data: pd.DataFrame, tables: dict[str, pd.DataFrame], vix: pd.Series, macro: pd.DataFrame,
+                   decalage: int = 0) -> pd.DataFrame:
+    """Ajoute les variables de M1 et M2. `macro` : colonnes credit (BAA10Y) et pente (T10Y2Y), au jour de publication ;
+    on prend la valeur de la VEILLE. `decalage` (placebo) ne touche que VIX, crédit et pente."""
+    dates = pd.DatetimeIndex(np.sort(data["date"].unique()))
+    out = data.drop(columns=COLS_COURS + ["credit_v63", "pente_v63"], errors="ignore")
+    for nom in COLS_COURS:
+        s = tables[nom].reindex(dates).stack(future_stack=True).rename(nom)
+        s.index.names = ["date", "symbol"]
+        out = out.merge(s.reset_index(), on=["date", "symbol"], how="left")
+    out = ajouter_x_vix(out, tables["beta"], vix, decalage)
+    for col in ["credit", "pente"]:
+        f = macro[col].dropna().sort_index().shift(1)                   # valeur connue la veille (publication)
+        f = f.shift(decalage) if decalage else f
+        f = f.reindex(f.index.union(dates)).ffill(limit=5).reindex(dates)
+        out[f"{col}_v63"] = out["date"].map(f) * out["v63"]
+    return out
+
+
+def modeles_etendus(data: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, list[str]]]:
+    """Indicatrices de secteur (si `secteur` existe) et listes de variables de HAR, M1 et M2."""
+    sect = []
+    if "secteur" in data.columns and data["secteur"].nunique() > 1:
+        dums = pd.get_dummies(data["secteur"], prefix="sect", drop_first=True).astype(float)
+        data = pd.concat([data.drop(columns=[c for c in data.columns if c.startswith("sect_")]), dums], axis=1)
+        sect = list(dums.columns)
+    m1 = COLS_HAR + COLS_COURS + sect
+    return data, {"har": COLS_HAR, "m1": m1, "m2": m1 + COLS_MARCHE}
+
+
+def walk_forward_lineaire(data: pd.DataFrame, modeles: dict[str, list[str]], h: int = H) -> pd.DataFrame:
+    """Plusieurs modèles linéaires ajustés sur les MÊMES lignes du passé (fenêtres et embargo de `walk_forward`).
+    Colonnes ajoutées : lvl_<nom>, fenetre. Coefficients par fenêtre dans `attrs["coefs"]`."""
+    toutes = sorted({c for cols in modeles.values() for c in cols})
+    d = data[np.isfinite(data[toutes + ["brut"]].astype(float)).all(axis=1) & (data["brut"] > 0)]
+    dates = np.sort(data["date"].unique())
+    bornes = np.array_split(dates[len(dates) // 3:], mh.N_FENETRES)
+    embargo = pd.Timedelta(days=int(h * 7 / 5) + 1)
+    sorties, coefs = [], {}
+    for k, bloc in enumerate(bornes):
+        debut = pd.Timestamp(bloc[0])
+        train = d[d["date"] < debut - embargo]
+        test = d[d["date"].isin(bloc)].copy()
+        if len(train) < 2000 or test.empty:
+            continue
+        coefs[k] = {}
+        for nom, cols in modeles.items():
+            c = _mco(train, cols)
+            test[f"lvl_{nom}"] = _prevoir(test, cols, c)
+            coefs[k][nom] = dict(zip(["constante"] + cols, map(float, c)))
+        test["fenetre"] = k
+        sorties.append(test)
+    out = pd.concat(sorties, ignore_index=True) if sorties else pd.DataFrame()
+    out.attrs["coefs"] = coefs
+    return out
+
+
+def _dm_cols(t: pd.DataFrame, a: str, b: str, h: int, t_b: pd.DataFrame | None = None) -> dict:
+    """DM de QLIKE(a) − QLIKE(b) par date (d < 0 : a meilleur). `t_b` : autre tableau pour b (placebo)."""
+    d = (_pertes_par_date(t, a) - _pertes_par_date(t if t_b is None else t_b, b)).dropna()
+    r = inf.rapport_dm(d.values, h / mh.PAS_ECHANTILLON)
+    fen = t.groupby("date")["fenetre"].first().reindex(d.index)
+    par_fen = d.groupby(fen).mean()
+    r["par_fenetre"] = {int(k): float(v) for k, v in par_fen.items()}
+    r["fenetres_negatives"] = int((par_fen < 0).sum())
+    return r
+
+
+def comparer_etendu(t: pd.DataFrame, tp: pd.DataFrame, h: int = H) -> dict:
+    """Règles 1 à 6 du § 4.15. `t` : vraies variables ; `tp` : placebo (marché et macro décalés de 252 jours)."""
+    prim = _dm_cols(t, "lvl_m2", "lvl_har", h)
+    out = {"m2_contre_har": prim,
+           "m1_contre_har": _dm_cols(t, "lvl_m1", "lvl_har", h),
+           "m2_contre_m1": _dm_cols(t, "lvl_m2", "lvl_m1", h),
+           "placebo_contre_m1": _dm_cols(tp, "lvl_m2", "lvl_m1", h),
+           "m2_contre_placebo": _dm_cols(t, "lvl_m2", "lvl_m2", h, t_b=tp),
+           "qlike": {m: float(_pertes_par_date(t, f"lvl_{m}").mean()) for m in ("har", "m1", "m2")},
+           "n_essais_total": N_ESSAIS_ETENDU, "t_max_attendu": inf.t_max_attendu(N_ESSAIS_ETENDU)}
+    crises = {}
+    for nom, (d0, d1) in CRISES.items():
+        g = t[(t["date"] >= pd.Timestamp(d0)) & (t["date"] <= pd.Timestamp(d1))]
+        if g["date"].nunique() >= 3:
+            qh = _pertes_par_date(g, "lvl_har").mean()
+            crises[nom] = {m: float(_pertes_par_date(g, f"lvl_{m}").mean() / qh) for m in ("m1", "m2")} | {"n_dates": int(g["date"].nunique())}
+    out["crises_ratio_sur_har"] = crises
+    mse = {m: float(((t[f"lvl_{m}"] - t["brut"]) ** 2).mean()) for m in ("har", "m1", "m2")}
+    out["r2_hors_echantillon_sur_har"] = {m: 1 - mse[m] / mse["har"] for m in ("m1", "m2")}
+    tt = t.assign(rel=t["brut"])
+    out["ic"] = {m: float(mh._ic_par_date(tt, f"lvl_{m}").mean()) for m in ("har", "m1", "m2")}
+    out["calibration"] = {m: calibration(t, f"lvl_{m}") for m in ("har", "m1", "m2")}
+    coefs = t.attrs.get("coefs", {})
+    out["coefs_m2_par_fenetre"] = {int(k): v.get("m2", {}) for k, v in coefs.items()}
+    signes = {}
+    for k, v in out["coefs_m2_par_fenetre"].items():
+        for var, c in v.items():
+            if not var.startswith("sect_") and var != "constante":
+                signes.setdefault(var, set()).add(int(np.sign(c)))
+    out["variables_signe_instable"] = sorted(var for var, s in signes.items() if len(s) > 1)
+    ratios = [crises.get(k, {}).get("m2") for k in ("2008-2009 (crise financière)", "2020 (Covid)")]
+    tval = prim.get("t", 0.0)
+    out["regles"] = {
+        "1_piste": bool(tval <= -2 and prim.get("ecart", 0) < 0 and prim["fenetres_negatives"] >= 3),
+        "2a_p": bool(prim.get("p_unilateral_A_meilleur", 1.0) < ALPHA_HARX),
+        "2b_ecart_economique": bool(prim.get("ecart", 0) <= -MARGE_EQUIVALENCE),
+        "2c_crises": bool(all(x is not None and x <= SEUIL_CRISE_HARX for x in ratios)),
+        "2d_mde": bool(prim.get("mde_80", 1.0) <= MDE_MAX_HARX),
+        "3_placebo_ne_bat_pas_m1": bool(out["placebo_contre_m1"].get("t", 0.0) > -2),
+        "4_pire_que_har": bool(tval >= 2),
+    }
+    R = out["regles"]
+    R["2abcd"] = bool(R["2a_p"] and R["2b_ecart_economique"] and R["2c_crises"] and R["2d_mde"])
+    return out
+
+
+def verdict_etendu(c: dict, replication: dict | None = None) -> str:
+    """Verdict du § 4.15 (règles 1 à 5) ; la lecture fine (M1, M2 contre M1) est dans les constats."""
+    R = c["regles"]
+    m1 = c["m1_contre_har"]
+    m2m1 = c["m2_contre_m1"]
+    suffixe = " ; marché et macro écartés (placebo bat M1)" if not R["3_placebo_ne_bat_pas_m1"] else ""
+    if c["variables_signe_instable"] and R["1_piste"]:
+        suffixe += " ; signes instables : " + ", ".join(c["variables_signe_instable"])
+    if R["4_pire_que_har"]:
+        return "M2 pire que HAR" + suffixe
+    if R["2abcd"] and replication and replication["replique"] and R["3_placebo_ne_bat_pas_m1"]:
+        return "M2 CANDIDAT" + suffixe
+    if R["1_piste"]:
+        source = ("marché et macro" if R["3_placebo_ne_bat_pas_m1"] and m2m1.get("t", 0) <= -2 else "cours (M1)"
+                  if m1.get("t", 0) <= -2 else "non attribuée")
+        return f"M2 piste (gain attribué : {source})" + suffixe
+    return "sans pouvoir de conclure" + suffixe if c["m2_contre_har"].get("mde_80", 1) > MDE_MAX_HARX else "M2 ne bat pas HAR" + suffixe
+
+
+def replication_etendu(t_mid: pd.DataFrame) -> dict:
+    r = _dm_cols(t_mid, "lvl_m2", "lvl_har", H)
+    return {"dm": r, "replique": bool(r.get("t", 0) <= -2 and r.get("ecart", 0) < 0)}

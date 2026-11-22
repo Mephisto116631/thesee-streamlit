@@ -641,7 +641,88 @@ Essai `examen_ia_contre_har`, 2008-2026, 919 dates, membres du S&P 500 à chaque
   **5 jours** devient un horizon de **constat** (le seul où le MDE mesuré est < 0,04), sans entrer dans la famille confirmatoire (126 et 22 jours).
   Le MDE de HAR-X sera rapporté à chaque horizon. Si à 126 et 22 jours il dépasse 0,03, l'essai sera déclaré « sans pouvoir de conclure »
   (§ 4.12, règle 2) quel que soit t.
+  *Précision du 21/11/2026, avant tout code* : « quel que soit t » contredit la règle v2 n° 2, qui dit qu'un essai peu puissant « ne peut produire
+  qu'une piste ». On applique la règle v2 : un horizon dont le MDE dépasse 0,03 ne peut être ni **candidat** ni **équivalent**, mais une **piste**
+  (règle 1 du § 4.14) y reste possible. Si aucune piste n'apparaît, le verdict est « sans pouvoir de conclure ». Les autres règles sont inchangées.
+  *Mise en œuvre* : la réplication sur le S&P MidCap 400 (règle 2 d) n'est calculée que si les règles 2 (a) à (c) sont réunies ; sinon elle ne
+  changerait pas le verdict, et l'essai économise ~15 minutes de téléchargement.
+  *Précision du 22/11/2026, 20 h 00 UTC, code écrit mais AVANT tout lancement et tout résultat* :
+  (1) HAR et HAR-X sont ajustés sur les **mêmes lignes** du passé, celles où β̂ et le VIX existent. Seule la variable x les sépare.
+  (2) **Défaut prévisible du placebo** (vu en test sur données simulées) : x = β̂² × VIX² porte **aussi le bêta**, une information propre au
+  titre et tirée des cours. Le placebo (VIX d'un an plus tôt) garde ce bêta. Si le bêta seul aide, le placebo battra HAR et la règle 3
+  écartera HAR-X **même si le VIX aide aussi**. La règle 3 reste appliquée **telle qu'écrite** (pas de changement de règle). On ajoute un
+  **constat** : HAR-X contre son placebo (même bêta, VIX au bon moment ou un an trop tôt). C'est la mesure propre de l'apport du VIX.
+  Lecture fixée à l'avance : placebo significatif **et** HAR-X nettement meilleur que son placebo (t ≤ −2) veut dire « le bêta aide, et le
+  VIX semble aider en plus ». Cela reste écarté ici, mais c'est la question que tranche le § 4.15.
+  (3) Nombre total d'essais pour `t_max_attendu` : **10** (8 jusqu'au § 9, plus le multi-horizon, plus HAR-X).
 - **Résultats** : § 11.
+
+### 4.15 Conseils externes (revue du 22/11/2026) et essai « HAR étendu » (protocole écrit AVANT tout code et tout résultat de HAR-X ; règles v2 du § 4.12)
+
+**Revue des conseils reçus (Gemini, 22/11/2026), point par point, contre l'état du projet**
+
+| Conseil | État chez Thésée | Décision |
+|---|---|---|
+| Cible = variance moyenne sur tout l'intervalle [t+1, t+h], pas un point isolé | **Déjà le cas** : `brut` = écart-type des rendements de t+1 à t+h, annualisé (`modele_risque.cible_risque`) | Rien à changer |
+| Correction de Jensen si on modélise log(RV) | HAR travaille en variance (pas de log) ; seule la variante B (§ 8) travaillait en log, et elle est écartée | Rien à changer |
+| Ridge / ElasticNet en panel | HAR est **déjà estimé en panel** (tous les titres ensemble). Avec ~300 000 lignes pour ~15 variables, une pénalité ne change presque rien | Moindres carrés gardés ; effets fixes de secteur **testés** (§ 4.15) |
+| HAR étendu : retards 126 et 252 jours, semivariance négative, VIX, VRP, pente des taux, écart de crédit | Seul le VIX est protocolé (§ 4.14) | **Testé en un seul modèle** (§ 4.15) |
+| VIX à 6 mois / 1 an (`^VIX6M`, `^VIX1Y`) | Séries qui commencent vers 2007-2008 : l'entraînement commence en 1998 | Écarté (historique trop court) ; `^VIX` seul |
+| Écart de crédit à haut rendement (HY OAS, ICE) | FRED ne diffuse plus que ~3 ans d'historique de ces séries | Remplacé par `BAA10Y` (depuis 1986), déjà utilisé par le modèle de régime |
+| GARCH-MIDAS | GARCH(1,1) a déjà perdu contre HAR (§ 6.1) ; la part « macro lente » est couverte par le crédit et la pente du § 4.15 | Non retenu |
+| Changement de régime (Markov-Switching HAR, HMM) | Le modèle de régime de marché n'a pas battu le hasard (AUC 52 %) | Non retenu |
+| Prévision itérée (pas journalier, puis itération jusqu'à h) | Résultats mitigés dans la littérature (Marcellino, Stock et Watson 2006) ; ajouterait un essai | Non retenu pour l'instant (pourrait être protocolé plus tard) |
+| Horizon 252 jours | Le produit révise tous les 6 mois ; à 1 an, il n'y aurait que ~18 périodes indépendantes, donc encore moins de puissance qu'à 126 jours (MDE ≈ 0,2 pour B) | Non testé |
+| Données point-in-time, normalisation dans le pli, walk-forward avec embargo = h | **Déjà le cas** (membres du S&P 500 à la date, ajustements sur le passé, embargo = horizon) ; FRED décalé d'un jour (publication) au § 4.15 | Rien à changer |
+| QLIKE log σ̂² + σ²/σ̂² | Même perte à une constante près (la nôtre vaut 0 si la prévision est parfaite) : mêmes écarts, mêmes tests | Rien à changer |
+| Diebold-Mariano avec Newey-West + correction de Harvey-Leybourne-Newbold | Chevauchement très fort (126 jours, une date par semaine) : Newey-West sous-estime alors l'erreur. On utilise **EWC + loi de Student** (Lazarus, Lu, Stock et Watson 2018), mieux calibré dans ce cas | Gardé |
+| R² hors échantillon contre HAR, analyse calme / stress | Crises déjà rapportées | R² hors échantillon ajouté en **constat** |
+| Refonte en modules (`src/models`, `backtest.py`…) | Les modules existants (`examen_risque`, `inference`, `experiences`) ont produit tous les résultats publiés ; les refondre maintenant romprait la reproductibilité | Reporté |
+
+**Ce que ces conseils ne règlent pas** : le frein principal est la **puissance**, pas le choix du modèle. Il y a ~36 semestres indépendants
+depuis 2008, et le MDE à 126 jours vaut 0,05 (modèles proches de HAR) à 0,20 (modèles éloignés). Tester cinq familles de modèles ajouterait
+cinq essais (seuil plus haut, `t_max_attendu`) sans ajouter de données. D'où **un seul** modèle ci-dessous, qui regroupe les variables
+proposées, et une décomposition pour savoir d'où viendrait un gain.
+
+**Essai « HAR étendu »**
+- **Question** : les cours passés au-delà de HAR (M1), puis l'information de marché tournée vers l'avenir ou macro (M2), améliorent-ils le
+  niveau prévu à **126 jours** ?
+- **Modèles** (moindres carrés sur le passé, en variance, cible `brut² / 252`, même garde-fou `v63 × 0,25`, aucun réglage) :
+  - **HAR** : v1, v5, v22, v63.
+  - **M1 = HAR + cours** : v126 et v252 (moyennes de r² sur 126 et 252 jours) ; semivariance négative sur 22 jours (moyenne de r² les jours
+    de baisse ; version quotidienne de Patton et Sheppard 2015) ; `x_beta = β̂² × variance quotidienne du SPY sur 22 jours` (part « marché »
+    vue par les cours) ; indicatrices de secteur (secteur actuel : limite reconnue).
+  - **M2 = M1 + marché et macro** : `x_vix` du § 4.14 ; `credit × v63` et `pente × v63` (BAA10Y et T10Y2Y, FRED, valeur de la **veille**).
+    La macro module ainsi le niveau propre de chaque titre. Le VRP n'est pas ajouté : β̂² × VRP = `x_vix − x_beta`, déjà combinaison des
+    deux variables présentes.
+- **Statistique primaire** (un seul test) : `d_t = QLIKE_M2 − QLIKE_HAR` par date, à 126 jours, `inference.rapport_dm`.
+- **Règles de décision, fixées AVANT l'essai**
+  1. **Piste** : t ≤ −2, et d moyen < 0 dans au moins 3 des 4 fenêtres.
+  2. **Candidat** : (a) p unilatéral < 0,5 % ; (b) écart ≤ −0,01 ; (c) ratio de QLIKE M2 / HAR ≤ 1,10 en 2008-2009 **et** en 2020 ; (d) MDE ≤ 0,03 ;
+     (e) réplication sur le S&P MidCap 400 avec t ≤ −2 (sans indicatrices de secteur, faute de secteurs ; calculée seulement si (a) à (d) tiennent).
+  3. **Placebo** : M2 dont les seules variables de marché et macro (VIX, crédit, pente) sont **décalées de 252 jours**. Il garde la forme et les
+     degrés de liberté de M2, mais l'information arrive au mauvais moment. **Règle** : le placebo ne doit pas battre M1 (t > −2). Sinon le gain
+     de M2 sur M1 vient des degrés de liberté, pas de l'information : la part « marché et macro » est écartée. On garde alors au mieux M1,
+     comme piste.
+  4. **Pire que HAR** si t ≥ +2.
+  5. **Constats** : M1 contre HAR et M2 contre M1 (DM), M2 contre son placebo, coefficients par fenêtre (signe stable ?), biais médian, IC,
+     ratio par crise (dont 2022), R² hors échantillon par rapport à HAR (1 − MSE / MSE_HAR), `t_max_attendu` pour **11** essais.
+  6. Un candidat est **proposé** au remplacement du niveau de l'hybride. Rien ne change dans l'appli sans décision écrite de l'utilisateur et PR séparée.
+- **Puissance annoncée a priori** : M2 reste proche de HAR, donc on attend un MDE de l'ordre de 0,05 (comme HAR × k au § 9). La règle 2 (d)
+  rend « candidat » improbable. L'issue la plus probable si les variables aident : une **piste**.
+- **Lecture (à l'avance)**
+
+| Observation | Conclusion |
+|---|---|
+| M1 bat HAR, M2 ne bat pas M1 | Les cours ont encore de l'information (retards longs, baisses, bêta) ; le marché et la macro n'ajoutent rien de visible |
+| M2 bat M1, placebo ne bat pas M1 | Le VIX ou la macro apportent une vraie information d'avenir |
+| Placebo bat M1 | Gain de degrés de liberté : part « marché et macro » écartée |
+| Rien ne bat HAR, MDE > 0,03 | Sans pouvoir de conclure : HAR reste, et les données publiques ne permettent pas de trancher à 6 mois |
+| Coefficients de signe changeant selon les fenêtres | Relation instable : écarté |
+
+- **Limites** : secteur actuel (pas historique) ; semivariance quotidienne (pas intrajournalière) ; un seul VIX pour tous les titres ; FRED peut
+  réviser `BAA10Y` (rare, données de marché) ; midcaps sans composition historique.
+- **Résultats** : § 12.
 
 ---
 
@@ -794,3 +875,115 @@ La seule voie restante est une **information nouvelle** : l'essai HAR-X (§ 4.14
 Le multi-horizon est retiré des essais lancés par défaut : c'était un essai de recherche ponctuel, pas un re-test du produit. Le relancer chaque mois
 reviendrait à regarder plusieurs fois la même hypothèse.
 
+
+---
+
+## 11. Résultats de l'essai « HAR-X : HAR + VIX » (PR #28, lot du 22/11/2026 20:10 UTC, run n° 45)
+
+Protocole : § 4.14 avec son additif (14 h 10) et ses deux précisions (21/11 et 22/11, 20 h 00), toutes commitées avant le lancement. 488 titres,
+cours depuis 1999 ; 919 à 935 dates de test selon l'horizon, du 20/02/2008, 4 fenêtres, membres du S&P 500 à chaque date. Journaux sans
+`[LABO][ERREUR]`. Durée : 89 s (moindres carrés seulement). Réplication midcaps non calculée (règles 2 (a) à (c) non réunies à 126 jours).
+
+### 11.1 Règles de décision (§ 4.14) — d = QLIKE(HAR-X) − QLIKE(HAR) ; < 0 : HAR-X meilleur
+
+| Règle | 126 jours (primaire) | 22 jours (secondaire) |
+|---|---|---|
+| 1. Piste : t ≤ −2 et d < 0 dans ≥ 3 fenêtres sur 4 | t = −0,86 ; 3/4 → **non** | t = **−3,20** ; **4/4** → **oui** |
+| 2 (a). p unilatéral corrigé par Holm < 0,5 % | p = 0,20 → non | p = 0,0014 < 0,0025 (seuil Holm) → rejet (constat : la règle 2 ne vise que 126 j) |
+| 2 (b). Écart ≤ −0,01 | −0,013 → oui | −0,029 |
+| 2 (c). Ratio de QLIKE ≤ 1,10 en 2008-2009 et 2020 | 0,89 et 1,01 → oui | 0,79 et 0,99 |
+| Additif : MDE ≤ 0,03 (sinon ni candidat ni équivalence) | MDE **0,045** → non | MDE 0,026 → oui |
+| 3. Placebo (VIX d'un an plus tôt) ne bat pas HAR : t > −2 | t = +0,62 → oui | t = +1,19 → oui |
+| 4. Pire que HAR : t ≥ +2 | non | non |
+| Coefficient du VIX de signe stable | oui (0,40 à 0,60) | oui (0,72 à 0,83) |
+| **Verdict** | **Sans pouvoir de conclure** | **Piste** |
+
+À 5 jours (constat) : écart +0,003, t = +0,24, MDE 0,041. Rien.
+
+### 11.2 Constats
+
+| Mesure | 126 jours | 22 jours |
+|---|---|---|
+| QLIKE HAR → HAR-X | 0,3327 → 0,3195 (−4 %) | 0,3574 → 0,3286 (**−8 %**) |
+| IC 95 % de l'écart | [−0,045 ; +0,019] | [−0,047 ; −0,011] |
+| Écart par fenêtre | −0,013 ; −0,053 ; **+0,029** ; −0,016 | −0,012 ; −0,082 ; −0,009 ; −0,011 |
+| HAR-X contre son placebo (apport du VIX lui-même, précision du 22/11) | −0,021, t = −1,18 | **−0,040, t = −3,51** |
+| Part de la variance prévue venant du VIX (médiane, par fenêtre) | 10 à 22 % | — |
+| Biais médian prévu / réel | HAR +27 % → HAR-X +25 % | — |
+| Part de sous-estimations | 23 % → 24 % | — |
+| IC (ordre des titres) | 74,8 % → 75,9 % | — |
+| Ratio de QLIKE par crise (< 1 : HAR-X meilleur) | 2008-09 0,89 ; 2011 1,15 ; 2015-16 0,93 ; fin 2018 1,00 ; 2020 1,01 ; 2022 0,89 | 2008-09 0,79 ; 2011 0,92 ; 2015-16 0,97 ; fin 2018 **1,30** ; 2020 0,99 ; 2022 0,95 |
+
+`t_max_attendu` pour 10 essais : 1,57. Le t de 22 jours (−3,20) le dépasse nettement ; celui de 126 jours (−0,86) non.
+
+### 11.3 Lecture, selon la grille écrite à l'avance (§ 4.14)
+- **22 jours : piste solide.** C'est le **premier résultat significatif sur le niveau** de tout le laboratoire. Il passe même les critères qui seraient ceux d'un
+  candidat à cet horizon : p corrigé par Holm < 0,5 %, écart économique, 4 fenêtres sur 4, coefficient stable, placebo propre, crises sans dégât sauf fin 2018.
+  Le constat HAR-X contre placebo (t = −3,51) montre que le gain vient bien **du VIX au bon moment**, pas du bêta que porte aussi la variable.
+  Ligne de la grille : « Piste à 22 jours seulement → le VIX aide à 1 mois, pas prouvé à 6 mois ; pourrait servir un risque à court terme affiché (à protocoler) ».
+- **126 jours : sans pouvoir de conclure.** Le sens est le même (−4 %, 3 fenêtres sur 4, pas pire en crise), mais l'écart ne fait que 29 % du MDE.
+  C'est ce que prévoyait la littérature : le VIX anticipe 30 jours, son information s'use sur 6 mois.
+- **5 jours : rien.** La volatilité réalisée sur 5 jours est trop bruitée.
+- **Défaut prévisible du placebo (précision du 22/11)** : il ne s'est pas produit (placebo t > 0 aux deux horizons). Le bêta seul n'apporte rien au-delà de HAR.
+
+### 11.4 Décision
+Aucun changement de l'appli : à 126 jours (l'horizon du produit), HAR-X n'est pas candidat. Le niveau de l'hybride reste HAR.
+Une utilisation à 1 mois (« risque du mois à venir ») demanderait son propre protocole, avec réplication sur les midcaps, et la décision de l'utilisateur.
+
+### 11.5 Limites
+Un seul VIX pour tous les titres ; bêta sur 1 an ; n effectif 54 à 126 jours ; données Yahoo (reproductibilité à la 3ᵉ-4ᵉ décimale, § 9).
+
+---
+
+## 12. Résultats de l'essai « HAR étendu » (PR #28, même lot et même run que le § 11)
+
+Protocole : § 4.15, commité avant tout code et tout résultat de HAR-X. 919 dates de test à 126 jours, du 20/02/2008. Réplication midcaps non calculée.
+
+### 12.1 Règles de décision (§ 4.15) — d = QLIKE(M2) − QLIKE(HAR)
+
+| Règle | Résultat | Verdict |
+|---|---|---|
+| 1. Piste : t ≤ −2, ≥ 3 fenêtres sur 4 | t = −0,23 ; 2/4 | **Non** |
+| 2. Candidat (a) à (e) | p = 0,41 ; écart −0,006 ; crises 1,28 (2008-09) et 1,25 (2020) ; MDE 0,076 | **Non** (toutes échouent) |
+| 3. Placebo (VIX, crédit, pente d'un an plus tôt) ne bat pas M1 | t = **−2,28** | **Échec** : part « marché et macro » écartée |
+| 4. Pire que HAR | t = −0,23 | Non |
+| **Verdict** | | **Sans pouvoir de conclure ; marché et macro écartés** |
+
+### 12.2 Constats
+
+| Mesure | HAR | M1 (HAR + cours) | M2 (M1 + VIX, crédit, pente) |
+|---|---|---|---|
+| QLIKE | 0,3327 | 0,3332 | 0,3267 |
+| Contre HAR (t) | — | +0,04 | −0,23 |
+| R² hors échantillon par rapport à HAR | — | **−4,6 %** | **−6,6 %** |
+| IC (ordre des titres) | **74,8 %** | 65,5 % | 67,7 % |
+| Ratio de QLIKE 2008-09 / 2020 | 1 / 1 | 1,08 / 1,04 | **1,28 / 1,25** |
+
+- M2 contre M1 : t = −0,38. M2 contre son placebo : t = **+1,03** (M2 fait **moins bien** que sa version au mauvais moment).
+- Variables de signe changeant selon les fenêtres : crédit, v1, v252, bêta² × marché. Le poids de v63 passe de 0,74 (fenêtre 1) à 0,19 (fenêtre 4) :
+  les retards longs (v63, v126, v252) se disputent la même information.
+- Biais médian de M2 : +21 % (HAR : +27 %).
+
+### 12.3 Lecture, selon la grille écrite à l'avance (§ 4.15)
+- **M1 ne bat pas HAR** (t = +0,04) : les retards longs, la variance des baisses, le bêta et les secteurs n'apportent rien que HAR n'ait déjà.
+- **Placebo qui bat M1** : le crédit et la pente agissent comme des **niveaux lents** (ils changent peu en un an), pas comme une information d'avenir.
+  C'est un gain de degrés de liberté, et la grille l'écarte. M2 fait d'ailleurs moins bien que son placebo.
+- **Coefficients instables, R² négatif, crises plus mauvaises (×1,25 à ×1,28), ordre dégradé (−7 à −9 points d'IC)** : signature d'un modèle trop riche
+  pour ~36 semestres indépendants. **Ajouter des variables a coûté, pas rapporté.**
+- Comparé au § 11 : le VIX seul (HAR-X) est meilleur que le VIX noyé parmi dix variables (M2).
+
+### 12.4 Décision
+Aucun changement. Les conseils externes du § 4.15 (« HAR étendu ») sont testés et **non retenus**.
+
+### 12.5 Bilan des cinq essais sur le niveau (§§ 8 à 12)
+
+| Essai | Information ajoutée | 126 jours | 22 jours |
+|---|---|---|---|
+| XGBoost sur HAR (§ 8) | cours passés, non linéaire | sans preuve, pire en crise | — |
+| HAR × k (§ 9) | correction d'échelle | sans preuve | — |
+| Multi-horizon (§ 10) | cours passés, 4 horizons | sans pouvoir de conclure | sans pouvoir de conclure |
+| HAR-X (§ 11) | VIX | sans pouvoir de conclure (même sens) | **piste solide** (t −3,20) |
+| HAR étendu (§ 12) | cours + VIX + macro | sans pouvoir de conclure, pire en crise | — |
+
+À 6 mois, **HAR reste le meilleur niveau qu'on puisse justifier**. Les données publiques ne permettent pas de faire mieux de façon prouvable, et les modèles
+plus riches font pire en crise. La seule information qui aide vraiment est le VIX, et seulement à 1 mois.
