@@ -223,3 +223,57 @@ def test_multi_horizon_mecanique_et_placebo():
     assert {"aspa", "par_horizon", "holm", "regles", "blocs_negatifs", "placebo"} <= set(c)
     assert set(c["par_horizon"]) == {5, 22} and c["aspa"]["mde_80"] > 0
     assert not (c["regles"]["1_piste"] and c["regles"]["2_fuite_probable"])
+
+
+def _marche_vix(graine: int = 0, n_titres: int = 40, n_dates: int = 900):
+    """Échantillon hebdomadaire : la variance future du marché est connue du VIX (options), pas des cours passés."""
+    rng = np.random.default_rng(graine)
+    dates = pd.date_range("2000-01-07", periods=n_dates, freq="W-FRI")
+    sig_m = np.clip(0.01 * np.exp(rng.normal(0, 0.5, n_dates)), 0.004, 0.05)        # vol quotidienne du marché à venir
+    vix = pd.Series(100 * sig_m * np.sqrt(252), index=dates)
+    syms = [f"T{i:02d}" for i in range(n_titres)]
+    betas = rng.uniform(0.5, 1.6, n_titres)
+    idio = rng.uniform(0.008, 0.02, n_titres)
+    rows = []
+    for k, d in enumerate(dates):
+        passe = sig_m[max(0, k - 1)]                                                   # les cours ne voient que le passé
+        for s, b, e in zip(syms, betas, idio):
+            v_passe = b ** 2 * passe ** 2 + e ** 2
+            v_fut = b ** 2 * sig_m[k] ** 2 + e ** 2
+            bruit = lambda: np.exp(rng.normal(0, 0.2))
+            rows.append({"date": d, "symbol": s, "v1": v_passe * bruit() ** 3, "v5": v_passe * bruit() ** 2,
+                         "v22": v_passe * bruit(), "v63": v_passe, "brut": np.sqrt(v_fut * 252) * bruit()})
+    beta = pd.DataFrame(np.tile(betas, (n_dates, 1)), index=dates, columns=syms)
+    return pd.DataFrame(rows), beta, vix
+
+
+def test_harx_detecte_un_vix_informatif_et_pas_le_placebo():
+    data, beta, vix = _marche_vix()
+    d0 = ex.ajouter_x_vix(data, beta, vix)
+    dp = ex.ajouter_x_vix(data, beta, vix, decalage=ex.DECALAGE_PLACEBO_VIX)
+    assert np.isclose(d0["x_vix"].iloc[0], beta.iloc[0, 0] ** 2 * (vix.iloc[0] / 100) ** 2 / 252)
+    t0 = ex.walk_forward_harx(d0, h=22)
+    tp = ex.walk_forward_harx(dp, h=22)
+    assert {"lvl_har", "lvl_harx", "fenetre", "coef_vix"} <= set(t0.columns)
+    c = ex.comparer_harx({22: t0}, {22: tp})
+    r = c["horizons"][22]
+    assert r["dm"]["t"] < -2 and r["fenetres_negatives"] >= 3          # le vrai VIX aide nettement
+    assert r["placebo"]["t"] > r["dm"]["t"]                             # le VIX d'un an plus tôt aide beaucoup moins
+    assert c["regles"][22]["1_piste"] and c["regles"][22]["coef_vix_signe_stable"]
+    assert "22 j : piste" in ex.verdict_harx(c)
+
+
+def test_harx_vix_sans_information_ne_fait_pas_mieux():
+    data, beta, vix = _marche_vix(graine=3)
+    rng = np.random.default_rng(9)
+    bidon = pd.Series(rng.permutation(vix.values), index=vix.index)    # même loi, aucun lien avec l'avenir
+    t = ex.walk_forward_harx(ex.ajouter_x_vix(data, beta, bidon), h=22)
+    c = ex.comparer_harx({22: t}, {})
+    assert c["horizons"][22]["dm"]["t"] > -2 and not c["regles"][22]["1_piste"]
+
+
+def test_beta_brut_retrouve_le_beta():
+    rng = np.random.default_rng(1)
+    rm = pd.Series(rng.normal(0, 0.01, 600))
+    ret = pd.DataFrame({"SPY": rm, "A": 1.5 * rm + rng.normal(0, 0.002, 600)})
+    assert abs(ex.beta_brut(ret)["A"].iloc[-1] - 1.5) < 0.05
