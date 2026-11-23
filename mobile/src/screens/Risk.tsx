@@ -12,7 +12,7 @@ export function Risk({ tab, go }: { tab: "credit" | "ia"; go: (h: string) => voi
       <header class="screen-head">
         <div><h1>{tab === "credit" ? "Le marché est-il nerveux ?" : "Les modèles IA sont-ils fiables ?"}</h1></div>
         <RefreshButton />
-        <HelpButton keys={tab === "credit" ? ["spread_pct", "z_score"] : []}
+        <HelpButton keys={tab === "credit" ? ["spread_pct", "z_score", "spread_hy", "spread_ig", "rating_sp"] : ["volatilite_prevue", "har", "ic", "qlike", "force_preuve", "walk_forward", "placebo", "pbo"]}
           intro={tab === "credit"
             ? <p>Le <b>spread de crédit</b> est le surcoût annuel que paient les entreprises pour emprunter par rapport à l'État américain.
               Il monte quand les investisseurs ont peur. High Yield = entreprises fragiles (notes BB+ et moins) ; Investment Grade = solides (BBB- et plus).</p>

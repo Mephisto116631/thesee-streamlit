@@ -777,6 +777,27 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
 - **Re-test mensuel** : cet essai remplace celui du § 4.16 dans les re-tests du laboratoire. L'appli suit son dernier verdict.
 - **Résultats** : § 16.
 
+### 4.18 Suivi en conditions réelles du risque du mois à venir (protocole écrit le 23/11/2026, AVANT tout code)
+- **Pourquoi** : les §§ 15 et 16 jugent HAR-X sur le passé. La preuve la plus forte, ce sont des prévisions **enregistrées** au moment où elles sont faites,
+  puis comparées à ce qui arrive : aucune donnée jugée n'a pu servir à l'ajustement. C'est la même idée que le suivi réel de l'IA à 6 mois (§ 6, `suivi_volatilite`).
+- **Enregistrement** : une fois par semaine au plus, le serveur enregistre pour chaque titre publié la prévision HAR-X à 22 séances (`vol_harx`) **et**
+  celle de HAR seul (`vol_har`). Les deux sont ajustées sur les mêmes lignes, et seule la variable VIX les sépare. Table `suivi_risque_mois`
+  (date, titre, vol_harx, vol_har), lecture publique. Rien n'est jamais réécrit après coup.
+- **Jugement** : seules les prévisions dont les 22 séances suivantes sont connues sont jugées. Volatilité réalisée des séances t+1 à t+22
+  (`cible_risque`, comme au laboratoire). Par date, `d_t` = moyenne sur les titres de QLIKE(vol_harx) − QLIKE(vol_har). Test `inference.rapport_dm`, avec un
+  chevauchement de 22/5 dates.
+- **Règles de décision, fixées AVANT les données**
+  1. Tant qu'il y a **moins de 26 dates jugées** (≈ 6 mois) : verdict « en attente », aucune conclusion.
+  2. **t ≤ −2** : « HAR-X meilleur en conditions réelles ».
+  3. **t ≥ +2** : « HAR-X moins bon en conditions réelles ». **Garde-fou** : le risque du mois à venir n'est plus publié, même si le re-test mensuel
+     du laboratoire reste « confirmé ». Le réel prime sur le passé.
+  4. Sinon : « pas de différence détectable » (on continue de publier tant que le laboratoire confirme).
+- **Constats** (pas des conditions) : couverture du mauvais cas 5 % par titre (même calcul que § 4.16 : z de Student à 5 degrés, rendement moyen nul),
+  biais médian, nombre de dates et de titres jugés, date du premier bilan possible.
+- **Écart au plan initial, noté avant le code** : la couverture est mesurée **par titre**, comme au laboratoire, et non sur le portefeuille conseillé.
+  Le portefeuille change à chaque révision et à chaque réglage de l'utilisateur, ce qui rendrait la mesure ambiguë.
+- **Publication** : `model_runs`, kind `risque_mois_reel`. L'appli affiche la ligne « En conditions réelles » dans la carte « Face aux chocs ».
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)

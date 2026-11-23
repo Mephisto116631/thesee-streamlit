@@ -1,0 +1,150 @@
+{
+  "_doc": "Glossaire de l'appli (docs/METHODE.md). Chaque fiche : titre, def (définition), lecture (comment l'interpréter), limites, categorie. Les indicateurs à seuils (couleurs) sont dans ranges.json ; l'écran Glossaire affiche les deux.",
+  "beta": {
+    "categorie": "Portefeuille",
+    "titre": "Bêta (β)",
+    "def": "De combien un titre bouge quand le marché (S&P 500) bouge de 1 %. Mesuré sur 3 ans de cours.",
+    "lecture": "β = 1 : comme le marché. β = 1,5 : 1,5 fois plus (en hausse comme en baisse). β = 0,6 : plus calme que le marché.",
+    "limites": "Le bêta change avec le temps, et souvent augmente pendant les crises (tout baisse ensemble)."
+  },
+  "capm": {
+    "categorie": "Portefeuille",
+    "titre": "CAPM (rentabilité de long terme)",
+    "def": "Capital Asset Pricing Model : rentabilité attendue = taux sans risque + bêta × prime de risque. C'est la récompense moyenne du risque de marché.",
+    "lecture": "Ce n'est pas une prévision : aucun modèle testé ne prévoit les rendements de façon fiable. C'est une hypothèse raisonnable, réglable dans les Paramètres.",
+    "limites": "La prime de risque (5 % par défaut) est une moyenne de très long terme ; sur 1 à 5 ans, le marché peut faire bien mieux ou bien moins bien."
+  },
+  "markowitz": {
+    "categorie": "Portefeuille",
+    "titre": "Frontière efficiente (Markowitz)",
+    "def": "Pour chaque niveau de risque, le portefeuille qui a la meilleure rentabilité de long terme, compte tenu de la façon dont les titres montent et baissent ensemble (covariance).",
+    "lecture": "Chaque point de la courbe est un portefeuille ; le point orange est le tien. Mélanger des titres qui ne baissent pas en même temps réduit le risque sans réduire la rentabilité.",
+    "limites": "Sensible aux rentabilités supposées : c'est pourquoi elles viennent surtout du CAPM (90 %) et peu de l'historique (10 %), avec 20 % maximum par titre."
+  },
+  "diversification": {
+    "categorie": "Portefeuille",
+    "titre": "Gain de diversification",
+    "def": "Écart entre le risque moyen des titres et le risque du portefeuille. Les baisses des uns sont en partie compensées par les autres.",
+    "lecture": "Un portefeuille moins risqué perd moins dans les mauvaises années, ce qui améliore aussi le rendement composé (≈ σ² / 2 de moins perdu chaque année).",
+    "limites": "En crise, les titres baissent souvent ensemble : la diversification aide moins au pire moment."
+  },
+  "revision": {
+    "categorie": "Portefeuille",
+    "titre": "Révision du portefeuille",
+    "def": "Le portefeuille conseillé n'est recalculé qu'aux dates de révision : 1er janvier et 1er juillet (ou 1er janvier seulement). Entre deux, on garde les titres.",
+    "lecture": "Suivre chaque mois la recommandation du jour coûtait environ 180 ordres par an, soit 3 à 5 points de rendement en frais (backtest 2006-2026).",
+    "limites": "Entre deux révisions, on ne rééquilibre que si une ligne dépasse le seuil réglé dans les Paramètres."
+  },
+  "marge_securite": {
+    "categorie": "Portefeuille",
+    "titre": "Marge de sécurité (« Je limite le risque »)",
+    "def": "Le risque visé est un peu plus bas que ta limite, d'un facteur appris sur le passé seulement, parce que le risque réel dépasse souvent le risque prévu.",
+    "lecture": "L'appli affiche la part des semestres où la limite a vraiment été tenue depuis 2008.",
+    "limites": "L'objectif de 70 % des semestres n'est pas toujours atteint : c'est écrit à côté du chiffre."
+  },
+  "student": {
+    "categorie": "Risque",
+    "titre": "Loi de Student (queues épaisses)",
+    "def": "Loi utilisée pour la fourchette de projection et le mauvais cas : elle donne plus de place aux grosses baisses que la loi normale (« courbe en cloche »).",
+    "lecture": "Avec la loi normale, le mauvais cas 5 % était dépassé 8,8 % des fois au backtest ; la loi de Student à 5 degrés de liberté corrige cet excès d'optimisme.",
+    "limites": "Même avec des queues épaisses, un krach exceptionnel peut dépasser le mauvais cas."
+  },
+  "volatilite_prevue": {
+    "categorie": "Risque",
+    "titre": "Volatilité prévue à 6 mois (hybride)",
+    "def": "L'IA de risque classe les titres du plus calme au plus agité ; le niveau vient du modèle HAR. Testée et re-testée chaque mois.",
+    "lecture": "L'IA classe mieux les titres que HAR (IC 78 % contre 75 %) ; HAR prévoit mieux le niveau, surtout en crise.",
+    "limites": "Une prévision n'est jamais une certitude ; si le test mensuel échoue, l'appli revient à la volatilité historique."
+  },
+  "har": {
+    "categorie": "Risque",
+    "titre": "HAR (modèle de Corsi)",
+    "def": "Prévoit la volatilité future à partir de la volatilité des derniers jour, semaine, mois et trimestre, pondérées par une régression sur le passé.",
+    "lecture": "Modèle simple et réputé difficile à battre. Cinq essais (IA, recalibrage, VIX, variables macro) n'ont pas fait mieux de façon prouvable à 6 mois.",
+    "limites": "Il réagit après les chocs, pas avant ; il surestime en moyenne le niveau (prudence)."
+  },
+  "risque_mois": {
+    "categorie": "Risque",
+    "titre": "Risque du mois à venir (HAR + VIX)",
+    "def": "Volatilité prévue sur les 22 prochaines séances par HAR, plus le VIX (ce que le marché des options anticipe), pondéré par le bêta de chaque titre.",
+    "lecture": "Confirmé sur des titres jamais utilisés (S&P MidCap 400) : environ 5 % d'erreur en moins que HAR seul. Re-testé chaque mois et suivi en conditions réelles.",
+    "limites": "Gain faible et presque nul ces dernières années ; prévision prudente (le mauvais cas n'a été dépassé qu'environ 1,5 % des mois). Ne change pas le portefeuille."
+  },
+  "stress_test": {
+    "categorie": "Risque",
+    "titre": "Stress test (crises rejouées)",
+    "def": "Ce que ton portefeuille d'aujourd'hui aurait perdu du sommet au creux du marché lors des grandes crises (2008, 2011, 2015-16, fin 2018, 2020, 2022), avec les mêmes poids.",
+    "lecture": "Ce n'est pas une prévision : c'est ce qui s'est passé. Demande-toi si tu supporterais cette baisse sans vendre.",
+    "limites": "Seuls les titres d'aujourd'hui sont rejoués (les faillites de l'époque n'y sont pas) ; dividendes non comptés ; titre absent à l'époque estimé par son bêta."
+  },
+  "qlike": {
+    "categorie": "Preuve",
+    "titre": "QLIKE (erreur de prévision du risque)",
+    "def": "Mesure de l'erreur entre la variance prévue et la variance réalisée, qui punit davantage une sous-estimation du risque qu'une surestimation.",
+    "lecture": "Plus bas = mieux ; 0 = prévision parfaite. Sert à comparer deux méthodes sur les mêmes dates.",
+    "limites": "Très sensible aux valeurs extrêmes : quelques cours aberrants peuvent fausser une comparaison (d'où le nettoyage des données)."
+  },
+  "ic": {
+    "categorie": "Preuve",
+    "titre": "IC (Information Coefficient)",
+    "def": "Chaque date de test : corrélation de rang entre le classement prédit et le classement réalisé des titres. Moyenne sur toutes les dates.",
+    "lecture": "0 % = hasard. Pour le risque, l'IA atteint 78 % (le risque se prévoit bien) ; pour les rendements, 2 à 5 % serait déjà un signal en gestion.",
+    "limites": "Mesure l'ordre, pas le niveau ; un bon IC ne dit pas que les chiffres prévus sont justes."
+  },
+  "force_preuve": {
+    "categorie": "Preuve",
+    "titre": "Force de la preuve",
+    "def": "Le t statistique d'un résultat rapporté au seuil à dépasser, en %. Le seuil monte quand il y a peu de périodes indépendantes ou plusieurs essais.",
+    "lecture": "À 100 % ou plus, le résultat ne s'explique plus par le hasard. En dessous, on ne peut pas conclure (ce qui ne prouve pas non plus l'inverse).",
+    "limites": "Avec environ 36 semestres indépendants depuis 2008, seuls les écarts assez grands sont détectables à 6 mois."
+  },
+  "walk_forward": {
+    "categorie": "Preuve",
+    "titre": "Walk-forward (test sur le futur)",
+    "def": "Le modèle est entraîné sur le passé seulement, puis testé sur la période suivante, 4 fois de suite depuis 2008, avec un délai (embargo) égal à l'horizon de prévision.",
+    "lecture": "C'est la situation réelle de l'appli : on ne connaît jamais l'avenir au moment de prévoir. Un résultat stable sur les 4 périodes est plus crédible.",
+    "limites": "Le passé testé (2008-2026) ne couvre qu'un nombre limité de crises."
+  },
+  "placebo": {
+    "categorie": "Preuve",
+    "titre": "Placebo",
+    "def": "Le même test avec une information volontairement inutile (cible mélangée, VIX décalé d'un an…). Il doit ne rien trouver.",
+    "lecture": "Si le placebo « gagne » aussi, le gain vient d'un artefact (fuite d'information, degré de liberté en plus), pas d'une vraie information.",
+    "limites": "Un placebo mal conçu peut lui-même être trompeur : chaque placebo est décrit dans docs/METHODE.md."
+  },
+  "pbo": {
+    "categorie": "Preuve",
+    "titre": "PBO (probabilité de sur-ajustement)",
+    "def": "Probabilité que la meilleure stratégie choisie sur le passé fasse moins bien que la médiane sur des données nouvelles (Bailey et López de Prado).",
+    "lecture": "Au-dessus de 50 % : le choix « optimal » est probablement dû au hasard du passé.",
+    "limites": "Dépend du nombre de variantes comparées et du découpage des périodes."
+  },
+  "mom_12_1": {
+    "categorie": "Indicateurs",
+    "titre": "Momentum 12-1 mois",
+    "def": "Rendement du titre d'il y a 12 mois à il y a 1 mois (le dernier mois est exclu, car il a tendance à se retourner).",
+    "lecture": "Le facteur le plus documenté en finance ; dans Thésée, il sert de variable à l'IA de risque, pas à prévoir les rendements.",
+    "limites": "Sujet à des « krachs de momentum » lors des retournements brutaux de marché."
+  },
+  "spread_hy": {
+    "categorie": "Indicateurs",
+    "titre": "Spread High Yield",
+    "def": "Prime de rendement exigée sur les obligations d'entreprises notées spéculatives par rapport aux emprunts d'État américains (FRED, BAMLH0A0HYM2).",
+    "lecture": "Bas : le marché est confiant. En hausse rapide : stress de crédit, souvent avant ou pendant une baisse des actions.",
+    "limites": "Indice agrégé, pas le spread d'une entreprise précise ; publié avec un jour de décalage."
+  },
+  "spread_ig": {
+    "categorie": "Indicateurs",
+    "titre": "Spread Investment Grade",
+    "def": "Prime de rendement des obligations d'entreprises de bonne qualité (BBB et plus) par rapport aux emprunts d'État (FRED, BAMLC0A0CM).",
+    "lecture": "Plus stable que le High Yield ; une hausse signale un crédit plus cher même pour les entreprises solides.",
+    "limites": "Indice agrégé, pas le spread d'une entreprise précise."
+  },
+  "rating_sp": {
+    "categorie": "Indicateurs",
+    "titre": "Note de crédit S&P",
+    "def": "Note de solidité financière de l'entreprise. Investment Grade : AAA à BBB−. Spéculatif (High Yield) : BB+ et en dessous.",
+    "lecture": "Plus la note est basse, plus le risque de défaut est élevé et plus l'entreprise paie cher pour emprunter.",
+    "limites": "Les agences réagissent souvent en retard ; la note peut ne pas être à jour dans l'appli."
+  }
+}

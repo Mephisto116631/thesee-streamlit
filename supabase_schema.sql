@@ -379,3 +379,20 @@ do $$ begin
         create policy "lecture publique" on revisions_portefeuille for select to anon, authenticated using (true);
     end if;
 end $$;
+
+-- V15 — Suivi en conditions réelles du risque du mois à venir (docs/METHODE.md § 4.18) : chaque semaine, la prévision
+-- à 22 séances de HAR-X (avec le VIX) et de HAR seul est enregistrée, puis jugée sur ce qui arrive vraiment.
+create table if not exists suivi_risque_mois (
+    date      date not null,              -- séance de la prévision
+    symbol    text not null,
+    vol_harx  double precision not null,  -- volatilité annuelle prévue à 22 séances, HAR + VIX
+    vol_har   double precision not null,  -- même ajustement sans le VIX (référence)
+    primary key (date, symbol)
+);
+alter table suivi_risque_mois enable row level security;
+do $$ begin
+    if not exists (select 1 from pg_policies where schemaname = 'public'
+                   and tablename = 'suivi_risque_mois' and policyname = 'lecture publique') then
+        create policy "lecture publique" on suivi_risque_mois for select to anon, authenticated using (true);
+    end if;
+end $$;

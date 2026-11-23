@@ -1,6 +1,8 @@
 import { useEffect, useState } from "preact/hooks";
 import { App as CapApp } from "@capacitor/app";
 import { configured } from "./api";
+import { reprogrammerAuLancement } from "./rappels";
+import { lireParametres } from "./settings";
 import { Home } from "./screens/Home";
 import { Market } from "./screens/Market";
 import { Stock } from "./screens/Stock";
@@ -8,6 +10,7 @@ import { Portfolio } from "./screens/Portfolio";
 import { Risk } from "./screens/Risk";
 import { Calculs } from "./screens/Calculs";
 import { Analyse } from "./screens/Analyse";
+import { Glossaire } from "./screens/Glossaire";
 import { PositionsEcran } from "./screens/EcransSecondaires";
 import { Progression } from "./screens/Progression";
 import { Settings } from "./screens/Settings";
@@ -37,7 +40,7 @@ const TABS = [
 export function App() {
   const hash = useHash();
   // Mise à jour (APK uniquement) : vérifiée une fois par lancement, proposée dans une fenêtre
-  useEffect(() => { verifierAuLancement(); }, []);
+  useEffect(() => { verifierAuLancement(); reprogrammerAuLancement(lireParametres().rythmeRevision ?? 6); }, []);
 
   // Bouton retour Android : remonte l'historique, quitte l'appli depuis l'accueil
   useEffect(() => {
@@ -58,11 +61,12 @@ export function App() {
     case "court": screen = <Portfolio />; break;   // mode court terme retiré (non probant)
     case "titres": screen = <Portfolio />; break;   // « Composer » fusionné dans Portefeuille
     case "risque": screen = <Risk tab={arg === "ia" ? "ia" : "credit"} go={go} />; break;
+    case "glossaire": screen = <Glossaire />; break;
     case "parametres": screen = arg.startsWith("calculs") ? <Calculs section={arg.split("/")[1]} /> : <Settings />; break;
     default: screen = <Home go={go} />;
   }
   // Onglet actif : les écrans d'analyse (marché, risque, réglages…) sont rangés sous « Analyse »
-  const ANALYSE = ["marche", "titre", "risque", "court", "titres", "parametres", "analyse"];
+  const ANALYSE = ["marche", "titre", "risque", "court", "titres", "parametres", "analyse", "glossaire"];
   const active = ANALYSE.includes(route ?? "") ? "#/analyse" : `#/${route ?? ""}`;
 
   return (

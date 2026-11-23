@@ -6,6 +6,7 @@ const ENTREES: { h: string; titre: string; txt: string }[] = [
   { h: "#/risque/ia", titre: "Le modèle IA est-il fiable ?", txt: "Ce que prédisent les modèles, leurs tests et les essais du laboratoire." },
   { h: "#/risque", titre: "Le marché est-il nerveux ?", txt: "Volatilité attendue (VIX), crédit, santé financière des entreprises." },
   { h: "#/marche", titre: "Tous les titres suivis", txt: "Par secteur, avec leurs indicateurs ; touche un titre pour sa fiche." },
+  { h: "#/glossaire", titre: "Glossaire", txt: "Toutes les notions de l'appli expliquées : bêta, VIX, HAR, révision, stress test…" },
   { h: "#/parametres", titre: "Paramètres", txt: "Toutes les hypothèses, les frais, le courtier, les mises à jour." },
 ];
 
