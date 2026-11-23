@@ -84,6 +84,8 @@ export function Portfolio() {
   const frais = choix ? planAchat(e.capital, lignes, prix, fx, { fraisOrdre: params.fraisOrdre, fraisChange: params.fraisChange,
     fractions: params.fractions, margeLimite: params.margeLimite, tranches: 1, frequence: "mois" }) : null;
   const queue = pct((1 - params.confiance) / 2, 0, false);
+  // Portefeuille le plus calme qu'on puisse composer (début de la frontière)
+  const volMin = frontiere.length ? Math.min(...frontiere.map((f) => f.volatilite)) : null;
   const ajuste = e.exclus.length + e.imposes.length;
 
   return (
@@ -136,7 +138,12 @@ export function Portfolio() {
             <span>Risque maximal : <b class="accent">{pct(e.volMax, 0, false)} de volatilité par an</b></span>
             <input type="range" min={0.08} max={0.35} step={0.01} value={e.volMax} aria-label="Volatilité maximale par an"
               onInput={(ev) => maj({ volMax: Number((ev.target as HTMLInputElement).value) })} />
-            <Reperes min={0.08} max={0.35} repere={0.18} texte="S&P 500 ≈ 18 %" gauche="calme" droite="agité" />
+            <Reperes min={0.08} max={0.35} repere={0.18} texte="S&P 500 ≈ 18 %" gauche="calme" droite="agité"
+              zoneMin={volMin != null ? volMin / margeInfo.m : undefined} />
+            {volMin != null && e.volMax < volMin / margeInfo.m && (
+              <p class="hint">Le plus calme possible avec ces titres : <b>{pct(volMin, 0, false)}</b>. Sous {pct(volMin / margeInfo.m, 0, false)}
+                {" "}(zone grisée), baisser la limite ne change plus rien : l'appli garde ce portefeuille.</p>
+            )}
             {choix && <MontantsObjectif capital={e.capital} point={choix.point} />}
             {margeInfo.connue ? (
               <p class="hint">L'appli vise <b>{pct(e.volMax * margeInfo.m, 1, false)}</b> pour tenir ta limite de {pct(e.volMax, 0, false)}
@@ -160,11 +167,13 @@ export function Portfolio() {
       ) : (
         <>
           {/* 2. Synthèse : la réponse en un coup d'œil */}
-          <Card title="Mon portefeuille en un coup d'œil" class={`edge-${choix.atteignable ? "good" : "bad"}`} id="synthese">
+          <Card title="Mon portefeuille en un coup d'œil" class={`edge-${choix.atteignable ? "good" : "neutral"}`} id="synthese">
             {!choix.atteignable && (
-              <div class="note warn">{e.mode === "risque"
-                ? <>Aucun portefeuille n'est aussi calme avec ces titres : le plus calme possible est à <b>{pct(choix.point.volatilite, 0, false)}</b>.</>
-                : <>{pct(e.cible, 0, false)} par an n'est pas atteignable (20 % max par titre) : maximum <b>{pct(choix.max, 1, false)}</b>. Portefeuille affiché : le plus rentable.</>}</div>
+              <p class="hint" style={{ marginTop: 0 }}>{e.mode === "risque"
+                ? <>Ta limite est plus basse que le portefeuille le plus calme qu'on puisse composer avec ces titres (12 lignes au plus, 20 % au plus
+                  par titre) : voici donc <b>le plus calme possible</b>, à {pct(choix.point.volatilite, 0, false)}.</>
+                : <>{pct(e.cible, 0, false)} par an n'est pas atteignable (20 % au plus par titre) : voici donc <b>le plus rentable possible</b>,
+                  à {pct(choix.max, 1, false)} par an (hypothèse).</>}</p>
             )}
             <div class="stats">
               <Stat label="Titres" value={String(lignes.length)} sub={`${num(e.capital, 0)} € investis`} />
@@ -298,10 +307,12 @@ export function ChoixSourceVol({ volIA, dispo, fiab, libelleIA }: {
 /** Jauge visuelle du risque : calme ↔ agité, avec le repère du S&P 500 (~18 %). */
 function JaugeRisque({ vol, source, teste }: { vol: number; source: string; teste?: boolean }) {
   const pos = (v: number) => `${Math.max(0, Math.min(100, ((v - 0.05) / 0.35) * 100))}%`;
-  const mot = vol < 0.12 ? "calme" : vol < 0.2 ? "comme le marché" : vol < 0.28 ? "agité" : "très agité";
+  // Comparaison au marché (S&P 500 ≈ 18 % de volatilité par an sur longue période)
+  const mot = vol < 0.144 ? "plus calme que le marché" : vol <= 0.216 ? "proche du marché" : vol < 0.28 ? "plus agité que le marché" : "beaucoup plus agité que le marché";
   return (
     <div style={{ marginTop: 10 }}>
-      <div class="barre-proba"><span>Risque : <b>{pct(vol, 0, false)}</b> de volatilité par an ({source}{teste && <>, <BadgeTeste texte="testé" /></>})</span><b>{mot}</b></div>
+      <p style={{ margin: 0 }}>Risque : <b>{pct(vol, 0, false)}</b> de volatilité par an, <b>{mot}</b> (S&P 500 ≈ 18 %).</p>
+      <p class="hint" style={{ margin: "2px 0 0" }}>Mesuré avec : {source}{teste && <> <BadgeTeste texte="testé" /></>}</p>
       <div class="jauge"><span class="curseur" style={{ left: pos(vol) }} /><span class="spx" style={{ left: pos(0.18) }}>S&P 500</span></div>
       <div class="jauge-labels"><span>calme</span><span>agité</span></div>
     </div>
@@ -415,10 +426,14 @@ function Frontiere({ frontiere, choisi, cible }: { frontiere: { rendement: numbe
 }
 
 /** Échelle d'un curseur : bornes aux extrémités, repère placé à sa vraie position. */
-function Reperes({ min, max, repere, texte, gauche, droite }: { min: number; max: number; repere: number; texte: string; gauche?: string; droite?: string }) {
+function Reperes({ min, max, repere, texte, gauche, droite, zoneMin }: {
+  min: number; max: number; repere: number; texte: string; gauche?: string; droite?: string; zoneMin?: number;
+}) {
   const x = ((repere - min) / (max - min)) * 100;
+  const z = zoneMin != null ? Math.max(0, Math.min(100, ((zoneMin - min) / (max - min)) * 100)) : 0;
   return (
     <div class="reperes" aria-hidden="true">
+      {z > 0 && <span class="hors" style={{ width: `${z}%` }} />}
       <span class="tic" style={{ left: `${x}%` }} />
       {/* Texte centré sur le repère, mais jamais hors de l'écran près des bords */}
       <span class="lib" style={{ left: `${x}%`, transform: `translateX(${x < 30 ? -x / 0.6 : x > 70 ? -100 + (100 - x) / 0.6 : -50}%)` }}>{texte}</span>
