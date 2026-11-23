@@ -1091,3 +1091,100 @@ def essai_harx_1m(market_raw: pd.DataFrame, symboles: list[str], vix: pd.Series,
     c["n_titres"] = int(t["symbol"].nunique())
     c["debut_test"] = str(pd.Timestamp(t["date"].min()).date()) if not t.empty else None
     return c
+
+
+# ------------------------------------------------------------------------------
+# Essai « Le risque baissier se prévoit-il, et dit-il le sens ? » (docs/METHODE.md § 4.19, écrit avant tout code)
+# ------------------------------------------------------------------------------
+H_ASYM = [22, 126]
+FENETRE_ASYM = 126
+IC_MIN_SENS = 0.02            # règle 2 : minimum économique pour le sens
+N_ESSAIS_ASYM = 15
+
+
+def parts_baisse(px: pd.DataFrame, fenetre: int, futur: bool = False) -> pd.DataFrame:
+    """Part du risque venant des jours de baisse : Σ r² (r < 0) / Σ r². Passé : t − fenetre + 1 à t ; futur : t + 1 à t + fenetre."""
+    r = px.pct_change()
+    r2 = r.pow(2)
+    neg = r2.where(r < 0, 0.0).where(r.notna())
+    mini = int(fenetre * 0.8)
+    if futur:
+        s_neg = neg[::-1].rolling(fenetre, min_periods=mini).sum()[::-1].shift(-1)
+        s_tot = r2[::-1].rolling(fenetre, min_periods=mini).sum()[::-1].shift(-1)
+    else:
+        s_neg = neg.rolling(fenetre, min_periods=mini).sum()
+        s_tot = r2.rolling(fenetre, min_periods=mini).sum()
+    return s_neg / s_tot.where(s_tot > 0)
+
+
+def _ic_rangs(t: pd.DataFrame, a: str, b: str) -> pd.Series:
+    """Corrélation de rang entre titres, date par date (au moins 30 titres)."""
+    def f(g):
+        g = g[[a, b]].dropna()
+        return g[a].rank().corr(g[b].rank()) if len(g) >= 30 else np.nan
+    return t.groupby("date").apply(f, include_groups=False).dropna()
+
+
+def essai_asymetrie(data: pd.DataFrame, market_raw: pd.DataFrame, melange: bool = False, graine: int = 0) -> dict:
+    """Tests A (persistance de la part baissière) et B (sens du rendement futur) à 22 et 126 jours, règles du § 4.19.
+    `data` fixe les couples (date, titre) : membres de l'indice à la date, une date par semaine."""
+    px = market_raw.pivot_table(index="date", columns="symbol", values="close").sort_index().ffill(limit=5)
+    px.index = pd.to_datetime(px.index)
+    base = data[["date", "symbol"]].drop_duplicates()
+    dates = pd.DatetimeIndex(np.sort(base["date"].unique()))
+
+    def empiler(tab: pd.DataFrame, nom: str) -> pd.DataFrame:
+        s = tab.reindex(dates).stack(future_stack=True).rename(nom)
+        s.index.names = ["date", "symbol"]
+        return s.reset_index()
+
+    t = base.merge(empiler(parts_baisse(px, FENETRE_ASYM), "passe"), on=["date", "symbol"], how="left")
+    for h in H_ASYM:
+        t = t.merge(empiler(parts_baisse(px, h, futur=True), f"part_{h}"), on=["date", "symbol"], how="left")
+        t = t.merge(empiler(px.shift(-h) / px - 1, f"ret_{h}"), on=["date", "symbol"], how="left")
+    if melange:
+        rng = np.random.default_rng(graine)
+        t["passe"] = t.groupby("date")["passe"].transform(lambda x: rng.permutation(x.values))
+    out = {"tests": {}, "n_dates": int(t["date"].nunique()), "n_titres": int(t["symbol"].nunique()),
+           "part_passe_mediane": float(t["passe"].median())}
+    for h in H_ASYM:
+        for nom, col in (("A_persistance", f"part_{h}"), ("B_sens", f"ret_{h}")):
+            ic = _ic_rangs(t, "passe", col)
+            r = inf.rapport_dm(ic.values, h / mh.PAS_ECHANTILLON)
+            blocs = [float(b.mean()) for b in np.array_split(ic.values, 4)] if len(ic) >= 8 else []
+            r["blocs"] = blocs
+            r["blocs_positifs"] = int(sum(b > 0 for b in blocs))
+            r["blocs_negatifs"] = int(sum(b < 0 for b in blocs))
+            out["tests"][f"{nom}_{h}"] = r
+    out["holm"] = inf.holm({k: v.get("p_bilatere", 1.0) for k, v in out["tests"].items()})
+    regles = {}
+    for k, v in out["tests"].items():
+        ic, ok = v.get("ecart", 0.0), out["holm"].get(k, {}).get("rejete", False)
+        if k.startswith("A_"):
+            regles[k] = bool(ic > 0 and ok and v["blocs_positifs"] >= 3)
+        else:
+            meme_signe = v["blocs_positifs"] >= 3 if ic > 0 else v["blocs_negatifs"] >= 3
+            regles[k] = bool(abs(ic) >= IC_MIN_SENS and ok and meme_signe)
+    out["regles"] = regles
+    # Constat : marché seul (SPY), part baissière passée contre rendement futur à 126 jours
+    if mh.INDICE in px.columns:
+        m = pd.DataFrame({"passe": parts_baisse(px[[mh.INDICE]], FENETRE_ASYM)[mh.INDICE],
+                          "ret": px[mh.INDICE].shift(-126) / px[mh.INDICE] - 1}).reindex(dates).dropna()
+        out["marche_spy"] = {"correlation_rang": float(m["passe"].rank().corr(m["ret"].rank())) if len(m) > 30 else None,
+                             "n_dates": int(len(m)), "semestres_independants": int(len(m) * mh.PAS_ECHANTILLON / 126)}
+    out["n_essais_total"] = N_ESSAIS_ASYM
+    out["t_max_attendu"] = inf.t_max_attendu(N_ESSAIS_ASYM)
+    return out
+
+
+def verdict_asymetrie(c: dict, placebo: dict) -> tuple[str, bool]:
+    """Verdict du § 4.19 ; retourne (texte, placebo_propre)."""
+    propre = all(abs(v.get("t", 0.0)) < 2 for v in placebo["tests"].values())
+    if not propre:
+        return "écarté : placebo significatif", False
+    R = c["regles"]
+    a = [h for h in H_ASYM if R.get(f"A_persistance_{h}")]
+    b = [h for h in H_ASYM if R.get(f"B_sens_{h}")]
+    morceaux = ["risque baissier persistant à " + " et ".join(f"{h} j" for h in a) if a else "risque baissier non persistant",
+                "prévoit le sens à " + " et ".join(f"{h} j" for h in b) if b else "ne prévoit pas le sens"]
+    return " ; ".join(morceaux), True

@@ -97,6 +97,8 @@ EXPERIENCES_EXAMEN = {
     "examen_harx_1m": "Confirmation de HAR-X à 1 mois sur le S&P MidCap 400 (titres jamais utilisés), placebo, couverture du mauvais cas",
     # Essai du 22/11/2026 (docs/METHODE.md § 4.17) : données nettoyées, protocole écrit avant tout code ; re-test mensuel
     "examen_harx_1m_v2": "Confirmation de HAR-X à 1 mois sur les midcaps, données nettoyées (cours < 5 $, sauts > 50 %), winsorisation si non informatif",
+    # Essai du 23/11/2026 (docs/METHODE.md § 4.19) : protocole écrit avant tout code
+    "examen_asymetrie": "Part baissière du risque : persiste-t-elle (22 et 126 j) et prévoit-elle le sens du rendement ? Holm, placebo",
     "examen_marge": "Marge de sécurité apprise sur le passé ; rythmes de révision mensuel, semestriel, annuel avec frais ; fourchette avec l'hybride",
 }
 DEBUT_EXAMEN = "1998-01-01"
@@ -330,6 +332,14 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
                         "avertissement_couverture": c_mid["couverture"]["harx"]["avertissement"]}
                 r = c_mid["horizons"][ex.H_MOIS]["dm"]
                 _inserer(cli, lot, nom, v, diag, ic=r.get("ecart"), t=r.get("t"), seuil=2.0, n_essais=ex.N_ESSAIS_HARX_1M_V2)
+            elif nom == "examen_asymetrie":
+                c = ex.essai_asymetrie(data, raw)
+                pl = ex.essai_asymetrie(data, raw, melange=True)
+                v, propre = ex.verdict_asymetrie(c, pl)
+                c["placebo"] = {k: {"ic": x.get("ecart"), "t": x.get("t")} for k, x in pl["tests"].items()}
+                c["placebo_propre"] = propre
+                a = c["tests"]["A_persistance_126"]
+                _inserer(cli, lot, nom, v, c, ic=a.get("ecart"), t=a.get("t"), seuil=2.0, n_essais=ex.N_ESSAIS_ASYM)
             elif nom == "examen_marge":
                 tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
                 res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",

@@ -440,3 +440,41 @@ def test_bilan_reel_mois_en_attente_puis_verdict():
     inv = suivi.rename(columns={"vol_harx": "vol_har", "vol_har": "vol_harx"})
     b = mr.bilan_reel_mois(inv, px)
     assert b["verdict"] == "HAR-X moins bon" and b["garde_fou"]
+
+
+def _marche_asymetrique(graine: int = 0, n: int = 60, jours: int = 1600):
+    """Chaque titre a une asymétrie durable (baisses plus fortes mais plus rares), rendement espéré nul : le sens est imprévisible."""
+    rng = np.random.default_rng(graine)
+    dates = pd.bdate_range("2010-01-01", periods=jours)
+    rows = []
+    for i in range(n):
+        a = rng.uniform(0.6, 1.8)                       # taille relative des baisses
+        p_baisse = 1 / (1 + a)                          # espérance nulle : p·a = (1 − p)·1
+        bas = rng.random(jours) < p_baisse
+        amp = np.abs(rng.normal(0, 0.012, jours))
+        r = np.where(bas, -a * amp, amp)
+        px = 50 * np.cumprod(1 + r)
+        rows += [{"symbol": f"A{i:02d}", "date": d, "close": p} for d, p in zip(dates, px)]
+    rows += [{"symbol": "SPY", "date": d, "close": 100 + 0.01 * k} for k, d in enumerate(dates)]
+    raw = pd.DataFrame(rows)
+    data = pd.DataFrame([{"date": d, "symbol": f"A{i:02d}"} for d in dates[130:-130:5] for i in range(n)])
+    return raw, data
+
+
+def test_asymetrie_persiste_sans_prevoir_le_sens():
+    raw, data = _marche_asymetrique()
+    c = ex.essai_asymetrie(data, raw)
+    pl = ex.essai_asymetrie(data, raw, melange=True)
+    assert c["regles"]["A_persistance_126"] and c["regles"]["A_persistance_22"]          # le risque baissier persiste
+    assert not c["regles"]["B_sens_126"] and not c["regles"]["B_sens_22"]                # le sens reste imprévisible
+    assert abs(c["tests"]["B_sens_126"]["ecart"]) < 0.05
+    v, propre = ex.verdict_asymetrie(c, pl)
+    assert propre and v.startswith("risque baissier persistant") and v.endswith("ne prévoit pas le sens")
+
+
+def test_parts_baisse_symetrique_et_futur():
+    px = pd.DataFrame({"X": 100 * np.cumprod(1 + np.tile([0.01, -0.01], 200))})
+    p = ex.parts_baisse(px, 20)
+    assert abs(p["X"].dropna().mean() - 0.5) < 0.02                                       # hausses et baisses égales
+    f = ex.parts_baisse(px, 20, futur=True)
+    assert np.isclose(f["X"].iloc[10], p["X"].iloc[30])                                   # futur de t = passé de t + 20

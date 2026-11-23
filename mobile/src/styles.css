@@ -502,3 +502,12 @@ input[type="range"] { width: 100%; margin: 10px 0 2px; accent-color: var(--accen
   font-size: 13px; font-weight: 600; min-width: 56px; }
 .interrupteur.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 .interrupteur:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Hausse ou baisse : barre de répartition du risque */
+.barre-hb { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--card2); margin: 6px 0 4px; }
+.barre-hb .b { background: var(--down, #dc2626); }
+.barre-hb .h { flex: 1; background: var(--up, #16a34a); }
+
+/* Guide d'usage */
+.liste-guide { margin: 0; padding-left: 20px; }
+.liste-guide li { margin: 0 0 10px; line-height: 1.5; }

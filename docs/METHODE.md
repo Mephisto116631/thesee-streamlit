@@ -798,6 +798,39 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
   Le portefeuille change à chaque révision et à chaque réglage de l'utilisateur, ce qui rendrait la mesure ambiguë.
 - **Publication** : `model_runs`, kind `risque_mois_reel`. L'appli affiche la ligne « En conditions réelles » dans la carte « Face aux chocs ».
 
+### 4.19 Essai « Le risque baissier se prévoit-il, et dit-il le sens ? » (protocole écrit le 23/11/2026, AVANT tout code)
+- **Origine** : l'utilisateur veut savoir si la volatilité à venir sera plutôt « à la baisse » ou « à la hausse ». La volatilité ne dit pas le sens.
+  Mais la **part baissière** du risque (semi-variance négative) se mesure. La littérature (Barndorff-Nielsen, Kinnebrock et Shephard 2010 ;
+  Patton et Sheppard 2015) la trouve **persistante** et utile pour prévoir le niveau du risque. Elle ne la trouve pas utile pour prévoir le sens des prix.
+- **Définition** : sur une fenêtre de jours, `part_baisse` = Σ r² des jours de baisse / Σ r² de tous les jours (0,5 = risque symétrique ; plus de 0,5 = le
+  risque vient surtout des baisses). Rendements quotidiens de clôture, aucune estimation, aucun réglage.
+- **Données** : membres du S&P 500 à chaque date, une date par semaine depuis 1999, mêmes données que l'examen (`preparer`). Passé : 126 séances avant t.
+  Avenir : séances t+1 à t+h, h = **22** et **126**.
+- **Tests** (4, famille corrigée par **Holm** à 5 %) : à chaque date, corrélation de rang entre titres (IC) entre la `part_baisse` passée et :
+  - **A (persistance)** : la `part_baisse` future, à 22 et 126 jours ;
+  - **B (sens)** : le rendement futur du titre relatif à la médiane du jour, à 22 et 126 jours.
+  Moyenne des IC par date, `inference.rapport_dm` (EWC, chevauchement h/5 dates).
+- **Règles de décision, fixées AVANT l'essai**
+  1. **A, « le risque baissier persiste »** à un horizon si l'IC moyen > 0, p corrigé par Holm < 5 % **et** IC > 0 dans au moins 3 des 4 blocs de dates.
+     Alors l'appli peut afficher la part baissière passée comme **indication** du risque baissier à venir, avec l'IC mesuré.
+  2. **B, « il prévoit le sens »** à un horizon si |IC| > 0, p corrigé par Holm < 5 %, même signe dans au moins 3 des 4 blocs, **et IC ≥ 2 %** en valeur
+     absolue (minimum économique : en dessous, l'avantage disparaît dans les frais). Sinon l'appli continue de dire que **le sens n'est pas prévisible**.
+  3. **Placebo** : même calcul avec la `part_baisse` passée **mélangée entre titres** à chaque date. Son IC doit être non significatif (|t| < 2) pour A et B.
+     Sinon : fuite ou artefact, essai écarté.
+- **Constats** : marché seul (SPY), où la `part_baisse` passée est comparée au rendement futur du SPY à 126 jours. C'est un constat seulement : il y a environ 36 semestres
+  indépendants, donc pas de puissance. Corrélation part passée / part future du portefeuille conseillé si disponible. `t_max_attendu` pour 15 essais.
+- **Lecture (à l'avance)**
+
+| Observation | Conclusion |
+|---|---|
+| A oui, B non | Résultat attendu : un titre dont le risque vient des baisses le reste un peu, mais on ne sait pas s'il va monter ou baisser |
+| A oui, B oui | Indice d'une prime (ou d'une décote) liée au risque baissier ; à confirmer sur les midcaps avant tout usage pour choisir des titres |
+| A non | La répartition hausse / baisse du risque passé n'informe pas sur l'avenir : l'appli la montre comme une mesure du passé, sans plus |
+| Placebo significatif | Artefact : écarté |
+
+- **Limites** : rendements de clôture (pas intrajournaliers) ; secteur et taille non contrôlés (constat seulement) ; survivants des midcaps non utilisés ici.
+- **Résultats** : § 17.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
@@ -1163,3 +1196,31 @@ des couples (titre, date) des midcaps, 1,1 % du S&P 500.
 - **Ordre des titres** : l'IA de volatilité. **Niveau à 6 mois** : HAR (§ 13, modèle figé).
 - **Risque du mois à venir** : HAR-X (HAR + VIX × bêta²), données nettoyées, re-testé chaque mois sur les midcaps.
 - **Stress test** : crises 2008, 2011, 2015-16, fin 2018, 2020 et 2022 rejouées sur le portefeuille (§ 14). Ce n'est pas une prévision.
+
+---
+
+## 17. Résultats de l'essai « Le risque baissier se prévoit-il, et dit-il le sens ? » (§ 4.19 ; lot du 23/11/2026 08:59 UTC, run n° 52)
+
+487 titres membres du S&P 500, 1 378 dates hebdomadaires depuis 1999. Part baissière passée médiane : 47 %. Seuil de Holm à 5 % pour 4 tests.
+
+| Test | IC moyen | t | IC 95 % | Blocs (4) | Holm | Règle | Verdict |
+|---|---|---|---|---|---|---|---|
+| A, persistance à 22 j | **−2,0 %** | −3,89 | [−3,0 % ; −1,0 %] | 4 négatifs | rejet | exige IC > 0 | **Non persistant** |
+| A, persistance à 126 j | **−4,1 %** | −3,88 | [−6,3 % ; −1,9 %] | 4 négatifs | rejet | exige IC > 0 | **Non persistant** |
+| B, sens à 22 j | +1,0 % | +1,84 | [−0,1 % ; +2,2 %] | 3 positifs | non (p = 0,07) | IC ≥ 2 % | **Ne prévoit pas le sens** |
+| B, sens à 126 j | +0,5 % | +0,45 | [−1,9 % ; +3,0 %] | mixtes | non | IC ≥ 2 % | **Ne prévoit pas le sens** |
+
+- **Placebo** (part mélangée entre titres) : |t| < 2 pour les 4 tests (le plus haut : −1,81). Propre.
+- **Constat marché** (SPY) : corrélation de rang entre la part baissière passée et le rendement à 126 jours de −0,10, sur ~54 semestres indépendants. Pas de puissance.
+- `t_max_attendu` pour 15 essais : 1,77.
+
+**Lecture, selon la grille écrite à l'avance**
+- **Ligne « A non »** : la répartition hausse / baisse du risque passé n'annonce pas un risque baissier durable. L'appli la montre comme une **mesure du passé**.
+- **Constat hors règle (à ne pas utiliser comme preuve)** : le lien est significativement **négatif**, à 22 et à 126 jours, dans les 4 blocs. Un titre dont le risque est
+  venu surtout des baisses a ensuite, en moyenne, une part baissière un peu **plus faible** : l'asymétrie se résorbe. L'effet est petit (IC −2 à −4 %).
+  Le protocole ne prévoyait pas de l'exploiter, et il ne l'est pas.
+- **B** : la part baissière ne prévoit pas le sens des rendements, conformément à la littérature. Le léger IC positif à 1 mois (+1 %, non significatif après
+  correction) ressemble à l'effet connu de retournement à court terme. Il est sous le minimum économique de 2 %.
+
+**Décision** : la carte « Face aux chocs » affiche la part baissière du risque **sur 1 an** (portefeuille et titres), avec la mention « mesure du passé ;
+elle ne se répète pas ; le sens à venir n'est pas prévisible ». Rien ne change dans le choix des titres.

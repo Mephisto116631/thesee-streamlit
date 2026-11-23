@@ -58,3 +58,49 @@ export function risqueMois(u: Univers & { vol_1m?: (number | null)[] }, lignes: 
   return { volAn: prevu.vol, volHabituelle: habituel.vol, mauvaisCas: perte(prevu.vol), mauvaisCasHabituel: perte(habituel.vol),
     rapport: prevu.vol / habituel.vol, couverture: prevu.couverture };
 }
+
+// ---------------------------------------------------------------------------
+// Hausse ou baisse ? Répartition du risque passé (1 an de cours) entre jours de hausse et jours de baisse.
+// Mesure du passé, pas une prévision du sens (docs/METHODE.md § 4.19).
+// ---------------------------------------------------------------------------
+export interface Asymetrie {
+  partBaisse: number;      // Σ r² des jours de baisse / Σ r² : 0,5 = symétrique
+  volBaisse: number;       // semi-volatilité baissière annualisée : √(252 × moyenne(min(r, 0)²))
+  volHausse: number;       // semi-volatilité haussière annualisée
+  pireJour: number;        // plus forte baisse en une séance
+  jours: number;
+}
+
+export function asymetrie(rendements: number[]): Asymetrie | null {
+  const r = rendements.filter((x) => Number.isFinite(x));
+  if (r.length < 60) return null;
+  let neg = 0, pos = 0;
+  for (const x of r) { if (x < 0) neg += x * x; else pos += x * x; }
+  const tot = neg + pos;
+  if (tot <= 0) return null;
+  return { partBaisse: neg / tot, volBaisse: Math.sqrt((252 * neg) / r.length), volHausse: Math.sqrt((252 * pos) / r.length),
+    pireJour: Math.min(...r), jours: r.length };
+}
+
+/** Rendements quotidiens du portefeuille (poids fixes) et de chaque ligne, à partir des cours sur 1 an. */
+export function rendementsQuotidiens(prix: { symbol: string; date: string; close: number }[], lignes: LignePoids[]) {
+  const parTitre = new Map<string, Map<string, number>>();
+  for (const p of prix) {
+    if (!parTitre.has(p.symbol)) parTitre.set(p.symbol, new Map());
+    parTitre.get(p.symbol)!.set(p.date, p.close);
+  }
+  const dates = [...new Set(prix.map((p) => p.date))].sort();
+  const ls = lignes.filter((l) => parTitre.has(l.symbol));
+  const total = ls.reduce((a, l) => a + l.poids, 0);
+  const parLigne: Record<string, number[]> = Object.fromEntries(ls.map((l) => [l.symbol, []]));
+  const portefeuille: number[] = [];
+  for (let k = 1; k < dates.length; k++) {
+    let rp = 0, w = 0;
+    for (const l of ls) {
+      const a = parTitre.get(l.symbol)!.get(dates[k - 1]), b = parTitre.get(l.symbol)!.get(dates[k]);
+      if (a && b) { const x = b / a - 1; parLigne[l.symbol].push(x); rp += l.poids * x; w += l.poids; }
+    }
+    if (w > 0.8 * total) portefeuille.push(rp / w);
+  }
+  return { portefeuille, parLigne, couverture: total };
+}
