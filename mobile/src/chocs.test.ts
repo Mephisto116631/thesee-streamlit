@@ -51,3 +51,31 @@ describe("risque du mois", () => {
     expect(risqueMois(u, [{ symbol: "A", poids: 1 }])).toBeNull();
   });
 });
+
+import { asymetrie, rendementsQuotidiens } from "./chocs";
+
+describe("hausse ou baisse", () => {
+  it("risque symétrique : part baissière 50 %", () => {
+    const a = asymetrie(Array.from({ length: 100 }, (_, i) => (i % 2 ? 0.01 : -0.01)))!;
+    expect(a.partBaisse).toBeCloseTo(0.5, 12);
+    expect(a.volBaisse).toBeCloseTo(a.volHausse, 12);
+    expect(a.pireJour).toBeCloseTo(-0.01, 12);
+  });
+  it("baisses plus fortes : part baissière > 50 %, et σ_baisse² + σ_hausse² = σ² (moyenne nulle)", () => {
+    const r = Array.from({ length: 120 }, (_, i) => (i % 3 === 0 ? -0.02 : 0.01));
+    const a = asymetrie(r)!;
+    expect(a.partBaisse).toBeCloseTo((40 * 0.0004) / (40 * 0.0004 + 80 * 0.0001), 12);
+    const s2 = (252 * r.reduce((x, y) => x + y * y, 0)) / r.length;
+    expect(a.volBaisse ** 2 + a.volHausse ** 2).toBeCloseTo(s2, 12);
+  });
+  it("trop peu de jours : rien", () => {
+    expect(asymetrie([0.01, -0.01])).toBeNull();
+  });
+  it("rendements du portefeuille à poids fixes", () => {
+    const prix = [["2026-01-01", 100, 50], ["2026-01-02", 110, 50], ["2026-01-05", 99, 55]].flatMap(([d, a, b]) => [
+      { symbol: "A", date: d as string, close: a as number }, { symbol: "B", date: d as string, close: b as number }]);
+    const r = rendementsQuotidiens(prix, [{ symbol: "A", poids: 0.5 }, { symbol: "B", poids: 0.5 }]);
+    expect(r.portefeuille[0]).toBeCloseTo(0.05, 12);
+    expect(r.portefeuille[1]).toBeCloseTo(0.5 * (99 / 110 - 1) + 0.5 * 0.1, 12);
+  });
+});

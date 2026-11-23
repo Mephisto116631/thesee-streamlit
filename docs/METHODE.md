@@ -1196,3 +1196,31 @@ des couples (titre, date) des midcaps, 1,1 % du S&P 500.
 - **Ordre des titres** : l'IA de volatilité. **Niveau à 6 mois** : HAR (§ 13, modèle figé).
 - **Risque du mois à venir** : HAR-X (HAR + VIX × bêta²), données nettoyées, re-testé chaque mois sur les midcaps.
 - **Stress test** : crises 2008, 2011, 2015-16, fin 2018, 2020 et 2022 rejouées sur le portefeuille (§ 14). Ce n'est pas une prévision.
+
+---
+
+## 17. Résultats de l'essai « Le risque baissier se prévoit-il, et dit-il le sens ? » (§ 4.19 ; lot du 23/11/2026 08:59 UTC, run n° 52)
+
+487 titres membres du S&P 500, 1 378 dates hebdomadaires depuis 1999. Part baissière passée médiane : 47 %. Seuil de Holm à 5 % pour 4 tests.
+
+| Test | IC moyen | t | IC 95 % | Blocs (4) | Holm | Règle | Verdict |
+|---|---|---|---|---|---|---|---|
+| A, persistance à 22 j | **−2,0 %** | −3,89 | [−3,0 % ; −1,0 %] | 4 négatifs | rejet | exige IC > 0 | **Non persistant** |
+| A, persistance à 126 j | **−4,1 %** | −3,88 | [−6,3 % ; −1,9 %] | 4 négatifs | rejet | exige IC > 0 | **Non persistant** |
+| B, sens à 22 j | +1,0 % | +1,84 | [−0,1 % ; +2,2 %] | 3 positifs | non (p = 0,07) | IC ≥ 2 % | **Ne prévoit pas le sens** |
+| B, sens à 126 j | +0,5 % | +0,45 | [−1,9 % ; +3,0 %] | mixtes | non | IC ≥ 2 % | **Ne prévoit pas le sens** |
+
+- **Placebo** (part mélangée entre titres) : |t| < 2 pour les 4 tests (le plus haut : −1,81). Propre.
+- **Constat marché** (SPY) : corrélation de rang entre la part baissière passée et le rendement à 126 jours de −0,10, sur ~54 semestres indépendants. Pas de puissance.
+- `t_max_attendu` pour 15 essais : 1,77.
+
+**Lecture, selon la grille écrite à l'avance**
+- **Ligne « A non »** : la répartition hausse / baisse du risque passé n'annonce pas un risque baissier durable. L'appli la montre comme une **mesure du passé**.
+- **Constat hors règle (à ne pas utiliser comme preuve)** : le lien est significativement **négatif**, à 22 et à 126 jours, dans les 4 blocs. Un titre dont le risque est
+  venu surtout des baisses a ensuite, en moyenne, une part baissière un peu **plus faible** : l'asymétrie se résorbe. L'effet est petit (IC −2 à −4 %).
+  Le protocole ne prévoyait pas de l'exploiter, et il ne l'est pas.
+- **B** : la part baissière ne prévoit pas le sens des rendements, conformément à la littérature. Le léger IC positif à 1 mois (+1 %, non significatif après
+  correction) ressemble à l'effet connu de retournement à court terme. Il est sous le minimum économique de 2 %.
+
+**Décision** : la carte « Face aux chocs » affiche la part baissière du risque **sur 1 an** (portefeuille et titres), avec la mention « mesure du passé ;
+elle ne se répète pas ; le sens à venir n'est pas prévisible ». Rien ne change dans le choix des titres.

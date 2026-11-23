@@ -32,6 +32,7 @@ Document de reprise pour une nouvelle session (Claude Code). Tout est en frança
 | HAR étendu (conseils externes) | § 4.15 | § 12 | **sans pouvoir de conclure ; macro écartée (placebo) ; pire en crise** |
 | Confirmation HAR-X 1 mois (midcaps) | § 4.16 | § 15 | non confirmé (essai non informatif : cours aberrants) |
 | Confirmation HAR-X 1 mois, données nettoyées | § 4.17 | § 16 | **confirmé** (t −2,26 ; effet ≈ 0 dans la fenêtre récente → re-test mensuel) |
+| Risque baissier : persistance et sens | § 4.19 | § 17 | non persistant (il se résorbe même un peu) ; ne prévoit pas le sens |
 
 Constat transversal : avec n effectif ≈ 36 à 126 jours, le MDE est ≈ 0,05 à 0,16 de QLIKE, bien au-dessus des écarts discutés (0,003 à 0,014). Les essais disent « pas de gain détectable », pas « pas de gain ». Le panel de titres est **déjà** inclus (l'écart de perte est moyenné par date, estimateur de type Driscoll-Kraay) : pas de gain de puissance de ce côté.
 

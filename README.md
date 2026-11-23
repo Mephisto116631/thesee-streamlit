@@ -109,6 +109,7 @@ Garde-fous : refus si un calcul tourne déjà ou a démarré il y a moins de 10 
 
 | PR | Apport |
 |---|---|
+| #34 | « Hausse ou baisse ? » : part du risque venant des jours de baisse (portefeuille et titres) ; essai : elle ne se répète pas et ne prévoit pas le sens ; écran « Bien utiliser Thésée » |
 | #32 | Suivi en conditions réelles du risque du mois (prévisions enregistrées chaque semaine, garde-fou) ; rappels de révision sur le téléphone (APK) ; glossaire dans l'appli (Analyse › Glossaire, et chaque bouton « ? ») |
 | #31 | Interface : plus de glissement latéral ni de texte coupé (verdicts et filtres qui passent à la ligne, noms sur deux lignes, tableaux en fiches sur téléphone) |
 | #30 | Modèle figé (ordre par l'IA, niveau par HAR) ; carte « Face aux chocs » : crises 2008, 2011, 2015-16, fin 2018, 2020, 2022 rejouées sur le portefeuille (pas une prévision) et risque du mois à venir (HAR + VIX), affiché seulement s'il reste confirmé au re-test mensuel |

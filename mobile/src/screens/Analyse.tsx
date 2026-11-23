@@ -2,6 +2,7 @@ import { HelpButton, ReglagesButton } from "../components";
 
 // Espace « Analyse » : tout ce qui sert à comprendre ou à vérifier, mais pas à décider au quotidien.
 const ENTREES: { h: string; titre: string; txt: string }[] = [
+  { h: "#/guide", titre: "Bien utiliser Thésée", txt: "Ce qu'elle sait faire, ce qu'elle ne sait pas, et comment t'en servir." },
   { h: "#/parametres/calculs", titre: "Vérifier les calculs de mon portefeuille", txt: "Chaque chiffre, formule par formule, avec sa définition et tes valeurs." },
   { h: "#/risque/ia", titre: "Le modèle IA est-il fiable ?", txt: "Ce que prédisent les modèles, leurs tests et les essais du laboratoire." },
   { h: "#/risque", titre: "Le marché est-il nerveux ?", txt: "Volatilité attendue (VIX), crédit, santé financière des entreprises." },

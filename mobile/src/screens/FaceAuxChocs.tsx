@@ -1,8 +1,9 @@
 // Carte « Face aux chocs » : le mois à venir (prévu, testé) et les crises passées rejouées (pas une prévision).
 // Méthode : docs/METHODE.md §§ 14 (stress test) et 4.16 / 15 (risque du mois à venir).
-import { Card, HelpButton, Info, Verifier } from "../components";
+import { api } from "../api";
+import { Card, HelpButton, Info, useData, Verifier } from "../components";
 import { dateFr, num, pct } from "../format";
-import { rejouerCrises, risqueMois, type Chocs, type LignePoids } from "../chocs";
+import { asymetrie, rejouerCrises, rendementsQuotidiens, risqueMois, type Chocs, type LignePoids } from "../chocs";
 import type { Univers } from "../optim";
 
 export type UniversJour = Univers & {
@@ -21,7 +22,7 @@ export function FaceAuxChocs({ u, lignes, capital }: { u: UniversJour | undefine
   if (!u) return null;
   const crises = rejouerCrises(u.chocs, u.symbols, u.beta, lignes);
   const mois = risqueMois(u, lignes);
-  if (!crises.length && !mois) return null;
+  if (!crises.length && !mois && !lignes.length) return null;   // « Hausse ou baisse ? » n'a besoin que des cours
   const pire = crises[0];
   return (
     <Card title="Face aux chocs" repliable id="chocs" right={<HelpButton keys={["stress_test", "risque_mois", "vix", "max_drawdown"]} intro={<>
@@ -54,6 +55,7 @@ export function FaceAuxChocs({ u, lignes, capital }: { u: UniversJour | undefine
           <p class="hint">Rien à faire pour autant : le portefeuille est révisé tous les 6 mois. Ce chiffre sert à ne pas être surpris.</p>
         </>
       )}
+      <HausseOuBaisse lignes={lignes} />
       {crises.length > 0 && (
         <>
           <h3 class="h3">Les grandes crises, rejouées sur ton portefeuille</h3>
@@ -77,5 +79,41 @@ export function FaceAuxChocs({ u, lignes, capital }: { u: UniversJour | undefine
         </>
       )}
     </Card>
+  );
+}
+
+/** Hausse ou baisse ? Part du risque passé (1 an) venant des jours de baisse, pour le portefeuille et chaque ligne. */
+function HausseOuBaisse({ lignes }: { lignes: LignePoids[] }) {
+  const syms = lignes.map((l) => l.symbol);
+  const prix = useData(() => api.prices(syms), [syms.join(",")]);
+  const examen = useData(api.examen);
+  if (!lignes.length || !prix.data?.length) return null;
+  const r = rendementsQuotidiens(prix.data, lignes);
+  const pf = asymetrie(r.portefeuille);
+  if (!pf) return null;
+  const parLigne = lignes.map((l) => ({ ...l, a: asymetrie(r.parLigne[l.symbol] ?? []) })).filter((x) => x.a)
+    .sort((x, y) => y.a!.partBaisse - x.a!.partBaisse);
+  const lab = examen.data?.find((x) => x.nom === "examen_asymetrie");
+  const persiste = Boolean(lab?.verdict?.startsWith("risque baissier persistant"));
+  const sens = Boolean(lab?.verdict?.includes("prévoit le sens à"));
+  const icA = lab?.diagnostics?.tests?.A_persistance_126?.ecart as number | undefined;
+  return (
+    <>
+      <h3 class="h3">Hausse ou baisse ?</h3>
+      <p>Sur 1 an, <b class={pf.partBaisse > 0.55 ? "down" : pf.partBaisse < 0.45 ? "up" : ""}>{pct(pf.partBaisse, 0, false)}</b> du risque de ton
+        portefeuille venait des <b>jours de baisse</b>.
+        <Info>Part baissière = somme des carrés des rendements des jours de baisse / somme pour tous les jours. 50 % : le risque vient autant des hausses
+          que des baisses. Plus de 50 % : les baisses ont été plus fortes que les hausses (même si le portefeuille a pu monter au total).</Info></p>
+      <div class="barre-hb" aria-hidden="true"><span class="b" style={{ width: `${pf.partBaisse * 100}%` }} /><span class="h" /></div>
+      <p class="hint">Volatilité des baisses {pct(pf.volBaisse, 0, false)} · des hausses {pct(pf.volHausse, 0, false)} · pire séance {pct(pf.pireJour, 1)}
+        {" "}({pf.jours} séances).</p>
+      {parLigne.length > 1 && <p class="hint">Par titre (part baissière) : {parLigne.map((x) => `${x.symbol} ${pct(x.a!.partBaisse, 0, false)}`).join(" · ")}.</p>}
+      <p class="hint"><b>Le sens à venir n'est pas prévisible</b>{sens ? " par les modèles de l'appli, sauf l'indice noté au laboratoire (onglet Risque)" : " : aucun modèle testé n'y arrive"}.
+        {lab && (persiste
+          ? <> Au laboratoire, la part baissière passée d'un titre se retrouve en partie dans les mois suivants{icA != null && <> (corrélation de rang {pct(icA, 0, false)})</>} :
+            c'est une indication du <b>risque</b> baissier à venir, pas de la direction.</>
+          : <> Au laboratoire (S&P 500 depuis 1999), la part baissière passée d'un titre <b>ne se répète pas</b>
+            {icA != null && icA < 0 ? <> : elle a même plutôt tendance à se réduire ensuite</> : null}. C'est une mesure du passé, pas une annonce.</>)}</p>
+    </>
   );
 }

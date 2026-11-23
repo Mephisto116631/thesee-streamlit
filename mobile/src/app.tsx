@@ -11,6 +11,7 @@ import { Risk } from "./screens/Risk";
 import { Calculs } from "./screens/Calculs";
 import { Analyse } from "./screens/Analyse";
 import { Glossaire } from "./screens/Glossaire";
+import { Guide } from "./screens/Guide";
 import { PositionsEcran } from "./screens/EcransSecondaires";
 import { Progression } from "./screens/Progression";
 import { Settings } from "./screens/Settings";
@@ -62,11 +63,12 @@ export function App() {
     case "titres": screen = <Portfolio />; break;   // « Composer » fusionné dans Portefeuille
     case "risque": screen = <Risk tab={arg === "ia" ? "ia" : "credit"} go={go} />; break;
     case "glossaire": screen = <Glossaire />; break;
+    case "guide": screen = <Guide />; break;
     case "parametres": screen = arg.startsWith("calculs") ? <Calculs section={arg.split("/")[1]} /> : <Settings />; break;
     default: screen = <Home go={go} />;
   }
   // Onglet actif : les écrans d'analyse (marché, risque, réglages…) sont rangés sous « Analyse »
-  const ANALYSE = ["marche", "titre", "risque", "court", "titres", "parametres", "analyse", "glossaire"];
+  const ANALYSE = ["marche", "titre", "risque", "court", "titres", "parametres", "analyse", "glossaire", "guide"];
   const active = ANALYSE.includes(route ?? "") ? "#/analyse" : `#/${route ?? ""}`;
 
   return (
