@@ -2,7 +2,7 @@ import { useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { api } from "../api";
 import { Card, Loading, textePreuve, useData } from "../components";
-import { corr, num, pct, ratioPct } from "../format";
+import { corr, dateFr, num, pct, ratioPct } from "../format";
 import { avecVolIA, covariance, rendementsAttendus, sousUnivers, variance } from "../optim";
 import { coutAnnualise, planAchat, projection } from "../strategy";
 import { usePortefeuilleCible } from "./Portfolio";
@@ -194,7 +194,7 @@ export function Calculs({ section }: { section?: string }) {
             {c && <Etape titre="Crise rejouée" formule="perte = Σ poids × (cours au creux / cours au sommet − 1) ; titre absent à l'époque : bêta × chute du marché"
               definition={<>Le sommet et le creux sont ceux du S&P 500 (SPY) dans la période de la crise. On garde les poids d'aujourd'hui pendant
                 toute la chute, sans rien vendre. Ce n'est pas une prévision : c'est ce qui s'est passé.</>}
-              calcul={<>{c.nom} ({c.debut} → {c.fin}) : {pt.lignes.map((l) => {
+              calcul={<>{c.nom} ({dateFr(c.debut)} → {dateFr(c.fin)}) : {pt.lignes.map((l) => {
                 const i = iJ.get(l.symbol);
                 const r = i != null && k >= 0 ? uj!.chocs!.rendements[i]?.[k] : null;
                 return `${pct(l.poids, 0, false)} × ${r != null ? pct(r, 0) : `${num(i != null ? uj!.beta[i] : 1, 2)} × ${pct(c.marche, 0)}`}`;
