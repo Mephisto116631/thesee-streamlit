@@ -10,6 +10,7 @@ import { BUILD, definirTelechargementAuto, estNatif, mo, tailleCache, telecharge
 import { proposerMiseAJour } from "./MiseAJourDialogue";
 import { univers as universFiable, useFiabiliteVol } from "../fiabilite";
 import { ChoixSourceVol } from "./Portfolio";
+import { lireRappels, programmerRappels, rappelsAVenir, rappelsDisponibles } from "../rappels";
 
 /** Champ numérique : la valeur stockée est une fraction, affichée en % si `pctAff`. */
 function Champ({ label, aide, k, p, pctAff = true, min, max, pas, decimales = 2 }: {
@@ -38,6 +39,31 @@ function Champ({ label, aide, k, p, pctAff = true, min, max, pas, decimales = 2 
       <small>{aide} {modifie && <button type="button" class="link petit" onClick={() => ecrireParametres({ [k]: defaut } as Partial<Parametres>)}>
         (défaut : {pctAff ? `${num(defaut * 100, decimales)} %` : defaut})</button>}</small>
     </label>
+  );
+}
+
+/** Interrupteur des rappels de révision (notifications du téléphone, APK seulement). */
+function RappelsRevision({ rythme }: { rythme: 6 | 12 }) {
+  const [actif, setActif] = useState(lireRappels());
+  const [msg, setMsg] = useState<string | null>(null);
+  const dispo = rappelsDisponibles();
+  const prochains = rappelsAVenir(rythme);
+  const basculer = async () => {
+    const r = await programmerRappels(!actif, rythme);
+    setActif(r === "actifs");
+    setMsg(r === "refuses" ? "Notifications refusées : autorise-les dans les réglages Android de Thésée, puis réessaie." : null);
+  };
+  return (
+    <div class="param">
+      <span class="param-tete"><span>Me rappeler les révisions</span>
+        <button class={`interrupteur ${actif ? "on" : ""}`} role="switch" aria-checked={actif} disabled={!dispo} onClick={basculer}>
+          {actif ? "Oui" : "Non"}</button></span>
+      <small>{dispo
+        ? <>Une notification 3 jours avant et le jour de la révision, à 9 h.{actif && prochains.length > 0 && <> Prochaine :
+          {" "}{prochains[prochains.length - 1].at.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}.</>}</>
+        : <>Disponible dans l'application Android (pas dans le navigateur).</>}</small>
+      {msg && <div class="note warn">{msg}</div>}
+    </div>
   );
 }
 
@@ -161,11 +187,12 @@ export function Settings() {
           <span class="param-tete"><span>Révision du portefeuille conseillé</span></span>
           <div class="seg full" role="group" aria-label="Rythme de révision">
             {([6, 12] as const).map((r) => <button class={(p.rythmeRevision ?? 6) === r ? "on" : ""}
-              onClick={() => ecrireParametres({ rythmeRevision: r })}>{r === 6 ? "Tous les 6 mois" : "Tous les ans"}</button>)}
+              onClick={() => { ecrireParametres({ rythmeRevision: r }); if (lireRappels()) programmerRappels(true, r); }}>{r === 6 ? "Tous les 6 mois" : "Tous les ans"}</button>)}
           </div>
           <small>Le portefeuille conseillé ne change qu'à ces dates (janvier, et juillet si 6 mois). Suivre chaque mois la
             recommandation du jour coûtait environ 180 ordres par an, soit 3 à 5 points de rendement en frais (backtest 2006-2026).</small>
         </div>
+        <RappelsRevision rythme={p.rythmeRevision ?? 6} />
       </Card>
 
       <Card title="Quand un indicateur est-il bon ou mauvais ?" repliable ouvert={false}>

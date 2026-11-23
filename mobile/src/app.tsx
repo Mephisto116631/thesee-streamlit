@@ -1,6 +1,8 @@
 import { useEffect, useState } from "preact/hooks";
 import { App as CapApp } from "@capacitor/app";
 import { configured } from "./api";
+import { reprogrammerAuLancement } from "./rappels";
+import { lireParametres } from "./settings";
 import { Home } from "./screens/Home";
 import { Market } from "./screens/Market";
 import { Stock } from "./screens/Stock";
@@ -37,7 +39,7 @@ const TABS = [
 export function App() {
   const hash = useHash();
   // Mise à jour (APK uniquement) : vérifiée une fois par lancement, proposée dans une fenêtre
-  useEffect(() => { verifierAuLancement(); }, []);
+  useEffect(() => { verifierAuLancement(); reprogrammerAuLancement(lireParametres().rythmeRevision ?? 6); }, []);
 
   // Bouton retour Android : remonte l'historique, quitte l'appli depuis l'accueil
   useEffect(() => {

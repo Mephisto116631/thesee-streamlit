@@ -496,3 +496,9 @@ input[type="range"] { width: 100%; margin: 10px 0 2px; accent-color: var(--accen
 .barre-seuil .force { white-space: nowrap; font-size: 13px; }
 .barre-seuil .force b { font-size: 15px; }
 .barre-seuil .t-petit { font-size: 10.5px; opacity: .8; }
+
+/* Interrupteur (Paramètres) */
+.interrupteur { border: 1px solid var(--border); background: var(--card2); color: var(--muted); border-radius: 999px; padding: 3px 12px;
+  font-size: 13px; font-weight: 600; min-width: 56px; }
+.interrupteur.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.interrupteur:disabled { opacity: 0.5; cursor: not-allowed; }
