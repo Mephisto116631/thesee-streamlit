@@ -163,3 +163,38 @@ export function coutAnnualise(partFraisEntree: number, fraisChange: number, anne
   const garde = (1 - partFraisEntree) * (1 - fraisChange); // change à nouveau à la revente
   return 1 - Math.pow(garde, 1 / Math.max(annees, 1 / 12));
 }
+
+// ---------------------------------------------------------------------------
+// Marge de sécurité du mode « Je limite le risque » (docs/METHODE.md § 7.4, correction du 23/11/2026) :
+// celle de la SOURCE choisie (historique 3 ans ou IA + HAR) et de la limite testée la plus proche de celle de l'utilisateur.
+// ---------------------------------------------------------------------------
+export interface StatMarge { part_respectee_avec_marge?: number | null; marge_actuelle?: number | null }
+export interface InfoMarge { m: number; part?: number; limiteTestee?: number; exacte: boolean; parSource: boolean }
+
+export function choisirMarge(diag: any, source: "hist_3a" | "hybride", volMax: number): InfoMarge {
+  const borne = (x: unknown) => Math.min(1.5, Math.max(0.5, Number(x) || 1));
+  const table = diag?.marges_par_source?.[source] as Record<string, StatMarge> | undefined;
+  const parSource = Boolean(table && Object.keys(table).length);
+  const marges = (parSource ? table : diag?.marges) as Record<string, StatMarge> | undefined;
+  const cles = Object.keys(marges ?? {});
+  if (!cles.length) return { m: borne(diag?.marge), exacte: false, parSource: false };
+  const cle = cles.sort((a, b) => Math.abs(+a / 100 - volMax) - Math.abs(+b / 100 - volMax))[0];
+  const st = marges![cle];
+  const limiteTestee = +cle / 100;
+  const exacte = Math.abs(limiteTestee - volMax) <= 0.015;     // à 1,5 point près : on l'annonce comme la même limite
+  // Ancien format (une seule source, 10 à 18 %) : marge globale, et la part tenue seulement si la limite est proche
+  return parSource
+    ? { m: borne(st?.marge_actuelle), part: st?.part_respectee_avec_marge ?? undefined, limiteTestee, exacte, parSource }
+    : { m: borne(diag?.marge), part: exacte ? st?.part_respectee_avec_marge ?? undefined : undefined, limiteTestee, exacte, parSource };
+}
+
+/** Seuil de rentabilité : hausse nécessaire pour retrouver sa mise après les frais d'achat ET de revente,
+ *  et temps estimé pour l'atteindre à la rentabilité de long terme (hypothèse, pas une prévision). */
+export function seuilRentabilite(capital: number, fraisEntree: number, nbOrdres: number, fraisOrdre: number, fraisChange: number,
+  rendement: number) {
+  const investi = Math.max(capital - fraisEntree, 1e-9);
+  const fraisSortie = nbOrdres * fraisOrdre + capital * fraisChange;   // revente : mêmes ordres, change sur ~ la mise
+  const hausse = (capital + fraisSortie) / investi - 1;
+  const mois = rendement > 0 ? (12 * Math.log(1 + hausse)) / Math.log(1 + rendement) : null;
+  return { hausse, montant: capital * hausse, fraisSortie, fraisTotal: fraisEntree + fraisSortie, mois };
+}

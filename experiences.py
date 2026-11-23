@@ -346,9 +346,13 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
                                   variantes=["hist_3a", "hybride"], secteurs=secteurs, portefeuilles=tous,
                                   garder_poids=True, garder_frontieres=True)
                 px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
-                c = {"marges": {}, "rythmes": {}, "couverture": {}}
+                c = {"marges": {}, "rythmes": {}, "couverture": {}, "marges_par_source": {}}
                 for lim in [0.10, 0.12, 0.15, 0.18]:
                     c["marges"][f"{int(lim * 100)}"] = bt.marge_walk_forward(res, px, lim, "hybride", revision_mois=6)
+                # Correction du 23/11/2026 (METHODE § 7.4) : chaque source et une grille de limites de 8 à 35 %
+                for var in ["hist_3a", "hybride"]:
+                    c["marges_par_source"][var] = {f"{int(round(lim * 100))}": bt.marge_walk_forward(res, px, lim, var, revision_mois=6)
+                                                   for lim in bt.LIMITES_MARGE}
                 for rythme in [1, 6, 12]:
                     for nom_pf in ["sharpe_max", "risque_15"]:
                         c["rythmes"][f"{nom_pf}_{rythme}m"] = bt.backtest_reel(res, px, nom_pf, "hybride", revision_mois=rythme)
@@ -363,7 +367,7 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
                 cli.table("model_runs").upsert(_clean({
                     "kind": "marge_risque", "trained_at": pd.Timestamp.now(tz="UTC").isoformat(),
                     "verdict": "respectée" if ok else "insuffisante",
-                    "diagnostics": {"marge": m15["marge_actuelle"], "marges": c["marges"],
+                    "diagnostics": {"marge": m15["marge_actuelle"], "marges": c["marges"], "marges_par_source": c["marges_par_source"],
                                     "part_respectee": m15["part_respectee_avec_marge"], "depuis": c["debut"]},
                 }), on_conflict="kind").execute()
                 v = (f"limite tenue {min(parts):.0%} des semestres au moins" if parts else "non calculable")

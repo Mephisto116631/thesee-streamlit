@@ -104,3 +104,47 @@ describe("infobulles", () => {
     expect(bas.top).toBeUndefined();
   });
 });
+
+describe("marge de sécurité par source et par limite", () => {
+  it("prend la source choisie et la limite la plus proche", async () => {
+    const { choisirMarge } = await import("./strategy");
+    const diag = { marge: 0.89, marges_par_source: {
+      hist_3a: { "25": { marge_actuelle: 0.95, part_respectee_avec_marge: 0.8 }, "28": { marge_actuelle: 0.97, part_respectee_avec_marge: 0.85 } },
+      hybride: { "25": { marge_actuelle: 0.9, part_respectee_avec_marge: 0.75 } } } };
+    const h = choisirMarge(diag, "hist_3a", 0.26);
+    expect([h.m, h.part, h.limiteTestee, h.exacte]).toEqual([0.95, 0.8, 0.25, true]);
+    const ia = choisirMarge(diag, "hybride", 0.26);
+    expect([ia.m, ia.part]).toEqual([0.9, 0.75]);
+  });
+  it("ancien format : pas de part annoncée pour une limite lointaine", async () => {
+    const { choisirMarge } = await import("./strategy");
+    const ancien = { marge: 0.89, marges: { "18": { marge_actuelle: 0.85, part_respectee_avec_marge: 0.62 } } };
+    const r = choisirMarge(ancien, "hist_3a", 0.26);
+    expect(r.part).toBeUndefined();
+    expect(r.m).toBe(0.89);
+    expect(choisirMarge(ancien, "hist_3a", 0.18).part).toBe(0.62);
+  });
+  it("sans données : marge 1", async () => {
+    const { choisirMarge } = await import("./strategy");
+    expect(choisirMarge(undefined, "hist_3a", 0.15).m).toBe(1);
+  });
+});
+
+describe("seuil de rentabilité", () => {
+  it("couvre l'achat et la revente", async () => {
+    const { seuilRentabilite } = await import("./strategy");
+    // 1 000 €, 10 ordres à 1 € à l'achat (10 €), pas de change : il faut (1 000 + 10) / 990 − 1 ≈ 2,02 %
+    const s = seuilRentabilite(1000, 10, 10, 1, 0, 0.08);
+    expect(s.hausse).toBeCloseTo(1010 / 990 - 1, 12);
+    expect(s.fraisTotal).toBe(20);
+    expect(s.mois!).toBeCloseTo((12 * Math.log(1010 / 990)) / Math.log(1.08), 9);
+  });
+  it("petit capital : seuil élevé", async () => {
+    const { seuilRentabilite } = await import("./strategy");
+    expect(seuilRentabilite(200, 12, 12, 1, 0, 0.1).hausse).toBeGreaterThan(0.12);
+  });
+  it("rentabilité nulle : pas de durée", async () => {
+    const { seuilRentabilite } = await import("./strategy");
+    expect(seuilRentabilite(1000, 5, 5, 1, 0, 0).mois).toBeNull();
+  });
+});

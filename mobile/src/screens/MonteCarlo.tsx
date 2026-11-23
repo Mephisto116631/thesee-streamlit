@@ -10,9 +10,10 @@ import { monteCarlo, portfolioStats, returnsMatrix } from "../portfolio";
  * Complète la projection « log-normale » : elle reprend les vraies queues de
  * distribution (krachs, journées extrêmes) au lieu d'une loi théorique.
  */
-export function MonteCarlo({ lignes, capital, annees, volCible, source }: {
+export function MonteCarlo({ lignes, capital, annees, volCible, source, rendement }: {
   lignes: { symbol: string; poids: number }[]; capital: number; annees: number;
   volCible?: number; source?: string;   // volatilité du portefeuille choisie (historique ou IA)
+  rendement?: number;                    // rentabilité de long terme (hypothèse), comme la projection ; pas celle de l'an passé
 }) {
   const syms = lignes.map((l) => l.symbol);
   const prices = useData(() => api.prices(syms), [syms.join(",")]);
@@ -31,9 +32,12 @@ export function MonteCarlo({ lignes, capital, annees, volCible, source }: {
     const moy = st.returns.reduce((a, b) => a + b, 0) / st.returns.length;
     const et = Math.sqrt(st.returns.reduce((a, b) => a + (b - moy) ** 2, 0) / st.returns.length);
     const k = volCible && et > 0 ? volCible / Math.sqrt(252) / et : 1;
-    const jours_ = st.returns.map((r) => moy + (r - moy) * k);
+    // Tendance : la même hypothèse de rentabilité de long terme que la projection, et non la moyenne de l'an passé
+    // (une bonne année passée ne prévoit pas la suivante : aucun modèle testé ne prévoit les rendements).
+    const tendance = rendement != null ? (1 + rendement) ** (1 / 252) - 1 : moy;
+    const jours_ = st.returns.map((r) => tendance + (r - moy) * k);
     return { mc: monteCarlo(jours_, capital, jours, 1000), nJours: R.length, k };
-  }, [prices.data, capital, jours, syms.join(","), volCible]);
+  }, [prices.data, capital, jours, syms.join(","), volCible, rendement]);
 
   const cfg = useCallback(() => {
     const mc = calc!.mc;
@@ -66,8 +70,9 @@ export function MonteCarlo({ lignes, capital, annees, volCible, source }: {
       </div>
       <p class="verdict">Probabilité de finir en perte : <b class={mc.probPerte > 0.3 ? "down" : ""}>{pct(mc.probPerte, 0, false)}</b></p>
       <p class="hint">1 000 trajectoires de {jours} jours de bourse, tirées au hasard parmi les {calc.nJours} rendements quotidiens réels
-        de l'année passée{volCible ? <>, ramenés à la volatilité du portefeuille ({pct(volCible, 0, false)}, {source ?? "historique"})</> : null}.
-        Plus réaliste pour les journées extrêmes que la projection théorique ; il ne prédit pas le marché, il montre l'éventail des résultats possibles.</p>
+        de l'année passée{volCible ? <>, ramenés à la volatilité du portefeuille ({pct(volCible, 0, false)}, {source ?? "historique"})</> : null}
+        {rendement != null && <>, autour de la rentabilité de long terme ({pct(rendement, 1, false)}/an, hypothèse)</>}.
+        On garde la <b>forme</b> des journées réelles (krachs, séries de baisses), pas leur tendance : il ne prédit pas le marché, il montre l'éventail des résultats possibles.</p>
     </>
   );
 }
