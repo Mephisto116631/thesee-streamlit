@@ -24,7 +24,7 @@ export function FaceAuxChocs({ u, lignes, capital }: { u: UniversJour | undefine
   if (!crises.length && !mois) return null;
   const pire = crises[0];
   return (
-    <Card title="Face aux chocs" repliable id="chocs" right={<HelpButton keys={["max_drawdown"]} intro={<>
+    <Card title="Face aux chocs" repliable id="chocs" right={<HelpButton keys={["stress_test", "risque_mois", "vix", "max_drawdown"]} intro={<>
       <p><b>Le mois à venir</b> : la volatilité prévue sur 22 séances par HAR-X (le modèle HAR plus le VIX, l'indice de la peur du marché
         des options). C'est le seul gain de prévision prouvé du laboratoire, confirmé sur des titres jamais utilisés (S&P MidCap 400)
         et re-testé chaque mois. Il n'est affiché que si le dernier test est réussi.</p>

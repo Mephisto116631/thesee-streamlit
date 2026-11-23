@@ -91,7 +91,7 @@ export function Portfolio() {
     <div class="screen">
       <header class="screen-head">
         <div><h1>Portefeuille</h1><p class="sub">{num(e.capital, 0)} € · horizon {h.label}{ajuste ? ` · ${ajuste} ajustement(s)` : ""}</p></div>
-        <HelpButton keys={["sharpe", "volatility", "max_drawdown"]} intro={<>
+        <HelpButton keys={["sharpe", "volatility", "max_drawdown", "markowitz", "capm", "beta", "revision", "marge_securite", "student"]} intro={<>
           <p><b>Objectif</b> : tu fixes soit la rentabilité visée, soit le risque maximal. L'appli choisit, parmi les ~500 titres du S&P 500,
             le meilleur compromis (frontière efficiente de Markowitz, 20 % max par titre).</p>
           <p><b>Risque</b> : la volatilité de chaque titre, mesurée sur 3 ans ou prévue par l'IA. La prévision de l'IA n'est proposée

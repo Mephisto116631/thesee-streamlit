@@ -4,6 +4,7 @@ import {
   Chart, LineController, LineElement, PointElement, LinearScale, CategoryScale,
   Filler, Tooltip, BarController, BarElement, Legend,
 } from "chart.js";
+import { GLOSSAIRE } from "./glossaire";
 import { RANGES, bornesTexte, fmt, zoneIndex, zoneOf } from "./ranges";
 import type { Result } from "./api";
 import { ilYA } from "./format";
@@ -156,7 +157,17 @@ export function HelpButton({ keys, intro }: { keys: string[]; intro?: ComponentC
             <div class="sheet-head"><h2>Comment lire</h2><button class="close" onClick={() => setOpen(false)} aria-label="Fermer">✕</button></div>
             {intro && <div class="sheet-intro">{intro}</div>}
             {keys.map((k) => {
+              const f = GLOSSAIRE[k];
+              if (f) return (
+                <div class="help-item">
+                  <h3>{f.titre}</h3>
+                  <p>{f.def}</p>
+                  <p><b>Comment lire</b> : {f.lecture}</p>
+                  <p class="muted"><b>Limites</b> : {f.limites}</p>
+                </div>
+              );
               const r = RANGES[k];
+              if (!r) return null;
               const t = bornesTexte(k);
               return (
                 <div class="help-item">
@@ -168,6 +179,7 @@ export function HelpButton({ keys, intro }: { keys: string[]; intro?: ComponentC
                 </div>
               );
             })}
+            <p class="hint"><a href="#/glossaire" onClick={() => setOpen(false)}>Tout le glossaire ›</a></p>
           </div>
         </div>
       )}
