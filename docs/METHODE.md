@@ -798,6 +798,39 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
   Le portefeuille change à chaque révision et à chaque réglage de l'utilisateur, ce qui rendrait la mesure ambiguë.
 - **Publication** : `model_runs`, kind `risque_mois_reel`. L'appli affiche la ligne « En conditions réelles » dans la carte « Face aux chocs ».
 
+### 4.19 Essai « Le risque baissier se prévoit-il, et dit-il le sens ? » (protocole écrit le 23/11/2026, AVANT tout code)
+- **Origine** : l'utilisateur veut savoir si la volatilité à venir sera plutôt « à la baisse » ou « à la hausse ». La volatilité ne dit pas le sens.
+  Mais la **part baissière** du risque (semi-variance négative) se mesure. La littérature (Barndorff-Nielsen, Kinnebrock et Shephard 2010 ;
+  Patton et Sheppard 2015) la trouve **persistante** et utile pour prévoir le niveau du risque. Elle ne la trouve pas utile pour prévoir le sens des prix.
+- **Définition** : sur une fenêtre de jours, `part_baisse` = Σ r² des jours de baisse / Σ r² de tous les jours (0,5 = risque symétrique ; plus de 0,5 = le
+  risque vient surtout des baisses). Rendements quotidiens de clôture, aucune estimation, aucun réglage.
+- **Données** : membres du S&P 500 à chaque date, une date par semaine depuis 1999, mêmes données que l'examen (`preparer`). Passé : 126 séances avant t.
+  Avenir : séances t+1 à t+h, h = **22** et **126**.
+- **Tests** (4, famille corrigée par **Holm** à 5 %) : à chaque date, corrélation de rang entre titres (IC) entre la `part_baisse` passée et :
+  - **A (persistance)** : la `part_baisse` future, à 22 et 126 jours ;
+  - **B (sens)** : le rendement futur du titre relatif à la médiane du jour, à 22 et 126 jours.
+  Moyenne des IC par date, `inference.rapport_dm` (EWC, chevauchement h/5 dates).
+- **Règles de décision, fixées AVANT l'essai**
+  1. **A, « le risque baissier persiste »** à un horizon si l'IC moyen > 0, p corrigé par Holm < 5 % **et** IC > 0 dans au moins 3 des 4 blocs de dates.
+     Alors l'appli peut afficher la part baissière passée comme **indication** du risque baissier à venir, avec l'IC mesuré.
+  2. **B, « il prévoit le sens »** à un horizon si |IC| > 0, p corrigé par Holm < 5 %, même signe dans au moins 3 des 4 blocs, **et IC ≥ 2 %** en valeur
+     absolue (minimum économique : en dessous, l'avantage disparaît dans les frais). Sinon l'appli continue de dire que **le sens n'est pas prévisible**.
+  3. **Placebo** : même calcul avec la `part_baisse` passée **mélangée entre titres** à chaque date. Son IC doit être non significatif (|t| < 2) pour A et B.
+     Sinon : fuite ou artefact, essai écarté.
+- **Constats** : marché seul (SPY), où la `part_baisse` passée est comparée au rendement futur du SPY à 126 jours. C'est un constat seulement : il y a environ 36 semestres
+  indépendants, donc pas de puissance. Corrélation part passée / part future du portefeuille conseillé si disponible. `t_max_attendu` pour 15 essais.
+- **Lecture (à l'avance)**
+
+| Observation | Conclusion |
+|---|---|
+| A oui, B non | Résultat attendu : un titre dont le risque vient des baisses le reste un peu, mais on ne sait pas s'il va monter ou baisser |
+| A oui, B oui | Indice d'une prime (ou d'une décote) liée au risque baissier ; à confirmer sur les midcaps avant tout usage pour choisir des titres |
+| A non | La répartition hausse / baisse du risque passé n'informe pas sur l'avenir : l'appli la montre comme une mesure du passé, sans plus |
+| Placebo significatif | Artefact : écarté |
+
+- **Limites** : rendements de clôture (pas intrajournaliers) ; secteur et taille non contrôlés (constat seulement) ; survivants des midcaps non utilisés ici.
+- **Résultats** : § 17.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
