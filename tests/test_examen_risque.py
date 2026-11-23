@@ -388,3 +388,20 @@ def test_etape_2_declenchee_par_le_seul_mde(monkeypatch):
     appels.clear()
     c = ex.essai_harx_1m(raw, syms, vix, nettoyage=True, winsor=False)       # S&P 500 : étape imposée
     assert c["etape"] == 1 and appels == [False]
+
+
+def test_risque_du_mois_du_jour():
+    import modele_risque as mr
+    raw, syms = _donnees_examen()
+    jours = pd.bdate_range("2007-01-01", "2017-12-31")
+    vix = pd.Series(20 + np.random.default_rng(1).random(len(jours)) * 5, index=jours)
+    v, info = mr.niveaux_harx_1m_du_jour(raw, syms, vix)
+    derniere = pd.Timestamp(raw["date"].max())
+    assert len(v) == len(syms) and (v > 0).all() and np.isfinite(v).all()
+    assert info["date"] == derniere.date().isoformat() and info["vix"] == float(vix.loc[derniere])   # pas de VIX postérieur
+    # VIX du jour plus haut : seule x_vix change, la prévision bouge dans le sens du coefficient appris
+    haut = vix.copy()
+    haut.loc[derniere] = 60.0
+    v2, info2 = mr.niveaux_harx_1m_du_jour(raw, syms, haut)
+    assert np.isclose(info2["coef_vix"], info["coef_vix"], rtol=1e-3)     # l'ajustement ne dépend presque pas du dernier jour
+    assert np.sign((v2 ** 2 - v ** 2).mean()) == np.sign(info["coef_vix"])

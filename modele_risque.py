@@ -243,3 +243,34 @@ def bilan_reel(suivi: pd.DataFrame, px: pd.DataFrame, premiere=None, h: int = JO
                 "seuil": seuil, "part_dates_gagnantes": float((gain > 0).mean()), "verdict": verdict,
                 "derniere_date_jugee": str(pd.Timestamp(gain.index.max()).date())})
     return out
+
+
+# ------------------------------------------------------------------------------
+# RISQUE DU MOIS À VENIR : HAR-X (HAR + VIX) à 22 séances (docs/METHODE.md §§ 4.16, 4.17)
+# Publié seulement si le dernier essai « examen_harx_1m_v2 » du laboratoire est « confirmé ».
+# ------------------------------------------------------------------------------
+NOM_LABO_1M = "examen_harx_1m_v2"
+
+
+def niveaux_harx_1m_du_jour(market_raw: pd.DataFrame, symboles: list[str], vix: pd.Series,
+                            composition: pd.DataFrame | None = None) -> tuple[pd.Series, dict]:
+    """Volatilité annuelle prévue pour les 22 prochaines séances, à la dernière date. HAR-X ajusté (moindres carrés) sur
+    toutes les dates dont la volatilité future est connue, données nettoyées comme au laboratoire (§ 4.17)."""
+    import examen_risque as ex
+    d = ex.preparer(market_raw, symboles, composition, None, h=ex.H_MOIS)[0]
+    d, _ = ex.nettoyer(d, market_raw)
+    beta = ex.beta_depuis_cours(market_raw, symboles)
+    d = ex.ajouter_x_vix(d, beta, vix)
+    cols = ex.COLS_HAR + ["x_vix"]
+    d = d[np.isfinite(d[cols + ["brut"]]).all(axis=1) & (d["brut"] > 0)]
+    coef = ex._mco(d, cols)
+    m = market_raw[market_raw["symbol"].isin(set(symboles) | {mh.INDICE})]
+    px = m.pivot_table(index="date", columns="symbol", values="close").sort_index().ffill(limit=5)
+    entrees = ex.har_entrees(px.pct_change())
+    v = vix.dropna()
+    v = v[v.index <= px.index[-1]]                      # VIX du jour de la dernière clôture, jamais d'un jour plus tard
+    auj = pd.DataFrame({k: t.iloc[-1] for k, t in entrees.items()}).reindex(list(symboles))
+    auj["x_vix"] = beta.iloc[-1].reindex(list(symboles)) ** 2 * (float(v.iloc[-1]) / 100) ** 2 / 252
+    auj = auj.dropna()
+    info = {"vix": float(v.iloc[-1]), "date": pd.Timestamp(px.index[-1]).date().isoformat(), "coef_vix": float(coef[-1])}
+    return pd.Series(ex._prevoir(auj, cols, coef), index=auj.index), info
