@@ -1102,3 +1102,43 @@ Deux ajouts au produit, décidés le même jour :
   volatilités réalisées énormes face à des prévisions normales. La QLIKE punit très fortement ces sous-estimations.
 
 **Décision de l'utilisateur** : un nouvel essai, données nettoyées d'abord (protocole § 4.17, écrit avant tout code, 13ᵉ essai, résultat définitif).
+
+---
+
+## 16. Résultats de la confirmation sur données nettoyées (§ 4.17 ; lot du 22/11/2026 23:51 UTC, run n° 48) : **confirmé**
+
+Étape retenue : **1** (nettoyage seul). Le MDE des midcaps après nettoyage vaut 0,021 < 0,10, donc pas de winsorisation. Données retirées : **4,8 %**
+des couples (titre, date) des midcaps, 1,1 % du S&P 500.
+
+| Condition (midcaps nettoyés, 22 jours) | Résultat | Verdict |
+|---|---|---|
+| (a) t ≤ −2 et écart < 0 | écart **−0,016** (QLIKE 0,340 → 0,324, −4,8 %) ; **t = −2,26** ; IC 95 % [−0,031 ; −0,002] | Réussi |
+| (b) d moyen < 0 dans ≥ 3 fenêtres sur 4 | 4 sur 4 : −0,0005 ; −0,036 ; −0,029 ; −0,00002 | Réussi |
+| (c) placebo (VIX d'un an plus tôt) t > −2 | t = +1,45 | Réussi |
+| (d) signe du VIX stable | 0,64 ; 0,62 ; 0,65 ; **0,0003** (toujours positif) | Réussi |
+| **Verdict** | | **Confirmé** : le risque du mois à venir est affiché |
+
+**Constats** :
+- **Apport du VIX lui-même** (HAR-X contre son placebo) : t = **−3,17**.
+- **Ratio de QLIKE par crise** : 2008-09 0,81 ; 2011 0,87 ; 2015-16 0,98 ; fin 2018 1,06 ; 2020 0,90 ; 2022 0,96.
+- **Biais médian** : +25 %.
+- **S&P 500 nettoyé (reproduction)** : t = −3,35, écart −0,019 (−5,6 %), placebo t = +1,11.
+- **Couverture** : le mauvais cas 5 % n'est dépassé que **1,5 %** des mois sur les midcaps et 1,8 % sur le S&P 500.
+
+**Points d'honnêteté** (affichés ou suivis) :
+1. **Seuil passé de justesse** : t = −2,26, pour un seuil à −2. Sur le S&P 500, la preuve est plus forte (t = −3,35).
+2. **L'effet s'efface dans la fenêtre la plus récente** (4ᵉ, jusqu'en 2026) : coefficient du VIX ≈ 0 et gain ≈ 0. La règle (d) est réussie à la lettre
+   (signe positif), mais le VIX n'a presque rien apporté ces dernières années. C'est pour ça que l'essai est **re-testé chaque mois**. L'appli suit le dernier verdict.
+3. **Prévision prudente** : le « mauvais cas 5 % » n'est dépassé qu'environ 1,5 % des mois (biais +25 %). La baisse affichée est plutôt **trop forte** que trop faible.
+   L'appli ne montre pas d'avertissement, puisque le seuil d'alerte (7,5 %) n'est pas atteint.
+4. Le nettoyage a été décidé **après** le premier résultat (§ 15), mais **avant** de regarder les données nettoyées. Il porte sur la qualité des données
+   (cours < 5 $, sauts > 50 %), pas sur le résultat. C'est un 13ᵉ essai compté, et son résultat est définitif.
+
+**Décision** : le risque du mois à venir est publié par le serveur (`univers_facteurs.vol_1m`, avec le VIX et la date) **seulement si** le dernier
+`examen_harx_1m_v2` dit « confirmé ». L'appli l'affiche dans la carte « Face aux chocs » de Portefeuille. Il ne change **rien** au portefeuille
+(révision tous les 6 mois). Il sert seulement à ne pas être surpris.
+
+### Hypothèses en vigueur (mise à jour du 23/11/2026)
+- **Ordre des titres** : l'IA de volatilité. **Niveau à 6 mois** : HAR (§ 13, modèle figé).
+- **Risque du mois à venir** : HAR-X (HAR + VIX × bêta²), données nettoyées, re-testé chaque mois sur les midcaps.
+- **Stress test** : crises 2008, 2011, 2015-16, fin 2018, 2020 et 2022 rejouées sur le portefeuille (§ 14). Ce n'est pas une prévision.
