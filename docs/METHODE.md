@@ -432,6 +432,31 @@ encore un peu mieux que le semestriel sur cette période. L'écart entre les deu
   la plus proche, et nomme cette limite si elle diffère. Le verdict de la règle 3 reste calculé, comme avant, sur 10 à 18 % avec la source hybride
   (pas de changement de règle). Résultats : tableau ci-dessous, complété après le calcul.
 
+  **Résultats (run n° 54, 23/11/2026, 37 semestres jugés depuis 2006, révision tous les 6 mois)** — part des semestres où le risque réel est resté sous la limite,
+  avec la marge apprise (entre parenthèses : marge actuelle m) :
+
+| Limite | Historique 3 ans | IA + HAR (hybride) |
+|---|---|---|
+| 8 % | 8 % (0,80) | 3 % (0,89) |
+| 10 % | 32 % (0,81) | 5 % (0,89) |
+| 12 % | 59 % (0,86) | 22 % (0,89) |
+| 15 % | 65 % (0,83) | 57 % (0,89) |
+| 18 % | **70 %** (0,91) | 62 % (0,87) |
+| 20 % | **70 %** (0,92) | 62 % (0,86) |
+| 22 % | **76 %** (0,92) | **70 %** (0,80) |
+| 25 % | **70 %** (0,97) | **73 %** (0,80) |
+| 28 % | **70 %** (1,04) | **76 %** (0,80) |
+| 30 % | **73 %** (1,07) | **84 %** (0,81) |
+| 35 % | **78 %** (1,02) | **78 %** (0,80) |
+
+  **Lecture** :
+  - En dessous de ~15 %, aucune des deux sources ne tient la limite la plupart du temps. Avec 12 titres au plus, le portefeuille ne peut pas être aussi calme.
+  - **Pour les limites basses et moyennes (12 à 20 %), l'historique tient mieux la limite que la prévision IA + HAR.** La prévision juge certains titres plus calmes,
+    et ils le sont moins en crise.
+  - Au-delà de 22 %, les deux sources tiennent la limite 70 à 84 % des semestres. L'objectif de la règle 3 (70 %) est atteint dès 18 % avec l'historique,
+    et dès 22 % avec la prévision.
+  - Constat, pas une règle : il n'y a pas de test statistique de l'écart entre sources (37 semestres, fort chevauchement). L'appli affiche le chiffre de la source choisie.
+
 ### 7.5 Fourchette à 1 an : **règle 5 déclenchée**, loi de Student
 - Avec les niveaux hybrides et la loi normale, le « mauvais cas 5 % » a été touché **8,8 %** des fois (seuil 7,5 %). La projection passe donc à une loi de Student à 5 degrés de liberté.
 - **Précision de mise en œuvre** : à volatilité égale, une loi de Student à 5 degrés a une fourchette à 90 % **plus étroite**
