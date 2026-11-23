@@ -498,6 +498,34 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
                 for s, t in (reco.get("titres") or {}).items():
                     if s in vol_publiee:
                         t["vol_ia"] = float(vol_publiee[s])
+            # Stress test (docs/METHODE.md § 14) : crises passées rejouées sur les titres d'aujourd'hui
+            try:
+                u = reco.get("univers_facteurs") or {}
+                if u.get("symbols"):
+                    u["chocs"] = portefeuille.chocs_historiques(raw_horizon, u["symbols"])
+                    print(f"[PUBLISH] Stress test : {len((u['chocs'] or {}).get('crises', []))} crises rejouées")
+            except Exception as e:
+                print(f"[PUBLISH][WARN] Stress test non calculé : {e}")
+            # Risque du mois à venir (docs/METHODE.md §§ 4.16-4.17) : publié seulement si la dernière confirmation est réussie
+            try:
+                u = reco.get("univers_facteurs") or {}
+                ex_1m = db.get_client().table("experiences").select(
+                    "decision:diagnostics->>decision,avert:diagnostics->avertissement_couverture,"
+                    "part:diagnostics->midcaps->couverture->harx->part_depassements") \
+                    .eq("nom", modele_risque.NOM_LABO_1M).order("id", desc=True).limit(1).execute().data
+                if u.get("symbols") and ex_1m and ex_1m[0].get("decision") == "confirme":
+                    import yfinance as yf
+                    v = yf.download("^VIX", start="1998-01-01", progress=False, auto_adjust=False)["Close"]
+                    v = (v.iloc[:, 0] if isinstance(v, pd.DataFrame) else v).dropna()
+                    v.index = pd.to_datetime(v.index).tz_localize(None)
+                    vol_1m, info = modele_risque.niveaux_harx_1m_du_jour(raw_horizon, u["symbols"], v, composition)
+                    u["vol_1m"] = [float(vol_1m[s]) if s in vol_1m.index else None for s in u["symbols"]]
+                    u["info_1m"] = {**info, "avertissement": bool(ex_1m[0].get("avert")), "part_depassements": ex_1m[0].get("part")}
+                    print(f"[PUBLISH] Risque du mois à venir : {len(vol_1m)} titres (VIX {info['vix']:.1f})")
+                else:
+                    print("[PUBLISH] Risque du mois à venir NON publié : confirmation absente ou non réussie")
+            except Exception as e:
+                print(f"[PUBLISH][WARN] Risque du mois à venir non calculé : {e}")
             enregistrer_revision(reco, snap["date"].max())
             db.upsert_rows("portefeuille_recommande", [_clean({
                 "id": 1, "date": snap["date"].max(), **reco,

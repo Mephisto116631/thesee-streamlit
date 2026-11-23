@@ -118,3 +118,31 @@ def test_candidats_tout_le_sp500_sans_etf_ni_detresse():
     snap.loc[snap["symbol"] == "T29", "z_score"] = 1.0
     c = pf.candidats(raw, snap)
     assert c == [f"T{i:02d}" for i in range(27)]     # ni ETF, ni Nasdaq seul, ni détresse ; pas de limite à 40
+
+
+def test_chocs_historiques_trouve_sommet_creux_et_retour():
+    import portefeuille as pf
+    jours = pd.bdate_range("2019-06-03", "2021-06-30")
+    spy = pd.Series(100.0, index=jours)
+    spy[(jours >= "2020-01-02") & (jours <= "2020-02-19")] = np.linspace(100, 110, ((jours >= "2020-01-02") & (jours <= "2020-02-19")).sum())
+    i_s, i_c = jours.get_loc(pd.Timestamp("2020-02-19")), jours.get_loc(pd.Timestamp("2020-03-23"))
+    spy.iloc[i_s:i_c + 1] = np.linspace(110, 72, i_c - i_s + 1)
+    spy.iloc[i_c + 1:] = np.minimum(72 + np.arange(1, len(jours) - i_c) * 0.5, 120)
+    lignes = []
+    for d, p in spy.items():
+        lignes += [{"symbol": "SPY", "date": d, "close": p}, {"symbol": "AAA", "date": d, "close": 2 * p}]
+        if d >= pd.Timestamp("2020-06-01"):
+            lignes.append({"symbol": "NEW", "date": d, "close": 10.0})   # introduit après la crise
+    c = pf.chocs_historiques(pd.DataFrame(lignes), ["AAA", "NEW"])
+    covid = [x for x in c["crises"] if x["nom"].startswith("2020")][0]
+    assert covid["debut"] == "2020-02-19" and covid["fin"] == "2020-03-23"
+    assert abs(covid["marche"] - (72 / 110 - 1)) < 1e-9
+    assert covid["retour_jours"] == int(np.ceil((110 - 72) / 0.5))
+    k = c["crises"].index(covid)
+    assert abs(c["rendements"][0][k] - (72 / 110 - 1)) < 1e-9 and c["rendements"][1][k] is None
+
+
+def test_chocs_historiques_sans_indice():
+    import portefeuille as pf
+    raw = pd.DataFrame({"symbol": ["AAA"], "date": [pd.Timestamp("2020-01-02")], "close": [1.0]})
+    assert pf.chocs_historiques(raw, ["AAA"]) is None

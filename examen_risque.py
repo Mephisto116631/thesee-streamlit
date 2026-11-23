@@ -231,9 +231,14 @@ def walk_forward(data: pd.DataFrame, ret: pd.DataFrame, feats: list[str] | None 
     return pd.concat(sorties, ignore_index=True) if sorties else pd.DataFrame()
 
 
-def _pertes_par_date(t: pd.DataFrame, col: str) -> pd.Series:
+def _pertes_par_date(t: pd.DataFrame, col: str, winsor: bool = False) -> pd.Series:
+    """QLIKE moyenne par date. `winsor` (§ 4.17, étape 2) : QLIKE ramenées aux centiles 1 % et 99 % des titres de la date."""
     ok = t[[col, "brut"]].notna().all(axis=1) & (t[col] > 0) & (t["brut"] > 0)
-    return t[ok].assign(_q=qlike(t.loc[ok, col], t.loc[ok, "brut"])).groupby("date")["_q"].mean()
+    q = t[ok].assign(_q=qlike(t.loc[ok, col], t.loc[ok, "brut"]))
+    if winsor:
+        g = q.groupby("date")["_q"]
+        q["_q"] = q["_q"].clip(g.transform(lambda x: x.quantile(0.01)), g.transform(lambda x: x.quantile(0.99)))
+    return q.groupby("date")["_q"].mean()
 
 
 def comparer_references(t: pd.DataFrame, h: int = H) -> dict:
@@ -734,36 +739,37 @@ def walk_forward_harx(data: pd.DataFrame, h: int = H) -> pd.DataFrame:
     return pd.concat(sorties, ignore_index=True) if sorties else pd.DataFrame()
 
 
-def _ecart_harx(t: pd.DataFrame) -> pd.Series:
-    return (_pertes_par_date(t, "lvl_harx") - _pertes_par_date(t, "lvl_har")).dropna()
+def _ecart_harx(t: pd.DataFrame, winsor: bool = False) -> pd.Series:
+    return (_pertes_par_date(t, "lvl_harx", winsor) - _pertes_par_date(t, "lvl_har", winsor)).dropna()
 
 
-def comparer_harx(par_h: dict[int, pd.DataFrame], placebo_h: dict[int, pd.DataFrame], n_essais_total: int = N_ESSAIS_HARX) -> dict:
+def comparer_harx(par_h: dict[int, pd.DataFrame], placebo_h: dict[int, pd.DataFrame], n_essais_total: int = N_ESSAIS_HARX,
+                  winsor: bool = False) -> dict:
     """Règles 1 à 7 du § 4.14 (et son additif). d = QLIKE(HAR-X) − QLIKE(HAR) par date ; d < 0 : HAR-X meilleur."""
     from scipy import stats
     out = {"horizons": {}, "n_essais_total": n_essais_total, "t_max_attendu": inf.t_max_attendu(n_essais_total)}
     for h, t in sorted(par_h.items(), reverse=True):
-        d = _ecart_harx(t)
+        d = _ecart_harx(t, winsor)
         r = inf.rapport_dm(d.values, h / mh.PAS_ECHANTILLON)
         fen = t.groupby("date")["fenetre"].first().reindex(d.index)
         par_fen = d.groupby(fen).mean()
-        rp = inf.rapport_dm(_ecart_harx(placebo_h[h]).values, h / mh.PAS_ECHANTILLON) if h in placebo_h else {}
+        rp = inf.rapport_dm(_ecart_harx(placebo_h[h], winsor).values, h / mh.PAS_ECHANTILLON) if h in placebo_h else {}
         # Constat (précision du 22/11/2026, avant tout résultat) : x = β² × VIX² porte aussi le bêta, que le placebo garde.
         # HAR-X contre son placebo isole l'apport du VIX lui-même (même bêta, VIX au bon moment ou un an trop tôt).
-        vp = (inf.rapport_dm((_pertes_par_date(t, "lvl_harx") - _pertes_par_date(placebo_h[h], "lvl_harx")).dropna().values,
+        vp = (inf.rapport_dm((_pertes_par_date(t, "lvl_harx", winsor) - _pertes_par_date(placebo_h[h], "lvl_harx", winsor)).dropna().values,
                              h / mh.PAS_ECHANTILLON) if h in placebo_h else {})
         crises = {}
         for nom, (d0, d1) in CRISES.items():
             g = t[(t["date"] >= pd.Timestamp(d0)) & (t["date"] <= pd.Timestamp(d1))]
             if g["date"].nunique() >= 3:
-                qh, qx = _pertes_par_date(g, "lvl_har").mean(), _pertes_par_date(g, "lvl_harx").mean()
+                qh, qx = _pertes_par_date(g, "lvl_har", winsor).mean(), _pertes_par_date(g, "lvl_harx", winsor).mean()
                 crises[nom] = {"ratio_qlike_harx_sur_har": float(qx / qh) if qh > 0 else None, "n_dates": int(g["date"].nunique())}
         ok = t[["lvl_har", "lvl_harx", "brut"]].notna().all(axis=1)
         mse = {c: float(((t.loc[ok, c] - t.loc[ok, "brut"]) ** 2).mean()) for c in ["lvl_har", "lvl_harx"]}
         tt = t.assign(rel=t["brut"])
         res = {
             "dm": r, "n_dates": int(len(d)),
-            "qlike": {"har": float(_pertes_par_date(t, "lvl_har").mean()), "harx": float(_pertes_par_date(t, "lvl_harx").mean())},
+            "qlike": {"har": float(_pertes_par_date(t, "lvl_har", winsor).mean()), "harx": float(_pertes_par_date(t, "lvl_harx", winsor).mean())},
             "par_fenetre": {int(k): float(v) for k, v in par_fen.items()},
             "fenetres_negatives": int((par_fen < 0).sum()), "n_fenetres": int(len(par_fen)),
             "coef_vix_par_fenetre": {int(k): float(v) for k, v in t.groupby("fenetre")["coef_vix"].first().items()},
@@ -994,3 +1000,94 @@ def verdict_etendu(c: dict, replication: dict | None = None) -> str:
 def replication_etendu(t_mid: pd.DataFrame) -> dict:
     r = _dm_cols(t_mid, "lvl_m2", "lvl_har", H)
     return {"dm": r, "replique": bool(r.get("t", 0) <= -2 and r.get("ecart", 0) < 0)}
+
+
+# ------------------------------------------------------------------------------
+# Essai « Confirmation de HAR-X à 1 mois » (protocole : docs/METHODE.md § 4.16, écrit avant tout code)
+# ------------------------------------------------------------------------------
+H_MOIS = 22
+N_ESSAIS_HARX_1M = 12
+Z_STUDENT5_5PC = -2.015048372669157      # quantile 5 % de la loi de Student à 5 degrés (échelle σ, comme l'appli)
+SEUIL_COUVERTURE = 0.075                 # 1,5 × 5 % (règle 5 de la PR #27)
+
+
+def ajouter_rendement_futur(t: pd.DataFrame, market_raw: pd.DataFrame, h: int = H_MOIS) -> pd.DataFrame:
+    """Ajoute `ret_futur` : rendement du titre de la date t à t + h séances (pour la couverture, jamais comme entrée)."""
+    px = market_raw.pivot_table(index="date", columns="symbol", values="close").sort_index().ffill(limit=5)
+    fut = (px.shift(-h) / px - 1).stack(future_stack=True).rename("ret_futur")
+    fut.index.names = ["date", "symbol"]
+    return t.drop(columns=["ret_futur"], errors="ignore").merge(fut.reset_index(), on=["date", "symbol"], how="left")
+
+
+def couverture_1m(t: pd.DataFrame, col: str, h: int = H_MOIS) -> dict:
+    """Part des (titre, date) où la baisse sur h séances dépasse le « mauvais cas 5 % » : z(Student 5) × σ prévue × √(h/252)."""
+    ok = t[[col, "ret_futur"]].notna().all(axis=1) & (t[col] > 0)
+    seuil = Z_STUDENT5_5PC * t.loc[ok, col] * np.sqrt(h / 252)
+    part = float((t.loc[ok, "ret_futur"] < seuil).mean()) if ok.any() else None
+    return {"part_depassements": part, "attendu": 0.05, "n": int(ok.sum()),
+            "avertissement": bool(part is not None and part > SEUIL_COUVERTURE)}
+
+
+def verdict_harx_1m(c_mid: dict) -> tuple[str, dict]:
+    """Règle 1 du § 4.16 sur les midcaps à 22 jours. Retourne (verdict, conditions)."""
+    r = c_mid["horizons"][H_MOIS]
+    cond = {
+        "a_t_et_ecart": bool(r["dm"].get("t", 0) <= -2 and r["dm"].get("ecart", 0) < 0),
+        "b_fenetres": bool(r["fenetres_negatives"] >= 3),
+        "c_placebo": bool(r["placebo"].get("t", 0) > -2),
+        "d_signe_vix": bool(len({np.sign(v) for v in r["coef_vix_par_fenetre"].values()}) == 1),
+    }
+    if all(cond.values()):
+        return "confirmé", cond
+    return "non confirmé : " + ", ".join(k for k, ok in cond.items() if not ok), cond
+
+
+COURS_MIN_NETTOYAGE = 5.0            # § 4.17, étape 1
+SAUT_MAX_NETTOYAGE = 0.50            # |rendement quotidien| > 50 % entre t − 63 et t + h : donnée retirée
+MDE_ETAPE_2 = 0.10                   # § 4.17 : la winsorisation n'est déclenchée que si le MDE dépasse ce seuil
+N_ESSAIS_HARX_1M_V2 = 13
+
+
+def nettoyer(data: pd.DataFrame, market_raw: pd.DataFrame, h: int = H_MOIS) -> tuple[pd.DataFrame, float]:
+    """§ 4.17, étape 1 : retire (titre, date) si cours < 5 $ à la date, ou si un rendement quotidien dépasse ±50 %
+    entre t − 63 et t + h séances. Règle de qualité des données, fixée avant l'essai. Retourne (données, part retirée)."""
+    px = market_raw.pivot_table(index="date", columns="symbol", values="close").sort_index().ffill(limit=5)
+    a = px.pct_change().abs()
+    passe = a.rolling(64, min_periods=1).max()                                   # t − 63 à t
+    futur = a[::-1].rolling(h, min_periods=1).max()[::-1].shift(-1)              # t + 1 à t + h
+    mauvais = (px < COURS_MIN_NETTOYAGE) | (passe > SAUT_MAX_NETTOYAGE) | (futur > SAUT_MAX_NETTOYAGE)
+    m = mauvais.stack(future_stack=True).rename("_mauvais")
+    m.index.names = ["date", "symbol"]
+    d = data.merge(m.reset_index(), on=["date", "symbol"], how="left")
+    retire = d["_mauvais"].fillna(False).astype(bool)
+    return d[~retire].drop(columns="_mauvais").reset_index(drop=True), float(retire.mean()) if len(d) else 0.0
+
+
+def essai_harx_1m(market_raw: pd.DataFrame, symboles: list[str], vix: pd.Series, composition=None, secteurs=None,
+                  nettoyage: bool = False, winsor: bool | None = None) -> dict:
+    """HAR et HAR-X à 22 jours sur un univers : comparaison, placebo, couverture (§ 4.16).
+    `nettoyage` (§ 4.17) : étape 1 ; puis étape 2 (QLIKE winsorisées) si `winsor` est True, ou, si `winsor` est None,
+    seulement quand le MDE après nettoyage dépasse 0,10."""
+    d = preparer(market_raw, symboles, composition, secteurs, h=H_MOIS)[0]
+    part_retiree = None
+    if nettoyage:
+        d, part_retiree = nettoyer(d, market_raw)
+    beta = beta_depuis_cours(market_raw, symboles)
+    t = walk_forward_harx(ajouter_x_vix(d, beta, vix), h=H_MOIS)
+    tp = walk_forward_harx(ajouter_x_vix(d, beta, vix, decalage=DECALAGE_PLACEBO_VIX), h=H_MOIS)
+    n_essais = N_ESSAIS_HARX_1M_V2 if nettoyage else N_ESSAIS_HARX_1M
+    c = comparer_harx({H_MOIS: t}, {H_MOIS: tp}, n_essais_total=n_essais)
+    etape = 1
+    if nettoyage:
+        mde = c["horizons"][H_MOIS]["dm"].get("mde_80", np.inf)
+        if winsor or (winsor is None and mde > MDE_ETAPE_2):
+            c = comparer_harx({H_MOIS: t}, {H_MOIS: tp}, n_essais_total=n_essais, winsor=True)
+            c["mde_etape_1"] = float(mde)
+            etape = 2
+        c["part_retiree"] = part_retiree
+    c["etape"] = etape
+    t = ajouter_rendement_futur(t, market_raw)
+    c["couverture"] = {"harx": couverture_1m(t, "lvl_harx"), "har": couverture_1m(t, "lvl_har")}
+    c["n_titres"] = int(t["symbol"].nunique())
+    c["debut_test"] = str(pd.Timestamp(t["date"].min()).date()) if not t.empty else None
+    return c

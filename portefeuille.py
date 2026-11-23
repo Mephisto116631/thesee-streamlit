@@ -370,3 +370,47 @@ def portefeuille_recommande(market_raw: pd.DataFrame, snapshot: pd.DataFrame) ->
                     f"covariance Ledoit-Wolf sur 3 ans ({N_FACTEURS} facteurs), rendements attendus = 90 % CAPM "
                     f"(taux sans risque + bêta x prime de risque de {int(PRIME_RISQUE * 100)} %) + 10 % historique."),
     }
+
+
+# ------------------------------------------------------------------------------
+# Stress test historique (docs/METHODE.md § 14, méthode écrite avant le code)
+# ------------------------------------------------------------------------------
+PLAGES_CRISES = {
+    "2008 (crise financière)": ("2007-10-01", "2009-06-30"),
+    "2011 (dette européenne)": ("2011-04-01", "2011-12-31"),
+    "2015-2016 (Chine, pétrole)": ("2015-05-01", "2016-02-29"),
+    "fin 2018 (taux)": ("2018-09-01", "2018-12-31"),
+    "2020 (Covid)": ("2020-02-01", "2020-06-30"),
+    "2022 (inflation)": ("2022-01-01", "2022-10-31"),
+}
+
+
+def chocs_historiques(market_raw: pd.DataFrame, symboles: list[str]) -> dict | None:
+    """Pour chaque crise : sommet et creux du SPY trouvés dans la plage de recherche, chute du marché, temps de retour
+    au sommet ; pour chaque titre, cours au creux / cours au sommet − 1 (None si pas de cours à l'époque).
+    Ce n'est pas une prévision : c'est ce qui s'est passé, rejoué sur les titres d'aujourd'hui."""
+    if market_raw is None or market_raw.empty or INDICE_MARCHE not in set(market_raw["symbol"]):
+        return None
+    px = market_raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
+    px.index = pd.to_datetime(px.index)
+    px = px.ffill(limit=5)
+    m = px[INDICE_MARCHE].dropna()
+    crises, colonnes = [], []
+    for nom, (a, b) in PLAGES_CRISES.items():
+        seg = m[(m.index >= pd.Timestamp(a)) & (m.index <= pd.Timestamp(b))]
+        if len(seg) < 5:
+            continue
+        creux = seg.idxmin()
+        sommet = seg[:creux].idxmax()
+        if sommet >= creux:
+            continue
+        apres = m[m.index > creux]
+        revenu = apres[apres >= m[sommet]]
+        retour = int(m.index.get_loc(revenu.index[0]) - m.index.get_loc(creux)) if len(revenu) else None
+        r = px.loc[creux].reindex(symboles) / px.loc[sommet].reindex(symboles) - 1
+        crises.append({"nom": nom, "debut": sommet.date().isoformat(), "fin": creux.date().isoformat(),
+                       "marche": float(m[creux] / m[sommet] - 1), "retour_jours": retour})
+        colonnes.append([float(x) if np.isfinite(x) else None for x in r.values])
+    if not crises:
+        return None
+    return {"crises": crises, "rendements": [list(ligne) for ligne in zip(*colonnes)]}

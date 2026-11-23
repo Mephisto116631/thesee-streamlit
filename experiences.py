@@ -93,6 +93,10 @@ EXPERIENCES_EXAMEN = {
     "examen_harx": "HAR-X (HAR + VIX × bêta²) contre HAR à 126, 22 et 5 jours ; placebo VIX décalé d'un an ; réplication midcaps",
     # Essai du 22/11/2026 (docs/METHODE.md § 4.15) : protocole écrit avant tout code
     "examen_har_etendu": "HAR étendu : M1 (retards longs, baisses, bêta, secteurs) et M2 (+ VIX, crédit, pente) contre HAR à 126 jours, placebo",
+    # Essai du 22/11/2026 (docs/METHODE.md § 4.16) : protocole écrit avant tout code ; re-test mensuel
+    "examen_harx_1m": "Confirmation de HAR-X à 1 mois sur le S&P MidCap 400 (titres jamais utilisés), placebo, couverture du mauvais cas",
+    # Essai du 22/11/2026 (docs/METHODE.md § 4.17) : données nettoyées, protocole écrit avant tout code ; re-test mensuel
+    "examen_harx_1m_v2": "Confirmation de HAR-X à 1 mois sur les midcaps, données nettoyées (cours < 5 $, sauts > 50 %), winsorisation si non informatif",
     "examen_marge": "Marge de sécurité apprise sur le passé ; rythmes de révision mensuel, semestriel, annuel avec frais ; fourchette avec l'hybride",
 }
 DEBUT_EXAMEN = "1998-01-01"
@@ -301,6 +305,31 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
                 r = c["m2_contre_har"]
                 _inserer(cli, lot, nom, ex.verdict_etendu(c, rep), c, ic=r.get("ecart"), t=r.get("t"), seuil=2.0,
                          n_essais=ex.N_ESSAIS_ETENDU)
+            elif nom == "examen_harx_1m":
+                vix = _vix(DEBUT_EXAMEN)
+                m = universe.get_sp400_tickers()
+                raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
+                c_mid = ex.essai_harx_1m(raw_m, m["symbol"].tolist(), vix)
+                c_sp = ex.essai_harx_1m(raw, snap["symbol"].tolist(), vix, compo, secteurs)
+                v, cond = ex.verdict_harx_1m(c_mid)
+                diag = {"midcaps": c_mid, "sp500_reproduction": c_sp, "conditions": cond,
+                        "decision": "confirme" if v == "confirmé" else "non_confirme",
+                        "avertissement_couverture": c_mid["couverture"]["harx"]["avertissement"]}
+                r = c_mid["horizons"][ex.H_MOIS]["dm"]
+                _inserer(cli, lot, nom, v, diag, ic=r.get("ecart"), t=r.get("t"), seuil=2.0, n_essais=ex.N_ESSAIS_HARX_1M)
+            elif nom == "examen_harx_1m_v2":
+                vix = _vix(DEBUT_EXAMEN)
+                m = universe.get_sp400_tickers()
+                raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
+                c_mid = ex.essai_harx_1m(raw_m, m["symbol"].tolist(), vix, nettoyage=True)
+                c_sp = ex.essai_harx_1m(raw, snap["symbol"].tolist(), vix, compo, secteurs, nettoyage=True,
+                                        winsor=c_mid["etape"] == 2)      # même étape que les midcaps (§ 4.17)
+                v, cond = ex.verdict_harx_1m(c_mid)
+                diag = {"midcaps": c_mid, "sp500_reproduction": c_sp, "conditions": cond, "etape": c_mid["etape"],
+                        "decision": "confirme" if v == "confirmé" else "non_confirme",
+                        "avertissement_couverture": c_mid["couverture"]["harx"]["avertissement"]}
+                r = c_mid["horizons"][ex.H_MOIS]["dm"]
+                _inserer(cli, lot, nom, v, diag, ic=r.get("ecart"), t=r.get("t"), seuil=2.0, n_essais=ex.N_ESSAIS_HARX_1M_V2)
             elif nom == "examen_marge":
                 tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
                 res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",

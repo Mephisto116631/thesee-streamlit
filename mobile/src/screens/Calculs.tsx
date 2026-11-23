@@ -2,10 +2,13 @@ import { useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { api } from "../api";
 import { Card, Loading, textePreuve, useData } from "../components";
-import { corr, num, pct, ratioPct } from "../format";
+import { corr, dateFr, num, pct, ratioPct } from "../format";
 import { avecVolIA, covariance, rendementsAttendus, sousUnivers, variance } from "../optim";
 import { coutAnnualise, planAchat, projection } from "../strategy";
 import { usePortefeuilleCible } from "./Portfolio";
+import { JOURS_MOIS, rejouerCrises, risqueMois } from "../chocs";
+import { zStudent5 } from "../strategy";
+import type { UniversJour } from "./FaceAuxChocs";
 
 /** Une étape de calcul : formule, ce qu'elle veut dire en mots, puis la même formule avec les vrais nombres. */
 function Etape({ titre, formule, definition, calcul, children }: {
@@ -177,6 +180,32 @@ export function Calculs({ section }: { section?: string }) {
         <Etape titre="IA de risque" formule="volatilité prévue = classement IA du risque → niveau des volatilités 3 mois du moment"
           definition={<>L'IA classe les titres du plus calme au plus agité pour les 6 prochains mois ; chaque rang reçoit le niveau de volatilité
             correspondant parmi les titres actuels. Testée sur 2013-2026 : meilleure que la volatilité passée sur 91 % des dates.</>} />
+      </Card>
+
+      <Card title="6. Face aux chocs" repliable id="calc-chocs" ouvert={!section || section === "chocs"}>
+        {(() => {
+          const uj = (reco.data?.univers_facteurs ?? undefined) as UniversJour | undefined;
+          const crises = uj ? rejouerCrises(uj.chocs, uj.symbols, uj.beta, pt.lignes) : [];
+          const c = crises[0];
+          const iJ = uj ? new Map(uj.symbols.map((s, i) => [s, i])) : new Map<string, number>();
+          const k = c && uj?.chocs ? uj.chocs.crises.findIndex((x) => x.nom === c.nom) : -1;
+          const m = uj ? risqueMois(uj, pt.lignes) : null;
+          return <>
+            {c && <Etape titre="Crise rejouée" formule="perte = Σ poids × (cours au creux / cours au sommet − 1) ; titre absent à l'époque : bêta × chute du marché"
+              definition={<>Le sommet et le creux sont ceux du S&P 500 (SPY) dans la période de la crise. On garde les poids d'aujourd'hui pendant
+                toute la chute, sans rien vendre. Ce n'est pas une prévision : c'est ce qui s'est passé.</>}
+              calcul={<>{c.nom} ({dateFr(c.debut)} → {dateFr(c.fin)}) : {pt.lignes.map((l) => {
+                const i = iJ.get(l.symbol);
+                const r = i != null && k >= 0 ? uj!.chocs!.rendements[i]?.[k] : null;
+                return `${pct(l.poids, 0, false)} × ${r != null ? pct(r, 0) : `${num(i != null ? uj!.beta[i] : 1, 2)} × ${pct(c.marche, 0)}`}`;
+              }).join(" + ")} = <b>{pct(c.portefeuille, 1)}</b></>} />}
+            {m && <Etape titre="Risque du mois à venir" formule="mauvais cas 5 % = 1 − exp(−z × σ × √(22/252)), z = 2,015 (Student à 5 degrés)"
+              definition={<>σ = volatilité annuelle du portefeuille avec les volatilités prévues à 22 séances par HAR-X (HAR + VIX) et les corrélations
+                mesurées sur 3 ans. Rendement moyen supposé nul sur un mois.</>}
+              calcul={<>σ = {pct(m.volAn, 1, false)} ; 1 − exp(−{num(zStudent5(0.9), 3)} × {pct(m.volAn, 1, false)} × √({JOURS_MOIS}/252)) = <b>{pct(m.mauvaisCas, 1, false)}</b></>} />}
+            {!c && !m && <p class="hint">Données pas encore publiées par le serveur.</p>}
+          </>;
+        })()}
       </Card>
     </div>
   );

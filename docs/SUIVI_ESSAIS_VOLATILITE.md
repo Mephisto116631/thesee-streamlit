@@ -30,10 +30,12 @@ Document de reprise pour une nouvelle session (Claude Code). Tout est en frança
 | Multi-horizon (5, 22, 63, 126 jours ; IA de niveau B contre HAR) | § 4.13 | § 10 | **Sans pouvoir de conclure** : t_aSPA = +0,06, MDE 0,160 ; meilleur indice à 5 jours (−0,018, t −1,34, MDE 0,039) ; MDE à 22 jours 0,108, bien au-dessus de l'estimation a priori ; 2020 très défavorable à B |
 | HAR-X : HAR + VIX × β² | § 4.14 (+ additif et précisions) | § 11 | **126 j : sans pouvoir de conclure (−4 %, t −0,86) ; 22 j : piste solide (−8 %, t −3,20, Holm < 0,5 %)** |
 | HAR étendu (conseils externes) | § 4.15 | § 12 | **sans pouvoir de conclure ; macro écartée (placebo) ; pire en crise** |
+| Confirmation HAR-X 1 mois (midcaps) | § 4.16 | § 15 | non confirmé (essai non informatif : cours aberrants) |
+| Confirmation HAR-X 1 mois, données nettoyées | § 4.17 | § 16 | **confirmé** (t −2,26 ; effet ≈ 0 dans la fenêtre récente → re-test mensuel) |
 
 Constat transversal : avec n effectif ≈ 36 à 126 jours, le MDE est ≈ 0,05 à 0,16 de QLIKE, bien au-dessus des écarts discutés (0,003 à 0,014). Les essais disent « pas de gain détectable », pas « pas de gain ». Le panel de titres est **déjà** inclus (l'écart de perte est moyenné par date, estimateur de type Driscoll-Kraay) : pas de gain de puissance de ce côté.
 
-Décision en vigueur : **l'hybride (ordre des titres par l'IA, niveau par HAR) reste en place.**
+Décision en vigueur (§ 13, modèle figé) : **l'hybride (ordre des titres par l'IA, niveau par HAR) reste en place** ; risque du mois à venir par HAR-X (§ 16) tant que `examen_harx_1m_v2` reste « confirmé » ; stress test (§ 14).
 
 ## 4. À faire ensuite (par ordre)
 

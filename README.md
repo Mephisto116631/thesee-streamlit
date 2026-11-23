@@ -109,6 +109,8 @@ Garde-fous : refus si un calcul tourne déjà ou a démarré il y a moins de 10 
 
 | PR | Apport |
 |---|---|
+| #30 | Modèle figé (ordre par l'IA, niveau par HAR) ; carte « Face aux chocs » : crises 2008, 2011, 2015-16, fin 2018, 2020, 2022 rejouées sur le portefeuille (pas une prévision) et risque du mois à venir (HAR + VIX), affiché seulement s'il reste confirmé au re-test mensuel |
+| #28, #29 | Laboratoire : XGBoost sur le niveau, HAR × k, multi-horizon, HAR-X (VIX), HAR étendu : rien ne bat HAR à 6 mois de façon prouvable |
 | #27 | Prévision hybride (ordre des titres par l'IA, niveau par HAR) ; portefeuille révisé tous les 6 ou 12 mois ; marge de sécurité du mode « Je limite le risque » ; projection à queues épaisses (Student) |
 | #26 | Examen approfondi de l'IA de volatilité : EWMA, GARCH, HAR, calibration, crises depuis 2008, placebo, autre marché, backtest avec frais, PBO |
 | #25 | Markowitz sur tout le S&P 500 (fin de la présélection par momentum, non prouvée) ; covariance en 20 facteurs ; même optimiseur serveur / appli ; gain de diversification dans la Fiche de calculs ; journal `docs/METHODE.md` |
