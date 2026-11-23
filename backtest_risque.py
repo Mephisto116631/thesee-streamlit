@@ -298,6 +298,9 @@ def backtest_reel(res: pd.DataFrame, px: pd.DataFrame, nom_pf: str, variante: st
     return out
 
 
+LIMITES_MARGE = [0.08, 0.10, 0.12, 0.15, 0.18, 0.20, 0.22, 0.25, 0.28, 0.30, 0.35]   # grille affichée par l'appli (METHODE § 7.4)
+
+
 def marge_walk_forward(res: pd.DataFrame, px: pd.DataFrame, limite: float, variante: str = "hybride",
                        base: str = "sp500", revision_mois: int = 6, q: float = 0.70, min_hist: int = 4) -> dict:
     """Marge de sécurité apprise sur le passé (docs/METHODE.md § 4.9, règle 3) : à chaque révision, on vise

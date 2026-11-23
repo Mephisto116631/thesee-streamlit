@@ -424,6 +424,13 @@ encore un peu mieux que le semestriel sur cette période. L'écart entre les deu
 - **Décision** (prévue par la règle 3) : la marge est appliquée, et l'appli affiche, pour la limite choisie, la part des
   semestres où elle a été tenue (en rouge sous 70 %), avec une explication. Une limite sous ~15 % est à considérer comme
   un objectif, pas une garantie.
+- **Correction du 23/11/2026 (signalée par l'utilisateur, écrite avant le nouveau calcul)** : l'appli affichait la marge et la part tenue
+  de la limite testée la plus proche (10, 12, 15 ou 18 %), calculées seulement avec les niveaux **hybrides**. Pour une limite de 26 %, ou avec la source
+  « Historique 3 ans », le chiffre affiché ne correspondait donc pas au choix de l'utilisateur. **Nouveau calcul** (même méthode,
+  `backtest_risque.marge_walk_forward`, révision semestrielle) : pour **chaque source** (`hist_3a` et `hybride`) et pour une grille de limites de **8 à 35 %**
+  (8, 10, 12, 15, 18, 20, 22, 25, 28, 30, 35 %). L'appli prend la marge et la part tenue **de la source choisie** et de la limite de la grille
+  la plus proche, et nomme cette limite si elle diffère. Le verdict de la règle 3 reste calculé, comme avant, sur 10 à 18 % avec la source hybride
+  (pas de changement de règle). Résultats : tableau ci-dessous, complété après le calcul.
 
 ### 7.5 Fourchette à 1 an : **règle 5 déclenchée**, loi de Student
 - Avec les niveaux hybrides et la loi normale, le « mauvais cas 5 % » a été touché **8,8 %** des fois (seuil 7,5 %). La projection passe donc à une loi de Student à 5 degrés de liberté.

@@ -4,7 +4,7 @@ import { BarreSeuil, Card, ChartBox, cssVar, HelpButton, Info, Loading, OfflineN
 import { frontiere as calculerFrontiere, sousUnivers, variance, type Univers } from "../optim";
 import { ecrireParametres, nbModifies, useParametres } from "../settings";
 import { dateFr, ilYA, num, pct, ratioPct } from "../format";
-import { choisirPoint, choisirPointRisque, HORIZON_DEFAUT, HORIZONS, planAchat, projection } from "../strategy";
+import { choisirMarge, seuilRentabilite, choisirPoint, choisirPointRisque, HORIZON_DEFAUT, HORIZONS, planAchat, projection } from "../strategy";
 import { libelleSource, univers as universFiable, useFiabiliteVol, type FiabiliteVol } from "../fiabilite";
 import { choisirRevision, prochaineRevision } from "../revision";
 import { MonteCarlo } from "./MonteCarlo";
@@ -47,7 +47,10 @@ export function usePortefeuilleCible() {
   // Marge de sécurité du mode « Je limite le risque », apprise sur le passé par le laboratoire
   const runs = useData(api.models);
   const margeRun = runs.data?.find((r) => r.kind === "marge_risque");
-  const marge = Math.min(1.5, Math.max(0.5, Number(margeRun?.diagnostics?.marge) || 1));
+  // Marge et part tenue de la source choisie et de la limite la plus proche (METHODE § 7.4, correction du 23/11/2026)
+  const sourceMarge = params.sourceVol === "ia" && Boolean(u?.vol_ia?.length) ? "hybride" : "hist_3a";
+  const infoMarge = choisirMarge(margeRun?.diagnostics, sourceMarge, e.volMax);
+  const marge = infoMarge.m;
   // Frontière recalculée sur le téléphone avec les hypothèses de la page Paramètres
   // (repli : celle du serveur si l'univers n'est pas encore publié).
   // Titres exclus / imposés par l'utilisateur : même optimiseur, sur le sous-univers
@@ -63,11 +66,7 @@ export function usePortefeuilleCible() {
   // Meilleure rentabilité de long terme possible pour le risque du portefeuille choisi (frontière)
   const maxAuRisque = choix ? Math.max(...frontiere.filter((f) => f.volatilite <= choix.point.volatilite + 0.0025).map((f) => f.rendement)) : null;
   const revisionInfo = { date: revision?.date ?? null, prochaine: prochaineRevision(params.rythmeRevision ?? 6) };
-  // Part des semestres où la limite a été tenue, pour la limite testée la plus proche (10, 12, 15, 18 %)
-  const marges = (margeRun?.diagnostics?.marges ?? {}) as Record<string, { part_respectee_avec_marge?: number; marge_actuelle?: number }>;
-  const cle = Object.keys(marges).sort((a, b) => Math.abs(+a / 100 - e.volMax) - Math.abs(+b / 100 - e.volMax))[0];
-  const margeInfo = { m: marge, part: cle ? marges[cle]?.part_respectee_avec_marge : undefined, limiteTestee: cle ? +cle / 100 : undefined,
-    depuis: margeRun?.diagnostics?.depuis as string | undefined, connue: Boolean(margeRun) };
+  const margeInfo = { ...infoMarge, source: sourceMarge, depuis: margeRun?.diagnostics?.depuis as string | undefined, connue: Boolean(margeRun) };
   return { e, maj, reco, ov, snap, h, params, u, frontiere, modifies, choix, volIA, volHistDe, volIADe, lignes, fiab, maxAuRisque,
     revisionInfo, margeInfo };
 }
@@ -91,7 +90,7 @@ export function Portfolio() {
     <div class="screen">
       <header class="screen-head">
         <div><h1>Portefeuille</h1><p class="sub">{num(e.capital, 0)} € · horizon {h.label}{ajuste ? ` · ${ajuste} ajustement(s)` : ""}</p></div>
-        <HelpButton keys={["sharpe", "volatility", "max_drawdown", "markowitz", "capm", "beta", "revision", "marge_securite", "student"]} intro={<>
+        <HelpButton keys={["source_risque", "projection", "monte_carlo", "sharpe", "volatility", "max_drawdown", "markowitz", "capm", "beta", "revision", "marge_securite", "student"]} intro={<>
           <p><b>Objectif</b> : tu fixes soit la rentabilité visée, soit le risque maximal. L'appli choisit, parmi les ~500 titres du S&P 500,
             le meilleur compromis (frontière efficiente de Markowitz, 20 % max par titre).</p>
           <p><b>Risque</b> : la volatilité de chaque titre, mesurée sur 3 ans ou prévue par l'IA. La prévision de l'IA n'est proposée
@@ -129,17 +128,23 @@ export function Portfolio() {
             <span>Rentabilité visée : <b class="accent">{pct(e.cible, 0, false)} par an</b></span>
             <input type="range" min={0.02} max={0.3} step={0.01} value={e.cible} aria-label="Rentabilité visée par an"
               onInput={(ev) => maj({ cible: Number((ev.target as HTMLInputElement).value) })} />
-            <div class="range-labels"><span>2 %</span><span>8 % ≈ actions long terme</span><span>30 %</span></div>
+            <Reperes min={0.02} max={0.3} repere={0.08} texte="actions sur longue période ≈ 8 %" />
+            {choix && <MontantsObjectif capital={e.capital} point={choix.point} />}
           </div>
         ) : (
           <div class="field">
             <span>Risque maximal : <b class="accent">{pct(e.volMax, 0, false)} de volatilité par an</b></span>
             <input type="range" min={0.08} max={0.35} step={0.01} value={e.volMax} aria-label="Volatilité maximale par an"
               onInput={(ev) => maj({ volMax: Number((ev.target as HTMLInputElement).value) })} />
-            <div class="range-labels"><span>8 % calme</span><span>≈ 18 % S&P 500</span><span>35 % agité</span></div>
+            <Reperes min={0.08} max={0.35} repere={0.18} texte="S&P 500 ≈ 18 %" gauche="calme" droite="agité" />
+            {choix && <MontantsObjectif capital={e.capital} point={choix.point} />}
             {margeInfo.connue ? (
-              <p class="hint">Visé : <b>{pct(e.volMax * margeInfo.m, 1, false)}</b> pour tenir ta limite de {pct(e.volMax, 0, false)}
-                {margeInfo.part != null && <> · une limite de {pct(margeInfo.limiteTestee, 0, false)} a été tenue <b class={margeInfo.part < 0.7 ? "down" : ""}>{pct(margeInfo.part, 0, false)}</b> des semestres depuis {String(margeInfo.depuis ?? "").slice(0, 4)}</>}.
+              <p class="hint">L'appli vise <b>{pct(e.volMax * margeInfo.m, 1, false)}</b> pour tenir ta limite de {pct(e.volMax, 0, false)}
+                {" "}(risque mesuré avec : {margeInfo.source === "hybride" ? "prévision IA + HAR" : "historique 3 ans"}).
+                {margeInfo.part != null
+                  ? <> Au backtest depuis {String(margeInfo.depuis ?? "").slice(0, 4)}, {margeInfo.exacte ? "cette limite" : <>une limite de {pct(margeInfo.limiteTestee, 0, false)}</>} a été
+                    tenue <b class={margeInfo.part < 0.7 ? "down" : "up"}>{pct(margeInfo.part, 0, false)}</b> des semestres.</>
+                  : <> Cette limite n'a pas encore été testée au backtest pour cette source.</>}
                 <Info>Le risque réel varie plus que prévu. L'appli vise donc un peu en dessous de ta limite (marge apprise sur le passé
                   seulement). Même ainsi, une limite basse est souvent dépassée : avec 12 titres au plus, le portefeuille ne peut pas être
                   aussi calme qu'un indice, et les crises font grimper le risque de tous les titres en même temps.</Info></p>
@@ -195,6 +200,16 @@ export function Portfolio() {
               {" "}· prochaine révision le <b>{dateFr(revisionInfo.prochaine.toISOString())}</b></> : <>Prochaine révision le <b>{dateFr(revisionInfo.prochaine.toISOString())}</b></>}
               {" "}(tous les {params.rythmeRevision ?? 6} mois, réglable dans les Paramètres). Entre deux révisions, on garde les titres.</p>
             {frais && <p class="hint">Frais à l'achat : <b>{num(frais.totalFrais, 2)} €</b> ({pct(frais.partFrais, 2, false)}) pour {frais.nbOrdres} ordres.</p>}
+            {frais && (() => {
+              const s = seuilRentabilite(e.capital, frais.totalFrais, frais.nbOrdres, params.fraisOrdre, params.fraisChange, choix.point.rendement);
+              return <p class="hint">Seuil de rentabilité : le portefeuille doit monter de <b class={s.hausse > 0.02 ? "down" : ""}>{pct(s.hausse, 1, false)}</b>
+                {" "}(+{num(s.montant, 0)} €) pour couvrir les frais d'achat et de revente ({num(s.fraisTotal, 0)} € en tout)
+                {s.mois != null && <>, soit environ <b>{s.mois < 1 ? "moins d'un mois" : `${num(s.mois, 0)} mois`}</b> à la rentabilité de long terme (hypothèse)</>}.
+                {s.hausse > 0.02 && <> C'est beaucoup : augmente le montant ou réduis le nombre de lignes (Paramètres).</>}
+                <Info>Hausse nécessaire = (mise + frais de revente) / (mise − frais d'achat) − 1. Revente comptée avec le même nombre d'ordres et le
+                  même coût de change. La durée suppose que le portefeuille rapporte sa rentabilité de long terme chaque année : en réalité, il peut
+                  mettre beaucoup plus (ou moins) longtemps.</Info></p>;
+            })()}
             <Verifier href="#/parametres/calculs/risque" />
           </Card>
 
@@ -233,7 +248,7 @@ export function Portfolio() {
 
           {/* 5. Simulation */}
           <Card title={`Simulation sur ${h.label}`} repliable ouvert={false}>
-            <MonteCarlo lignes={lignes} capital={e.capital} annees={h.annees} volCible={choix.point.volatilite}
+            <MonteCarlo lignes={lignes} capital={e.capital} annees={h.annees} volCible={choix.point.volatilite} rendement={choix.point.rendement}
               source={volIA ? "prévue par l'IA" : "historique 3 ans"} />
             <Verifier href="#/parametres/calculs/projection" />
           </Card>
@@ -397,4 +412,30 @@ function Frontiere({ frontiere, choisi, cible }: { frontiere: { rendement: numbe
   }, [frontiere, choisi, cible]);
   if (frontiere.length < 2) return null;
   return <ChartBox config={cfg} height={220} label="Frontière efficiente : rentabilité attendue selon le risque" />;
+}
+
+/** Échelle d'un curseur : bornes aux extrémités, repère placé à sa vraie position. */
+function Reperes({ min, max, repere, texte, gauche, droite }: { min: number; max: number; repere: number; texte: string; gauche?: string; droite?: string }) {
+  const x = ((repere - min) / (max - min)) * 100;
+  return (
+    <div class="reperes" aria-hidden="true">
+      <span class="tic" style={{ left: `${x}%` }} />
+      {/* Texte centré sur le repère, mais jamais hors de l'écran près des bords */}
+      <span class="lib" style={{ left: `${x}%`, transform: `translateX(${x < 30 ? -x / 0.6 : x > 70 ? -100 + (100 - x) / 0.6 : -50}%)` }}>{texte}</span>
+      <div class="bornes"><span>{pct(min, 0, false)}{gauche ? ` ${gauche}` : ""}</span><span>{pct(max, 0, false)}{droite ? ` ${droite}` : ""}</span></div>
+    </div>
+  );
+}
+
+/** Ce que l'objectif veut dire en euros, pour le portefeuille réellement choisi. */
+function MontantsObjectif({ capital, point }: { capital: number; point: { rendement: number; volatilite: number } }) {
+  const p1 = projection(capital, point.rendement, point.volatilite, 1, point.rendement);
+  return (
+    <p class="hint montants">Avec {num(capital, 0)} € dans ce portefeuille (risque {pct(point.volatilite, 0, false)}, rentabilité de long terme {pct(point.rendement, 1, false)}/an) :
+      {" "}en moyenne <b class="up">+{num(capital * point.rendement, 0)} €/an</b> (hypothèse) ;
+      {" "}une année ordinaire s'écarte de cette moyenne d'environ <b>±{num(capital * point.volatilite, 0)} €</b> ;
+      {" "}une mauvaise année (1 sur 20) : <b class="down">{num(p1.bas - capital, 0)} €</b>.
+      <Info>« Année ordinaire » : environ 2 années sur 3 restent dans cet écart (une volatilité). « Mauvaise année » : le mauvais cas 5 % de la
+        projection à 1 an (loi de Student, queues épaisses). La moyenne vient de l'hypothèse de rentabilité de long terme : ce n'est pas une prévision.</Info></p>
+  );
 }

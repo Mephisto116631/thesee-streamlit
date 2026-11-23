@@ -146,5 +146,26 @@
     "def": "Note de solidité financière de l'entreprise. Investment Grade : AAA à BBB−. Spéculatif (High Yield) : BB+ et en dessous.",
     "lecture": "Plus la note est basse, plus le risque de défaut est élevé et plus l'entreprise paie cher pour emprunter.",
     "limites": "Les agences réagissent souvent en retard ; la note peut ne pas être à jour dans l'appli."
+  },
+  "source_risque": {
+    "categorie": "Risque",
+    "titre": "Historique 3 ans ou prévision IA + HAR",
+    "def": "Le chiffre de risque (volatilité) de chaque titre que l'appli utilise pour composer le portefeuille. « Historique 3 ans » : la volatilité mesurée sur les 3 dernières années. « Prévision IA + HAR » : la volatilité prévue pour les 6 prochains mois, l'ordre des titres venant de l'IA et le niveau du modèle HAR.",
+    "lecture": "C'est le seul endroit où l'IA intervient : elle change quels titres paraissent calmes ou agités, donc la composition. La prévision est re-testée chaque mois ; si le test échoue, l'appli revient à l'historique.",
+    "limites": "Les deux sources ne disent rien du sens des prix. Elles ne servent qu'à estimer l'amplitude des mouvements."
+  },
+  "projection": {
+    "categorie": "Risque",
+    "titre": "Projection (fourchette à l'horizon)",
+    "def": "Calcul théorique de ce que pourrait devenir ton montant à l'horizon choisi : un centre (rentabilité de long terme, hypothèse) et une largeur (le risque du portefeuille), avec une loi de Student à queues épaisses.",
+    "lecture": "Rapide et lisse : mauvais cas 5 %, cas médian, bon cas 5 %, et probabilité de finir en perte. Elle a été vérifiée au backtest (la loi de Student corrige l'optimisme de la loi normale).",
+    "limites": "Une formule ne reproduit pas la forme exacte des krachs (séries de baisses, journées extrêmes)."
+  },
+  "monte_carlo": {
+    "categorie": "Risque",
+    "titre": "Simulation Monte-Carlo",
+    "def": "1 000 trajectoires simulées en tirant au hasard, jour après jour, parmi les rendements quotidiens réels du portefeuille sur l'année passée. Ils sont ramenés au risque choisi (historique ou IA + HAR) et centrés sur la rentabilité de long terme.",
+    "lecture": "Même question que la projection, mais avec la forme des vraies journées (krachs, séries de baisses) au lieu d'une formule. Si les deux donnent des fourchettes proches, l'estimation est robuste.",
+    "limites": "Une seule année de journées réelles : une année calme peut sous-estimer les extrêmes (d'où la carte « Face aux chocs »). Comme la projection, elle ne prévoit pas le sens."
   }
 }
