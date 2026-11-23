@@ -395,13 +395,48 @@ def test_risque_du_mois_du_jour():
     raw, syms = _donnees_examen()
     jours = pd.bdate_range("2007-01-01", "2017-12-31")
     vix = pd.Series(20 + np.random.default_rng(1).random(len(jours)) * 5, index=jours)
-    v, info = mr.niveaux_harx_1m_du_jour(raw, syms, vix)
+    v, v_har, info = mr.niveaux_harx_1m_du_jour(raw, syms, vix)
+    assert list(v_har.index) == list(v.index) and (v_har > 0).all()        # référence HAR seul (§ 4.18)
     derniere = pd.Timestamp(raw["date"].max())
     assert len(v) == len(syms) and (v > 0).all() and np.isfinite(v).all()
     assert info["date"] == derniere.date().isoformat() and info["vix"] == float(vix.loc[derniere])   # pas de VIX postérieur
     # VIX du jour plus haut : seule x_vix change, la prévision bouge dans le sens du coefficient appris
     haut = vix.copy()
     haut.loc[derniere] = 60.0
-    v2, info2 = mr.niveaux_harx_1m_du_jour(raw, syms, haut)
+    v2, v_har2, info2 = mr.niveaux_harx_1m_du_jour(raw, syms, haut)
+    assert np.allclose(v_har2, v_har)                                     # HAR seul ne voit pas le VIX
     assert np.isclose(info2["coef_vix"], info["coef_vix"], rtol=1e-3)     # l'ajustement ne dépend presque pas du dernier jour
     assert np.sign((v2 ** 2 - v ** 2).mean()) == np.sign(info["coef_vix"])
+
+
+
+def _suivi_simule(n_dates: int, graine: int = 0):
+    """Cours simulés à volatilité connue par titre et par mois ; HAR-X prévoit la vraie volatilité, HAR une valeur bruitée."""
+    rng = np.random.default_rng(graine)
+    jours = pd.bdate_range("2024-01-01", periods=n_dates * 5 + 60)
+    syms = [f"S{i}" for i in range(30)]
+    sig = pd.DataFrame(np.repeat(rng.uniform(0.008, 0.03, (len(jours) // 22 + 1, len(syms))), 22, axis=0)[:len(jours)], index=jours, columns=syms)
+    px = 100 * np.exp(np.cumsum(rng.normal(0, 1, sig.shape) * sig.values, axis=0))
+    px = pd.DataFrame(px, index=jours, columns=syms)
+    lignes = []
+    for d in jours[:n_dates * 5:5]:
+        vraie = sig.loc[jours[jours.get_loc(d) + 1]] * np.sqrt(252)            # volatilité des séances qui suivent
+        for s in syms:
+            lignes.append({"date": d.date().isoformat(), "symbol": s, "vol_harx": float(vraie[s]),
+                           "vol_har": float(vraie[s] * np.exp(rng.normal(0, 0.5)))})
+    return pd.DataFrame(lignes), px
+
+
+def test_bilan_reel_mois_en_attente_puis_verdict():
+    import modele_risque as mr
+    suivi, px = _suivi_simule(10)
+    b = mr.bilan_reel_mois(suivi, px, suivi["date"].min())
+    assert b["verdict"] == "en attente" and b["n_dates"] < mr.MIN_DATES_REEL_MOIS and "premier_bilan" in b
+    suivi, px = _suivi_simule(45)
+    b = mr.bilan_reel_mois(suivi, px)
+    assert b["n_dates"] >= mr.MIN_DATES_REEL_MOIS
+    assert b["verdict"] == "HAR-X meilleur" and not b["garde_fou"]
+    # Inversé : HAR-X bruité, HAR juste → garde-fou
+    inv = suivi.rename(columns={"vol_harx": "vol_har", "vol_har": "vol_harx"})
+    b = mr.bilan_reel_mois(inv, px)
+    assert b["verdict"] == "HAR-X moins bon" and b["garde_fou"]

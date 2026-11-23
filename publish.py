@@ -311,6 +311,30 @@ def suivre_volatilite(vol_ia: pd.Series, raw: pd.DataFrame, date_marche, fiabili
     return bilan
 
 
+def suivre_risque_mois(vol_harx: pd.Series, vol_har: pd.Series, raw: pd.DataFrame, date_marche) -> dict:
+    """§ 4.18 : enregistre une fois par semaine les prévisions à 22 séances (HAR-X et HAR seul) dans `suivi_risque_mois`,
+    puis juge celles dont les 22 séances suivantes sont connues. Résultat -> model_runs (kind risque_mois_reel)."""
+    cli = db.get_client()
+    date_marche = pd.Timestamp(date_marche)
+    derniere = cli.table("suivi_risque_mois").select("date").order("date", desc=True).limit(1).execute().data
+    if not derniere or (date_marche - pd.Timestamp(derniere[0]["date"])).days >= 7:
+        lignes = [{"date": str(date_marche.date()), "symbol": s, "vol_harx": float(x), "vol_har": float(vol_har[s])}
+                  for s, x in vol_harx.dropna().items() if s in vol_har.index and pd.notna(vol_har[s])]
+        if lignes:
+            db.upsert_rows("suivi_risque_mois", lignes, on_conflict="date,symbol")
+            print(f"[PUBLISH] Suivi réel du mois : {len(lignes)} prévisions enregistrées au {date_marche.date()}")
+    premiere = cli.table("suivi_risque_mois").select("date").order("date").limit(1).execute().data
+    limite = str((date_marche - pd.Timedelta(days=32)).date())          # 22 séances ≈ 31 jours
+    suivi = pd.DataFrame(db._select_all(lambda: cli.table("suivi_risque_mois").select("date,symbol,vol_harx,vol_har")
+                                        .lte("date", limite).order("date").order("symbol")))
+    bilan = modele_risque.bilan_reel_mois(suivi, _cours(raw), premiere[0]["date"] if premiere else None)
+    db.upsert_rows("model_runs", [_clean({
+        "kind": "risque_mois_reel", "trained_at": pd.Timestamp.now(tz="UTC").isoformat(),
+        "verdict": bilan.get("verdict", "en attente"), "diagnostics": bilan,
+    })], on_conflict="kind")
+    return bilan
+
+
 # ------------------------------------------------------------------------------
 # Valorisation : comptes officiels déposés à la SEC (une fois par semaine)
 # ------------------------------------------------------------------------------
@@ -518,10 +542,16 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
                     v = yf.download("^VIX", start="1998-01-01", progress=False, auto_adjust=False)["Close"]
                     v = (v.iloc[:, 0] if isinstance(v, pd.DataFrame) else v).dropna()
                     v.index = pd.to_datetime(v.index).tz_localize(None)
-                    vol_1m, info = modele_risque.niveaux_harx_1m_du_jour(raw_horizon, u["symbols"], v, composition)
-                    u["vol_1m"] = [float(vol_1m[s]) if s in vol_1m.index else None for s in u["symbols"]]
-                    u["info_1m"] = {**info, "avertissement": bool(ex_1m[0].get("avert")), "part_depassements": ex_1m[0].get("part")}
-                    print(f"[PUBLISH] Risque du mois à venir : {len(vol_1m)} titres (VIX {info['vix']:.1f})")
+                    vol_1m, vol_har_1m, info = modele_risque.niveaux_harx_1m_du_jour(raw_horizon, u["symbols"], v, composition)
+                    bilan_1m = suivre_risque_mois(vol_1m, vol_har_1m, raw, snap["date"].max())
+                    if bilan_1m.get("garde_fou"):
+                        print("[PUBLISH] Risque du mois à venir NON publié : moins bon que HAR en conditions réelles (§ 4.18)")
+                    else:
+                        u["vol_1m"] = [float(vol_1m[s]) if s in vol_1m.index else None for s in u["symbols"]]
+                        u["info_1m"] = {**info, "avertissement": bool(ex_1m[0].get("avert")), "part_depassements": ex_1m[0].get("part"),
+                                        "reel": {k: bilan_1m.get(k) for k in ("verdict", "n_dates", "premier_bilan", "couverture_mauvais_cas")}}
+                        print(f"[PUBLISH] Risque du mois à venir : {len(vol_1m)} titres (VIX {info['vix']:.1f}) ; "
+                              f"réel : {bilan_1m.get('verdict')} ({bilan_1m.get('n_dates', 0)} dates jugées)")
                 else:
                     print("[PUBLISH] Risque du mois à venir NON publié : confirmation absente ou non réussie")
             except Exception as e:

@@ -253,7 +253,7 @@ NOM_LABO_1M = "examen_harx_1m_v2"
 
 
 def niveaux_harx_1m_du_jour(market_raw: pd.DataFrame, symboles: list[str], vix: pd.Series,
-                            composition: pd.DataFrame | None = None) -> tuple[pd.Series, dict]:
+                            composition: pd.DataFrame | None = None) -> tuple[pd.Series, pd.Series, dict]:
     """Volatilité annuelle prévue pour les 22 prochaines séances, à la dernière date. HAR-X ajusté (moindres carrés) sur
     toutes les dates dont la volatilité future est connue, données nettoyées comme au laboratoire (§ 4.17)."""
     import examen_risque as ex
@@ -264,6 +264,7 @@ def niveaux_harx_1m_du_jour(market_raw: pd.DataFrame, symboles: list[str], vix: 
     cols = ex.COLS_HAR + ["x_vix"]
     d = d[np.isfinite(d[cols + ["brut"]]).all(axis=1) & (d["brut"] > 0)]
     coef = ex._mco(d, cols)
+    coef_har = ex._mco(d, ex.COLS_HAR)              # HAR seul, mêmes lignes : référence du suivi réel (§ 4.18)
     m = market_raw[market_raw["symbol"].isin(set(symboles) | {mh.INDICE})]
     px = m.pivot_table(index="date", columns="symbol", values="close").sort_index().ffill(limit=5)
     entrees = ex.har_entrees(px.pct_change())
@@ -273,4 +274,55 @@ def niveaux_harx_1m_du_jour(market_raw: pd.DataFrame, symboles: list[str], vix: 
     auj["x_vix"] = beta.iloc[-1].reindex(list(symboles)) ** 2 * (float(v.iloc[-1]) / 100) ** 2 / 252
     auj = auj.dropna()
     info = {"vix": float(v.iloc[-1]), "date": pd.Timestamp(px.index[-1]).date().isoformat(), "coef_vix": float(coef[-1])}
-    return pd.Series(ex._prevoir(auj, cols, coef), index=auj.index), info
+    return (pd.Series(ex._prevoir(auj, cols, coef), index=auj.index),
+            pd.Series(ex._prevoir(auj, ex.COLS_HAR, coef_har), index=auj.index), info)
+
+
+# Suivi en conditions réelles du risque du mois (docs/METHODE.md § 4.18, écrit avant le code)
+JOURS_MOIS = 22
+MIN_DATES_REEL_MOIS = 26
+
+
+def bilan_reel_mois(suivi: pd.DataFrame, px: pd.DataFrame, premiere=None) -> dict:
+    """Prévisions ENREGISTRÉES (date, symbol, vol_harx, vol_har) jugées sur la volatilité réalisée des 22 séances suivantes.
+    d_t = QLIKE(HAR-X) − QLIKE(HAR) par date ; règles du § 4.18."""
+    import examen_risque as ex
+    import inference as inf
+    from scipy import stats
+    out = {"verdict": "en attente", "n_dates": 0, "min_dates": MIN_DATES_REEL_MOIS}
+    if premiere is not None:
+        out["premier_bilan"] = str((pd.Timestamp(premiere) + pd.tseries.offsets.BDay(JOURS_MOIS + 5 * MIN_DATES_REEL_MOIS)).date())
+    if suivi is None or suivi.empty:
+        return out
+    s = suivi.assign(date=pd.to_datetime(suivi["date"]))
+    dates = [d for d in s["date"].unique() if d in px.index]
+    if not dates:
+        return out
+    reel = cible_risque(px, pd.DatetimeIndex(dates), JOURS_MOIS, "volatilite")[["date", "symbol", "brut"]]
+    t = s.merge(reel, on=["date", "symbol"]).dropna(subset=["vol_harx", "vol_har", "brut"])
+    t = t[(t["brut"] > 0) & (t["vol_harx"] > 0) & (t["vol_har"] > 0)]
+    if t.empty:
+        return out
+    t = t.assign(q_x=ex.qlike(t["vol_harx"], t["brut"]), q_h=ex.qlike(t["vol_har"], t["brut"]))
+    d = t.groupby("date").apply(lambda g: (g["q_x"] - g["q_h"]).mean(), include_groups=False).sort_index()
+    out.update({"n_dates": int(len(d)), "n_titres": int(t["symbol"].nunique()),
+                "qlike": {"harx": float(t["q_x"].mean()), "har": float(t["q_h"].mean())},
+                "biais_median_harx": float((t["vol_harx"] / t["brut"]).median() - 1)})
+    # Couverture du mauvais cas 5 % par titre (constat)
+    pos = {dd: i for i, dd in enumerate(px.index)}
+    fut = []
+    for _, r in t.iterrows():
+        i = pos.get(r["date"])
+        if i is not None and i + JOURS_MOIS < len(px) and r["symbol"] in px.columns:
+            a, b = px[r["symbol"]].iloc[i], px[r["symbol"]].iloc[i + JOURS_MOIS]
+            if pd.notna(a) and pd.notna(b) and a > 0:
+                fut.append((b / a - 1) < stats.t.ppf(0.05, 5) * r["vol_harx"] * np.sqrt(JOURS_MOIS / 252))
+    out["couverture_mauvais_cas"] = float(np.mean(fut)) if fut else None
+    if len(d) < MIN_DATES_REEL_MOIS:
+        return out
+    r = inf.rapport_dm(d.values, JOURS_MOIS / 5)
+    out["dm"] = r
+    tv = r.get("t", 0.0)
+    out["verdict"] = ("HAR-X meilleur" if tv <= -2 else "HAR-X moins bon" if tv >= 2 else "pas de différence détectable")
+    out["garde_fou"] = bool(tv >= 2)
+    return out

@@ -7,7 +7,8 @@ import type { Univers } from "../optim";
 
 export type UniversJour = Univers & {
   chocs?: Chocs | null; vol_1m?: (number | null)[];
-  info_1m?: { vix?: number | null; date?: string; avertissement?: boolean; part_depassements?: number | null } | null;
+  info_1m?: { vix?: number | null; date?: string; avertissement?: boolean; part_depassements?: number | null;
+    reel?: { verdict?: string; n_dates?: number; premier_bilan?: string; couverture_mauvais_cas?: number | null } | null } | null;
 };
 
 const duree = (jours: number | null) => {
@@ -44,6 +45,12 @@ export function FaceAuxChocs({ u, lignes, capital }: { u: UniversJour | undefine
             {mois.couverture < 0.999 && <> {pct(1 - mois.couverture, 0, false)} du portefeuille n'a pas de prévision (titre hors de l'univers du jour).</>}</p>
           {u.info_1m?.avertissement && <div class="note warn">Au test, ce mauvais cas a été dépassé {pct(u.info_1m.part_depassements, 1, false)} des
             mois au lieu de 5 % : la baisse réelle peut être plus forte.</div>}
+          {u.info_1m?.reel && <p class="hint"><b>En conditions réelles</b> : {u.info_1m.reel.verdict === "en attente"
+            ? <>prévisions enregistrées chaque semaine, premier bilan vers le {dateFr(u.info_1m.reel.premier_bilan)}
+              ({u.info_1m.reel.n_dates ?? 0} semaine(s) déjà jugée(s)).</>
+            : <>{({ "HAR-X meilleur": "meilleure", "HAR-X moins bon": "moins bonne", "pas de différence détectable": "pas de différence détectable avec" } as Record<string, string>)[u.info_1m.reel.verdict ?? ""] ?? u.info_1m.reel.verdict}
+              {u.info_1m.reel.verdict === "pas de différence détectable" ? " " : " que "}la même prévision sans le VIX, sur {u.info_1m.reel.n_dates} semaines jugées
+              {u.info_1m.reel.couverture_mauvais_cas != null && <> ; mauvais cas dépassé {pct(u.info_1m.reel.couverture_mauvais_cas, 1, false)} des fois</>}.</>}</p>}
           <p class="hint">Rien à faire pour autant : le portefeuille est révisé tous les 6 mois. Ce chiffre sert à ne pas être surpris.</p>
         </>
       )}
