@@ -111,8 +111,8 @@ function Conseil({ go }: { go: (h: string) => void }) {
         rentabilité de long terme <b>{pct(pt.rendement, 1, false)}</b> par an (hypothèse).</p>
       <div class="stats">
         <Stat label="Volatilité" value={pct(pt.volatilite, 0, false)} sub={volIA ? <>prévue ({libelleSource(fiab.source)}) <BadgeTeste /></> : "historique 3 ans"} tone={toneOf("volatility", pt.volatilite)} />
-        <Stat label="Rendement / risque" value={<>{ratioPct(pt.rendement, pt.volatilite)}<Info>Pour 1 point de volatilité supporté,
-          {" "}{num(pt.rendement / pt.volatilite, 2)} point de rentabilité de long terme par an (hypothèse CAPM).</Info></>} tone={pt.rendement / pt.volatilite >= 0.6 ? "good" : "neutral"} />
+        <Stat label="Rentabilité pour 1 % de risque" value={<>{ratioPct(pt.rendement, pt.volatilite)}<Info>Pour chaque 1 % de risque (volatilité) supporté,
+          {" "}{num(pt.rendement / pt.volatilite, 2)} % de rentabilité de long terme par an (hypothèse CAPM). Plus c'est haut, mieux le risque est payé.</Info></>} tone={pt.rendement / pt.volatilite >= 0.6 ? "good" : "neutral"} />
       </div>
       <Verifier href="#/parametres/calculs/risque" />
     </Card>

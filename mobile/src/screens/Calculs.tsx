@@ -123,8 +123,9 @@ export function Calculs({ section }: { section?: string }) {
             C'est un calcul, pas une prévision.</>}
           calcul={<>σ moy = {pct(volMoy, 1, false)} → σ = {pct(vol, 1, false)} (−{pct(1 - vol / volMoy, 0, false)}) ;
             gain ≈ ({pct(volMoy, 1, false)}² − {pct(vol, 1, false)}²) / 2 = <b>{pct(gainCompose, 2, false)}</b> de rendement composé par an</>} />
-        <Etape titre="Rendement / risque" formule="E[R] / σ"
-          definition={<>Combien de rentabilité on obtient pour chaque point de risque supporté. Affiché en % dans l'appli.</>}
+        <Etape titre="Rentabilité pour 1 % de risque" formule="E[R] / σ"
+          definition={<>Combien de rentabilité on obtient pour chaque 1 % de risque (volatilité) supporté. Plus c'est haut, mieux le risque est payé.
+            On le présente dans ce sens (et non risque / rentabilité) parce qu'il reste lisible même quand la rentabilité est proche de zéro.</>}
           calcul={<>{pct(er, 2, false)} / {pct(vol, 2, false)} = <b>{ratioPct(er, vol)}</b></>} />
         <Etape titre="Ratio de Sharpe" formule="Sharpe = (E[R] − taux sans risque) / σ"
           definition={<>Même idée, mais en ne comptant que ce qui dépasse un placement sans risque (livret, bons du Trésor) : c'est la récompense

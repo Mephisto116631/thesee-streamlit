@@ -38,5 +38,5 @@ export const corr = (v: number | null | undefined, d = 1) =>
 /** Spread en points de base affiché en % (305 pb -> « 3,05 % »). */
 export const pb = (v: number | null | undefined) =>
   v === null || v === undefined || Number.isNaN(v) ? "—" : `${(v / 100).toLocaleString("fr-FR", { maximumFractionDigits: 2, minimumFractionDigits: 2 })} %`;
-/** Rendement / risque en % (0,57 -> « 57 % »). */
-export const ratioPct = (rendement: number, vol: number) => `${Math.round((rendement / Math.max(vol, 1e-9)) * 100)} %`;
+/** Rentabilité obtenue pour 1 % de risque (volatilité) : 12 % de rendement pour 15 % de risque -> « 0,80 % ». Plus haut = mieux. */
+export const ratioPct = (rendement: number, vol: number) => `${num(rendement / Math.max(vol, 1e-9), 2)} %`;

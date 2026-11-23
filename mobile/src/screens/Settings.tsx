@@ -135,7 +135,7 @@ export function Settings() {
           <>
             <h3 class="h3">Ce qu'aurait donné chaque choix (backtest {bt.data.diagnostics.n_mois} mois depuis 2013)</h3>
             <table class="table small">
-              <thead><tr><th>Volatilité</th><th>Risque réel</th><th>Rendement / an</th><th>Rendement / risque</th></tr></thead>
+              <thead><tr><th>Volatilité</th><th>Risque réel</th><th>Rendement / an</th><th>Pour 1 % de risque</th></tr></thead>
               <tbody>{([["hist_3a", "Historique 3 ans"], ["naif_3m", "3 derniers mois"], ["ia", "IA"]] as const).map(([k, nom]) => {
                 const v = bt.data.diagnostics.variantes[k];
                 return v && <tr><td>{nom}</td><td>{pct(v.vol_reelle, 1, false)}</td><td>{pct(v.rendement_annuel, 1, false)}</td>
@@ -144,7 +144,7 @@ export function Settings() {
             </table>
             <p class="hint">Portefeuille Hold reconstruit chaque mois avec les règles de l'appli, mesuré le mois suivant.
               L'IA donne un portefeuille <b>plus calme</b> ({pct(bt.data.diagnostics.ia_vs_hist_3a?.part_mois_moins_risque, 0, false)} des mois
-              moins risqués), mais le rendement baisse presque autant : le rapport rendement / risque reste proche.
+              moins risqués), mais le rendement baisse presque autant : la rentabilité obtenue pour 1 % de risque reste proche.
               Choisis l'IA si tu préfères la stabilité.</p>
           </>
         )}

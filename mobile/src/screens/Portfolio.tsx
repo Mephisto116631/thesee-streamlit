@@ -167,8 +167,8 @@ export function Portfolio() {
                 période (modèle CAPM, Capital Asset Pricing Model : taux sans risque + bêta × prime de risque). Aucun modèle testé ne
                 prévoit les rendements de façon fiable. Réglable dans les Paramètres.</Info></>}
                 value={`${pct(choix.point.rendement, 1, false)}/an`} sub="hypothèse" />
-              <Stat label="Rendement / risque" value={<>{ratioPct(choix.point.rendement, choix.point.volatilite)}<Info>
-                Pour 1 point de volatilité supporté, {num(choix.point.rendement / choix.point.volatilite, 2)} point de rentabilité de long terme par an (hypothèse).
+              <Stat label="Rentabilité pour 1 % de risque" value={<>{ratioPct(choix.point.rendement, choix.point.volatilite)}<Info>
+                Pour chaque 1 % de risque (volatilité) supporté, {num(choix.point.rendement / choix.point.volatilite, 2)} % de rentabilité de long terme par an (hypothèse).
                 Plus c'est haut, mieux le risque est payé.</Info></>} />
             </div>
             <JaugeRisque vol={choix.point.volatilite} source={volIA ? nomPrev : "historique 3 ans"} teste={volIA} />
@@ -344,7 +344,7 @@ function BacktestVol() {
       <summary>Qu'aurait donné chaque choix depuis 2013 ?</summary>
       <div class="details-body">
         <table class="table small">
-          <thead><tr><th>Risque mesuré</th><th>Risque réel</th><th>Rentab. / an</th><th>Rend. / risque</th></tr></thead>
+          <thead><tr><th>Risque mesuré</th><th>Risque réel</th><th>Rentab. / an</th><th>Pour 1 % de risque</th></tr></thead>
           <tbody>{([["hist_3a", "Historique 3 ans"], ["ia", "Prévision IA"]] as const).map(([k, nom]) => v[k] && (
             <tr><td>{nom}</td><td>{pct(v[k].vol_reelle, 1, false)}</td><td>{pct(v[k].rendement_annuel, 1, false)}</td>
               <td><b>{ratioPct(v[k].rendement_annuel, v[k].vol_reelle)}</b></td></tr>
