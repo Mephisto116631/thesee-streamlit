@@ -87,7 +87,14 @@ export function Calculs({ section }: { section?: string }) {
           calcul={<>{ex.symbol} : {num(1 - p.poidsHistorique, 2)} × {pct(ex.capm, 2, false)} + {num(p.poidsHistorique, 2)} × {pct(ex.hist, 1, false)} = <b>{pct(ex.mu, 2, false)}</b></>}>
           <p class="hint">β = sensibilité au marché (SPY) sur 3 ans ; μ_historique = rendement annuel moyen sur 3 ans.</p>
         </Etape>
-        <div class="table-scroll">
+        <ul class="lignes-fiches">{lignes.map((l) => (
+          <li><b>{l.symbol}</b>{" "}
+            <span><small>β</small>{num(l.beta, 2)}</span><span><small>hist.</small>{pct(l.hist, 1, false)}</span>
+            <span><small>CAPM</small>{pct(l.capm, 1, false)}</span><span><small>μ</small><b>{pct(l.mu, 1, false)}</b></span>
+            <span><small>vol.</small>{pct(l.vol, 0, false)}</span><span><small>poids</small>{pct(l.poids, 1, false)}</span>
+            <span><small>w×μ</small>{pct(l.poids * l.mu, 2, false)}</span></li>
+        ))}</ul>
+        <div class="table-scroll repli">
           <table class="table small">
             <thead><tr><th>Titre</th><th>β</th><th>Hist.</th><th>CAPM</th><th>μ</th><th>Vol.</th><th>Poids</th><th>w×μ</th></tr></thead>
             <tbody>{lignes.map((l) => (
