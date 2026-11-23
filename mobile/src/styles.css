@@ -521,3 +521,5 @@ input[type="range"] { width: 100%; margin: 10px 0 2px; accent-color: var(--accen
 /* Bande opaque sous la barre d'état Android : le contenu ne défile plus sous l'heure et les icônes */
 body::before { content: ""; position: fixed; top: 0; left: 0; right: 0; z-index: 45; background: var(--bg);
   height: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px)); }
+.reperes .hors { position: absolute; left: 0; top: -14px; height: 6px; border-radius: 3px;
+  background: repeating-linear-gradient(135deg, var(--muted) 0 3px, transparent 3px 6px); opacity: .55; }
