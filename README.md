@@ -109,6 +109,8 @@ Garde-fous : refus si un calcul tourne déjà ou a démarré il y a moins de 10 
 
 | PR | Apport |
 |---|---|
+| #32 | Suivi en conditions réelles du risque du mois (prévisions enregistrées chaque semaine, garde-fou) ; rappels de révision sur le téléphone (APK) ; glossaire dans l'appli (Analyse › Glossaire, et chaque bouton « ? ») |
+| #31 | Interface : plus de glissement latéral ni de texte coupé (verdicts et filtres qui passent à la ligne, noms sur deux lignes, tableaux en fiches sur téléphone) |
 | #30 | Modèle figé (ordre par l'IA, niveau par HAR) ; carte « Face aux chocs » : crises 2008, 2011, 2015-16, fin 2018, 2020, 2022 rejouées sur le portefeuille (pas une prévision) et risque du mois à venir (HAR + VIX), affiché seulement s'il reste confirmé au re-test mensuel |
 | #28, #29 | Laboratoire : XGBoost sur le niveau, HAR × k, multi-horizon, HAR-X (VIX), HAR étendu : rien ne bat HAR à 6 mois de façon prouvable |
 | #27 | Prévision hybride (ordre des titres par l'IA, niveau par HAR) ; portefeuille révisé tous les 6 ou 12 mois ; marge de sécurité du mode « Je limite le risque » ; projection à queues épaisses (Student) |
