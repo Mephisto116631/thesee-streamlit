@@ -228,12 +228,54 @@ export function Verifier({ href, label = "Vérifier ce calcul" }: { href: string
 }
 
 /** Info-bulle : un « i » qui déplie une explication courte. */
+// Une seule infobulle ouverte à la fois ; elle se ferme au toucher ailleurs, au défilement ou avec Échap.
+const EVT_INFO = "thesee:info-ouverte";
+let compteurInfo = 0;
+
+/** Position de la bulle : toujours dans l'écran (12 px de marge), sous le bouton, ou au-dessus s'il est bas dans l'écran. */
+export function positionBulle(bouton: { left: number; right: number; top: number; bottom: number }, vw: number, vh: number): Record<string, number> {
+  const largeur = Math.min(280, vw - 24);
+  const centre = (bouton.left + bouton.right) / 2;
+  const left = Math.max(12, Math.min(centre - largeur / 2, vw - largeur - 12));
+  const dessous = bouton.bottom < vh * 0.6;
+  return dessous ? { left, width: largeur, top: bouton.bottom + 6 } : { left, width: largeur, bottom: vh - bouton.top + 6 };
+}
+
 export function Info({ children }: { children: ComponentChildren }) {
   const [o, setO] = useState(false);
+  const [pos, setPos] = useState<Record<string, number> | null>(null);
+  const id = useRef(++compteurInfo);
+  const boite = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!o) return;
+    const fermer = () => setO(false);
+    const dehors = (e: Event) => { if (!boite.current?.contains(e.target as Node)) fermer(); };
+    const autre = (e: Event) => { if ((e as CustomEvent).detail !== id.current) fermer(); };
+    const touche = (e: KeyboardEvent) => { if (e.key === "Escape") fermer(); };
+    document.addEventListener("pointerdown", dehors, true);
+    window.addEventListener("scroll", fermer, { passive: true, capture: true });
+    window.addEventListener(EVT_INFO, autre);
+    window.addEventListener("keydown", touche);
+    return () => {
+      document.removeEventListener("pointerdown", dehors, true);
+      window.removeEventListener("scroll", fermer, { capture: true } as EventListenerOptions);
+      window.removeEventListener(EVT_INFO, autre);
+      window.removeEventListener("keydown", touche);
+    };
+  }, [o]);
   return (
-    <span class="info">
-      <button class="info-btn" aria-label="Explication" aria-expanded={o} onClick={(e) => { e.stopPropagation(); setO(!o); }}>i</button>
-      {o && <span class="info-txt" role="note">{children}</span>}
+    <span class="info" ref={boite}>
+      <button class="info-btn" aria-label="Explication" aria-expanded={o} onClick={(e) => {
+        e.stopPropagation();
+        if (!o) {
+          window.dispatchEvent(new CustomEvent(EVT_INFO, { detail: id.current }));
+          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          setPos(positionBulle(r, window.innerWidth, window.innerHeight));
+        }
+        setO(!o);
+      }}>i</button>
+      {o && <span class="info-txt" role="note" onClick={() => setO(false)}
+        style={pos ? Object.fromEntries(Object.entries(pos).map(([k, v]) => [k, `${v}px`])) : undefined}>{children}</span>}
     </span>
   );
 }

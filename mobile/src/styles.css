@@ -458,7 +458,7 @@ input[type="range"] { width: 100%; margin: 10px 0 2px; accent-color: var(--accen
 .verifier { display: inline-block; margin-top: 8px; font-size: 12.5px; color: var(--muted); text-decoration: none; border-bottom: 1px dotted var(--muted); }
 .info { position: relative; display: inline-block; margin-left: 4px; }
 .info-btn { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--accent); background: none; color: var(--accent); font-size: 11px; font-weight: 700; padding: 0; line-height: 16px; font-style: italic; }
-.info-txt { display: block; position: absolute; z-index: 20; left: -120px; top: 22px; width: 240px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 12.5px; font-weight: 400; color: var(--text); box-shadow: 0 6px 20px rgba(0,0,0,.18); line-height: 1.4; }
+.info-txt { display: block; position: fixed; z-index: 50; max-height: 50vh; overflow-y: auto; white-space: normal; text-align: left; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 12.5px; font-weight: 400; color: var(--text); box-shadow: 0 6px 20px rgba(0,0,0,.18); line-height: 1.4; }
 .barre-seuil { display: flex; align-items: center; gap: 8px; }
 .barre-seuil .piste { position: relative; flex: 1; height: 6px; background: var(--card2); border-radius: 3px; min-width: 60px; }
 .barre-seuil .rempli { height: 100%; border-radius: 3px; background: var(--muted); }

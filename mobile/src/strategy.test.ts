@@ -70,7 +70,7 @@ describe("indices en %", () => {
     expect(corr(0.077)).toBe("7,7 %");
     expect(corr(-0.45, 0)).toBe("-45 %");
     expect(pb(305)).toBe("3,05 %");
-    expect(ratioPct(0.06, 0.105)).toBe("57 %");
+    expect(ratioPct(0.06, 0.105)).toBe("0,57 %");             // rentabilité pour 1 % de risque
     expect(corr(null)).toBe("—");
   });
 });
@@ -87,5 +87,20 @@ describe("projection à queues épaisses (règle 5)", () => {
     expect(t.bas).toBeLessThan(n.bas);
     expect(t.haut).toBeGreaterThan(n.haut);
     expect(t.median).toBeCloseTo(n.median, 9);
+  });
+});
+
+describe("infobulles", () => {
+  it("restent dans l'écran, sous le bouton ou au-dessus s'il est bas", async () => {
+    const { positionBulle } = await import("./components");
+    const bord = positionBulle({ left: 340, right: 358, top: 100, bottom: 118 }, 360, 800);
+    expect(bord.left + bord.width).toBeLessThanOrEqual(360 - 12);
+    expect(bord.left).toBeGreaterThanOrEqual(12);
+    expect(bord.top).toBe(124);
+    const gauche = positionBulle({ left: 2, right: 20, top: 100, bottom: 118 }, 360, 800);
+    expect(gauche.left).toBe(12);
+    const bas = positionBulle({ left: 100, right: 118, top: 700, bottom: 718 }, 360, 800);
+    expect(bas.bottom).toBe(106);
+    expect(bas.top).toBeUndefined();
   });
 });
