@@ -1188,3 +1188,115 @@ def verdict_asymetrie(c: dict, placebo: dict) -> tuple[str, bool]:
     morceaux = ["risque baissier persistant à " + " et ".join(f"{h} j" for h in a) if a else "risque baissier non persistant",
                 "prévoit le sens à " + " et ".join(f"{h} j" for h in b) if b else "ne prévoit pas le sens"]
     return " ; ".join(morceaux), True
+
+
+# ------------------------------------------------------------------------------
+# AUDIT DES BIAIS (docs/METHODE.md § 4.21) : constats et alertes fixées à l'avance, aucun essai compté
+# ------------------------------------------------------------------------------
+SEUIL_SOUS_ESTIME = 0.85        # rapport de variance prévue / réalisée
+SEUIL_SUR_ESTIME = 1.25
+FENETRES_ALERTE = 3             # sur 4 fenêtres de test
+MIN_TITRES_GROUPE = 10          # IC dans un groupe : au moins 10 titres à la date
+
+
+def _rapport_variance(g: pd.DataFrame, col: str) -> float | None:
+    """moyenne(σ prévue²) / moyenne(σ réalisée²) : calibration en moyenne (1 = juste, < 1 = risque sous-estimé)."""
+    g = g[[col, "brut"]].dropna()
+    reel = float((g["brut"] ** 2).mean()) if len(g) else 0.0
+    return float((g[col] ** 2).mean() / reel) if reel > 0 else None
+
+
+def _ic_dans(g: pd.DataFrame, col: str) -> pd.Series:
+    """IC par date entre `col` et la volatilité réalisée, titres du groupe classés entre eux."""
+    return g.groupby("date").apply(
+        lambda x: mh._spearman(x[col], x["brut"]) if x[[col, "brut"]].dropna().shape[0] >= MIN_TITRES_GROUPE else np.nan,
+        include_groups=False).dropna()
+
+
+def _bilan_groupe(g: pd.DataFrame, col: str = "lvl_hybride", ref: str = "lvl_har") -> dict:
+    ok = g[[col, "brut"]].dropna()
+    ratio = (ok[col] / ok["brut"]).replace([np.inf, -np.inf], np.nan).dropna()
+    par_fen = {int(k): _rapport_variance(x, col) for k, x in g.groupby("fenetre")} if "fenetre" in g else {}
+    ic_par_fen = {int(k): (float(_ic_dans(x, "pred").mean()) if len(_ic_dans(x, "pred")) else None,
+                           float(_ic_dans(x, ref).mean()) if len(_ic_dans(x, ref)) else None)
+                  for k, x in g.groupby("fenetre")} if "fenetre" in g else {}
+    ic_ia, ic_ref = _ic_dans(g, "pred"), _ic_dans(g, ref)
+    return {
+        "n_obs": int(len(ok)), "n_dates": int(g["date"].nunique()),
+        "rapport_variance": _rapport_variance(g, col), "rapport_variance_har": _rapport_variance(g, ref),
+        "rapport_variance_par_fenetre": par_fen,
+        "biais_median": float(ratio.median() - 1) if len(ratio) else None,
+        "part_sous_estime": float((ratio < 1).mean()) if len(ratio) else None,
+        "qlike": float(np.nanmean(qlike(ok[col].values, ok["brut"].values))) if len(ok) else None,
+        "qlike_har": float(np.nanmean(qlike(g[ref].dropna().values, g.loc[g[ref].notna(), "brut"].values))) if g[ref].notna().any() else None,
+        "ic_ia": float(ic_ia.mean()) if len(ic_ia) else None, "ic_har": float(ic_ref.mean()) if len(ic_ref) else None,
+        "ic_par_fenetre": {k: {"ia": a, "har": b} for k, (a, b) in ic_par_fen.items()},
+    }
+
+
+def alertes_groupe(b: dict) -> list[str]:
+    """Alertes du § 4.21 pour un groupe (règles fixées avant l'audit)."""
+    out = []
+    rv = [v for v in b["rapport_variance_par_fenetre"].values() if v is not None]
+    if sum(v < SEUIL_SOUS_ESTIME for v in rv) >= FENETRES_ALERTE:
+        out.append("sous-estimation persistante")
+    if sum(v > SEUIL_SUR_ESTIME for v in rv) >= FENETRES_ALERTE:
+        out.append("surestimation persistante")
+    ics = [x for x in b["ic_par_fenetre"].values() if x["ia"] is not None and x["har"] is not None]
+    if sum(x["ia"] < x["har"] for x in ics) >= FENETRES_ALERTE:
+        out.append("classement creux (IA < HAR)")
+    return out
+
+
+def couverture_survivant(ret: pd.DataFrame, composition: pd.DataFrame | None, dates) -> dict:
+    """Par année : part des membres du S&P 500 de la date dont Yahoo fournit un cours (les titres disparus manquent)."""
+    if composition is None:
+        return {}
+    out = {}
+    for d in pd.DatetimeIndex(dates):
+        membres = composition[(composition["debut"] <= d) & (composition["fin"].isna() | (d < composition["fin"]))]["symbol"]
+        if not len(membres):
+            continue
+        presents = ret.columns.intersection(membres)
+        ligne = ret.loc[:d].iloc[-1] if len(ret.loc[:d]) else None
+        n_ok = int(ligne.reindex(presents).notna().sum()) if ligne is not None else 0
+        out.setdefault(d.year, []).append(n_ok / len(set(membres)))
+    return {int(a): float(np.mean(v)) for a, v in sorted(out.items())}
+
+
+def audit_biais(t: pd.DataFrame, ret: pd.DataFrame | None = None, composition: pd.DataFrame | None = None) -> dict:
+    """Audit du § 4.21 sur le walk-forward de l'examen : calibration et IC par groupe, alertes, biais du survivant."""
+    t = t.copy()
+    groupes = {}
+    if "secteur" in t:
+        groupes["secteur"] = t["secteur"]
+    for nom, col in [("taille", "liquidite"), ("beta", "beta_1a"), ("volatilite_passee", "vol_3m")]:
+        if col in t:
+            groupes[nom] = pd.qcut(t[col], 5, labels=["1 (bas)", "2", "3", "4", "5 (haut)"], duplicates="drop")
+    groupes["annee"] = pd.DatetimeIndex(t["date"]).year
+
+    out = {"global": _bilan_groupe(t), "groupes": {}, "alertes": []}
+    for nom, cle in groupes.items():
+        out["groupes"][nom] = {}
+        for val, g in t.groupby(cle, observed=True):
+            if g["date"].nunique() < 3:
+                continue
+            b = _bilan_groupe(g)
+            out["groupes"][nom][str(val)] = b
+            if nom != "annee":                    # une année ne couvre qu'une fenêtre : pas d'alerte de persistance
+                out["alertes"] += [{"groupe": nom, "valeur": str(val), "alerte": a} for a in alertes_groupe(b)]
+    if "secteur" in t:                            # IC dans les secteurs, moyenne des secteurs, contre IC global
+        intra = {c: [float(_ic_dans(g, c).mean()) for _, g in t.groupby("secteur") if len(_ic_dans(g, c))]
+                 for c in ("pred", "lvl_har")}
+        out["ic_intra_secteur"] = {"ia": float(np.mean(intra["pred"])) if intra["pred"] else None,
+                                   "har": float(np.mean(intra["lvl_har"])) if intra["lvl_har"] else None}
+    if ret is not None:
+        dates = pd.DatetimeIndex(sorted(t["date"].unique()))[::26]          # une date par semestre environ
+        out["couverture_survivant"] = couverture_survivant(ret, composition, dates)
+    return out
+
+
+def verdict_audit(a: dict) -> str:
+    n = len(a.get("alertes", []))
+    return "aucune alerte" if n == 0 else f"{n} alerte(s) : " + " ; ".join(f"{x['groupe']} {x['valeur']} ({x['alerte']})"
+                                                                            for x in a["alertes"][:6])

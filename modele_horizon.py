@@ -92,8 +92,9 @@ def _rsi(px: pd.DataFrame, n: int = 14) -> pd.DataFrame:
 
 
 def caracteristiques(market_raw: pd.DataFrame, symboles: list[str],
-                     secteurs: dict[str, str] | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Retourne (tableau large des cours, caractéristiques empilées par date et titre)."""
+                     secteurs: dict[str, str] | None = None, derniere_date: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Retourne (tableau large des cours, caractéristiques empilées par date et titre).
+    Une date par semaine ; `derniere_date` ajoute le dernier jour de cours (prévision du jour, METHODE § 4.20)."""
     m = market_raw[market_raw["symbol"].isin(set(symboles) | {INDICE})]
     px = m.pivot_table(index="date", columns="symbol", values="close").sort_index().ffill(limit=5)
     vol = m.pivot_table(index="date", columns="symbol", values="volume").sort_index().reindex(px.index)
@@ -130,6 +131,8 @@ def caracteristiques(market_raw: pd.DataFrame, symboles: list[str],
         f["mom_secteur"] = f["mom_12_1"] * np.nan
 
     dates = px.index[252::PAS_ECHANTILLON]
+    if derniere_date and len(px.index) > 252 and dates[-1] != px.index[-1]:
+        dates = dates.append(px.index[-1:])
     cols = [c for c in px.columns if c != INDICE and c in symboles]
     blocs = []
     for nom, tab in f.items():

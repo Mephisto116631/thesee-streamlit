@@ -129,13 +129,42 @@ def entrainer_risque(market_raw: pd.DataFrame, symboles: list[str], nom: str, ge
     return ev
 
 
+def membres_du_jour(composition: pd.DataFrame | None, date, symboles) -> pd.Index:
+    """Membres du S&P 500 à `date` parmi `symboles` (tous si la composition manque)."""
+    symboles = pd.Index(symboles)
+    if composition is None:
+        return symboles
+    d = pd.Timestamp(date)
+    c = composition[(composition["debut"] <= d) & (composition["fin"].isna() | (d < composition["fin"]))]
+    return symboles.intersection(pd.Index(c["symbol"].unique()))
+
+
+def rangs_parmi_membres(auj: pd.DataFrame, membres: pd.Index, feats: list[str]) -> pd.DataFrame:
+    """Caractéristiques du jour exprimées comme au laboratoire (METHODE § 4.20) :
+    - membres : rang recalculé parmi les seuls membres ;
+    - autres titres : place de leur valeur parmi les membres (part des membres de valeur ≤), sans déplacer les membres.
+    `auj` : rangs du jour (n'importe quelle population), index = symboles. Un rang est monotone en la valeur brute :
+    reclasser les rangs revient à reclasser les valeurs."""
+    out = auj.copy()
+    m = auj.index.intersection(membres)
+    autres = auj.index.difference(membres)
+    for f in feats:
+        ref = np.sort(auj.loc[m, f].dropna().values)
+        out.loc[m, f] = auj.loc[m, f].rank(pct=True)
+        if len(autres) and len(ref):
+            v = auj.loc[autres, f]
+            out.loc[autres, f] = np.where(v.notna(), np.searchsorted(ref, v.values, side="right") / len(ref), np.nan)
+    return out
+
+
 def predire_volatilite(market_raw: pd.DataFrame, symboles: list[str], composition: pd.DataFrame | None = None,
-                       nom: str = "6m", niveaux: str = "vol_3m") -> pd.Series:
-    """Volatilité annuelle PRÉVUE par l'IA pour chaque titre, à la dernière date connue.
-    Le modèle classe les titres ; le rang prédit est converti en niveau avec la distribution
-    actuelle des volatilités 3 mois (même méthode que le backtest, validée sur 2013-2026)."""
+                       nom: str = "6m", niveaux: str = "vol_3m", exclus=()) -> pd.Series:
+    """Volatilité annuelle PRÉVUE pour chaque titre, au dernier jour de cours.
+    Le modèle classe les titres ; le rang prédit est converti en niveau avec la distribution des niveaux du jour des
+    membres du S&P 500 (volatilités 3 mois, ou HAR pour l'hybride). Mêmes entrées qu'au laboratoire (METHODE § 4.20) :
+    rangs parmi les membres du jour. `exclus` (ETF) : pas de classement par l'IA, niveau de référence seul."""
     h = mh.HORIZONS[nom]
-    px, X = mh.caracteristiques(market_raw, symboles)
+    px, X = mh.caracteristiques(market_raw, symboles, derniere_date=True)
     if X.empty:
         return pd.Series(dtype=float)
     Y = cible_risque(px, pd.DatetimeIndex(X["date"].unique()), h, "volatilite")
@@ -147,17 +176,27 @@ def predire_volatilite(market_raw: pd.DataFrame, symboles: list[str], compositio
     config, _ = mh.choisir_config(data, h)
     m = mh._modele(config).fit(data[mh.FEATURES], data["y"])
     derniere = X["date"].max()
-    auj = X[X["date"] == derniere].dropna(subset=mh.FEATURES).set_index("symbol")
-    rang = pd.Series(m.predict(auj[mh.FEATURES]), index=auj.index).rank(pct=True)
+    auj = X[X["date"] == derniere].set_index("symbol")
+    actions = auj.index.difference(pd.Index(list(exclus)))
+    membres = membres_du_jour(composition, derniere, actions)
+    if len(membres) < mh.MIN_MEMBRES:           # composition absente ou trop vieille : tous les titres font foi
+        membres = actions
+    auj = rangs_parmi_membres(auj.loc[actions], membres, mh.FEATURES).dropna(subset=mh.FEATURES)
+    pred = pd.Series(m.predict(auj[mh.FEATURES]), index=auj.index)
+    # Rang de chaque titre dans la distribution des prévisions des membres (les autres titres s'y insèrent)
+    ref = np.sort(pred.reindex(membres).dropna().values)
+    rang = pd.Series(np.searchsorted(ref, pred.values, side="right") / max(1, len(ref)), index=pred.index).clip(0, 1)
+    tous = auj.index.union(pd.Index(list(exclus)).intersection(px.columns))
     if niveaux in ("har", "har_seul"):
-        lvl = niveaux_har_du_jour(px, data, auj.index)
+        lvl = niveaux_har_du_jour(px, data, tous)
         if niveaux == "har_seul":
-            return lvl.reindex(auj.index)
-        base = np.sort(lvl.reindex(auj.index).dropna().values)   # hybride : ordre de l'IA, niveaux HAR
+            return lvl.dropna()
     else:
-        vol_3m = px.pct_change().iloc[-63:].std() * np.sqrt(252)
-        base = np.sort(vol_3m.reindex(auj.index).dropna().values)
-    return pd.Series(np.quantile(base, rang.values), index=rang.index)
+        lvl = px.pct_change().iloc[-63:].std() * np.sqrt(252)
+    base = np.sort(lvl.reindex(membres).dropna().values)
+    out = pd.Series(np.quantile(base, rang.values), index=rang.index) if len(base) else pd.Series(dtype=float)
+    etf = lvl.reindex(pd.Index(list(exclus)).intersection(px.columns)).dropna()   # ETF : niveau de référence seul
+    return pd.concat([out, etf])
 
 
 def niveaux_har_du_jour(px: pd.DataFrame, data: pd.DataFrame, symboles) -> pd.Series:

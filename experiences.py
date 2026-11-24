@@ -97,6 +97,7 @@ EXPERIENCES_EXAMEN = {
     # Essai du 23/11/2026 (docs/METHODE.md § 4.19) : protocole écrit avant tout code
     "examen_asymetrie": "Part baissière du risque : persiste-t-elle (22 et 126 j) et prévoit-elle le sens du rendement ? Holm, placebo",
     "examen_marge": "Marge de sécurité apprise sur le passé ; rythmes de révision mensuel, semestriel, annuel avec frais ; fourchette avec l'hybride",
+    "examen_audit_biais": "Audit des biais (§ 4.21) : calibration et classement par secteur, taille, bêta, volatilité, année ; alertes fixées à l'avance ; biais du survivant",
 }
 DEBUT_EXAMEN = "1998-01-01"
 
@@ -456,6 +457,14 @@ def _examen_backtest_reel(ctx: Contexte, nom: str):
     _inserer(cli, lot, nom, f"PBO {p:.0%}" if p is not None else "PBO non calculable", c, ic=p)
 
 
+def _examen_audit_biais(ctx: Contexte, nom: str):
+    """Constats du § 4.21 (aucun essai compté : n_essais = 0)."""
+    a = ex.audit_biais(ctx.t, ctx.ret, ctx.compo)
+    a["debut_test"] = str(pd.Timestamp(ctx.t["date"].min()).date())
+    g = a["global"]
+    _inserer(ctx.cli, ctx.lot, nom, ex.verdict_audit(a), a, ic=g.get("rapport_variance"), n_essais=0)
+
+
 EXAMENS = {   # nom -> (fonction, besoin du walk-forward commun `t`)
     "examen_references": (_examen_references, True),
     "examen_calibration": (_examen_calibration, True),
@@ -474,6 +483,7 @@ EXAMENS = {   # nom -> (fonction, besoin du walk-forward commun `t`)
     "examen_harx_1m_v2": (_examen_harx_1m_v2, False),
     "examen_asymetrie": (_examen_asymetrie, False),
     "examen_marge": (_examen_marge, False),
+    "examen_audit_biais": (_examen_audit_biais, True),
     "examen_backtest_reel": (_examen_backtest_reel, False),
 }
 

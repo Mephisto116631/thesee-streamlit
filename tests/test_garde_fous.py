@@ -122,7 +122,8 @@ def test_spearman_constante_donne_nan_sans_avertissement():
 def test_chaque_examen_a_sa_fonction():
     assert set(experiences.EXAMENS) == set(experiences.EXPERIENCES_EXAMEN)
     besoin_t = {n for n, (_, b) in experiences.EXAMENS.items() if b}
-    assert besoin_t == {"examen_references", "examen_calibration", "examen_crises", "examen_hybride", "examen_ia_contre_har"}
+    assert besoin_t == {"examen_references", "examen_calibration", "examen_crises", "examen_hybride", "examen_ia_contre_har",
+                        "examen_audit_biais"}
     assert all(callable(f) for f, _ in experiences.EXAMENS.values())
 
 

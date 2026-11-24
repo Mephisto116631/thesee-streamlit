@@ -126,6 +126,7 @@ Garde-fous : il faut être connecté (onglet Positions) ; refus si un calcul tou
 
 | PR | Apport |
 |---|---|
+| (IA) | Prévision de volatilité : mêmes entrées en production qu'au laboratoire (rangs parmi les membres du jour, dernier jour de cours, ETF hors IA, METHODE § 4.20) ; audit mensuel des biais par secteur, taille, bêta, volatilité et année (§ 4.21) |
 | (revue, suite) | Streamlit et ancien modèle « hausse demain » retirés (cron sans Streamlit, 33 dépendances de moins) ; taux sans risque du jour (FRED, METHODE § 2.1), suivi par défaut dans l'appli ; examens du laboratoire en registre ; `publier()` découpé en étapes |
 | (revue) | Revue de code ([`docs/REVUE_2026-11.md`](docs/REVUE_2026-11.md)) : passage « partiel » signalé dans l'appli au lieu d'un faux « à jour » ; plus de suppression massive de titres sur panne ; versions Python figées et enregistrées avec chaque essai ; « Relancer le calcul » réservé aux comptes connectés ; parité de l'optimiseur vérifiée côté Python ; ruff en CI |
 | #34 | « Hausse ou baisse ? » : part du risque venant des jours de baisse (portefeuille et titres) ; essai : elle ne se répète pas et ne prévoit pas le sens ; écran « Bien utiliser Thésée » |
