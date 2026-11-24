@@ -475,7 +475,8 @@ def publier_volatilite(raw: pd.DataFrame, raw_horizon: pd.DataFrame, snap: pd.Da
         db.progression(93, "Volatilité prévue par l'IA")
         fiab = source_volatilite()
         niveaux = {"hybride": "har", "har": "har_seul"}.get(fiab["source"], "vol_3m")
-        vol_ia = modele_risque.predire_volatilite(raw_horizon, snap["symbol"].tolist(), composition, niveaux=niveaux)
+        vol_ia = modele_risque.predire_volatilite(raw_horizon, snap["symbol"].tolist(), composition, niveaux=niveaux,
+                                                  exclus=set(universe.ETFS_SECTORIELS))
         vol_publiee = filtrer_vol_ia(vol_ia, fiab)
         if vol_publiee is None:
             # Preuve tombée : on efface les anciennes valeurs, l'appli revient à l'historique

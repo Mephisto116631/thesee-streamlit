@@ -24,7 +24,7 @@ Règle d'or : un chiffre ne sert à décider dans l'appli que s'il est **prouvé
 | **GARCH(1,1)** | Variance de demain = ω + α·rendement² d'aujourd'hui + β·variance d'aujourd'hui : la volatilité vient par vagues, puis revient vers son niveau de long terme. |
 | **HAR** | Régression de la variance future sur les variances du dernier jour, de la semaine, du mois et du trimestre (Corsi, 2009) ; réputée très dure à battre. |
 | **PBO** | Probability of Backtest Overfitting (Bailey et López de Prado) : probabilité que la meilleure variante d'un backtest ne soit bonne que par chance. |
-| **Biais du survivant** | Évité : à chaque date, seuls les membres du S&P 500 **de cette date** (`data/sp500_historique.csv`). |
+| **Biais du survivant** | **Partiellement** évité : à chaque date, seuls les membres du S&P 500 **de cette date** (`data/sp500_historique.csv`). Mais jusqu'au § 4.22, le laboratoire ne téléchargeait que les titres de l'univers **actuel** : 48 % des membres de 2008 seulement (§ 18). |
 
 Familles d'essais (chacune a son propre seuil corrigé) : rendement, risque, portefeuille, régime de marché.
 Tous les essais sont enregistrés dans la table Supabase `experiences` (onglet Analyse › Modèles IA › Laboratoire).
@@ -885,6 +885,68 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
 - **Limites** : rendements de clôture (pas intrajournaliers) ; secteur et taille non contrôlés (constat seulement) ; survivants des midcaps non utilisés ici.
 - **Résultats** : § 17.
 
+
+### 4.20 Fidélité laboratoire / production de la prévision de volatilité (écrit le 24/11/2026, avant le code ; correction, pas un essai)
+- **Constat de la revue de code** : la prévision publiée ne passait pas les mêmes données au modèle que le laboratoire qui l'a validé.
+  1. **Classement des titres** : au laboratoire, chaque caractéristique est un rang **parmi les membres du S&P 500 du jour**
+     (`membres_a_date`). En production, le jour de la prévision, le rang était calculé **parmi tout l'univers de l'appli** (S&P 500,
+     Nasdaq-100 hors S&P 500, ETF sectoriels). Les ETF (diversifiés, donc calmes) décalaient ainsi les rangs de tous les titres.
+  2. **Date des caractéristiques** : le modèle classait les titres avec la dernière date **échantillonnée** (une par semaine), jusqu'à 4 séances
+     avant le dernier cours, alors que les niveaux HAR étaient ceux du dernier jour.
+- **Correction** (aucune nouvelle information, aucun réglage) :
+  1. Caractéristiques calculées **au dernier jour de cours**.
+  2. **Membres du S&P 500 du jour** : rangs recalculés parmi eux seuls, comme au laboratoire. **Autres actions** (Nasdaq-100 hors S&P 500) : rang
+     = place de leur valeur parmi les membres (aucune ne déplace celui des membres). **ETF** : pas de classement par l'IA (elle n'a appris que sur
+     des actions) ; leur niveau est celui de HAR (ou la volatilité 3 mois si l'IA seule est publiée).
+  3. Rang → niveau : quantile des niveaux **des membres** (la population sur laquelle le rang est défini).
+- **Ce qui ne change pas** : le modèle, ses réglages, ses données d'entraînement, le laboratoire. Les verdicts passés restent valables : ils portaient
+  déjà sur la version « membres du jour ».
+
+### 4.21 Audit des biais de la prévision de risque (protocole écrit le 24/11/2026, AVANT tout code ; constats, aucun essai compté)
+- **Origine** : l'utilisateur veut vérifier que l'IA de risque n'est pas biaisée. Un biais de niveau **par type de titre** a une conséquence directe :
+  Markowitz **favorise** les titres dont le risque est sous-estimé. Le § 6 a déjà mesuré l'IC par secteur et par taille, et le biais médian global ;
+  il manquait la **calibration par groupe** (celle qui compte pour le portefeuille) et sa stabilité dans le temps.
+- **Données** : le walk-forward de l'examen (`walk_forward`, 4 fenêtres de test depuis 2008), mêmes titres et mêmes dates que `examen_hybride`.
+  Prévision jugée : **l'hybride publié** (ordre de l'IA, niveau HAR), et HAR seul pour comparaison.
+- **Mesures, par groupe** (secteur actuel ; quintiles de taille `liquidite`, de bêta `beta_1a`, de volatilité passée `vol_3m` ; année) :
+  1. **Rapport de variance** = moyenne(σ prévue²) / moyenne(σ réalisée²) : la calibration **en moyenne**, celle que Markowitz utilise
+     (1 = juste ; < 1 = risque sous-estimé). Aussi : biais médian de σ (constat seulement, car asymétrie attendue, § 9), part de sous-estimations,
+     QLIKE de l'hybride et de HAR.
+  2. **IC dans le groupe** (titres du groupe classés entre eux) : l'IA classe-t-elle bien **à l'intérieur** d'un secteur, ou seulement d'un secteur à l'autre ?
+  3. Le rapport de variance **par fenêtre de test** (4 fenêtres), pour la stabilité.
+- **Alertes, fixées AVANT l'audit** (ce ne sont pas des décisions) :
+  - **Sous-estimation persistante** d'un groupe : rapport de variance < **0,85** dans au moins **3 des 4 fenêtres**.
+  - **Surestimation persistante** : rapport > **1,25** dans au moins 3 des 4 fenêtres.
+  - **Classement creux** : IC dans le groupe de l'IA **inférieur** à celui de HAR dans au moins 3 des 4 fenêtres.
+  Une alerte ne change rien à l'appli : elle déclenche la **proposition** d'un essai de correction (protocole à écrire, accord de l'utilisateur).
+- **Constats complémentaires** :
+  - **Biais du survivant** : par année, part des membres du S&P 500 de la date pour lesquels Yahoo fournit un cours (les titres disparus manquent).
+  - **IC dans les secteurs** (moyenne des IC calculés secteur par secteur) contre IC global, pour l'IA et HAR.
+- **Fréquence** : chaque mois avec le re-test (`experiences.yml`), pour une surveillance continue.
+- **Limites** : secteur **actuel** des titres (pas celui de l'époque) ; titres disparus absents (mesuré par le constat ci-dessus) ; seuils d'alerte
+  choisis à l'avance mais sans test de significativité (constats).
+- **Résultats** : § 18.
+
+
+### 4.22 Membres historiques retrouvés : moins de biais du survivant au laboratoire (protocole écrit le 24/11/2026, AVANT tout code ; correction de données)
+- **Constat (§ 18)** : le laboratoire ne téléchargeait que les titres de l'univers **actuel**. Filtrer « membres de la date » n'y change rien : un titre
+  sorti de l'indice (racheté, rétrogradé, failli) n'était jamais dans les données. Part des membres de l'époque présents : 48 % en 2008, 60 % en 2014,
+  72 % en 2018, 97 % en 2026. Les titres absents sont justement ceux qui ont mal fini, souvent les plus risqués.
+- **Correction** : le laboratoire télécharge aussi **tous les titres ayant appartenu au S&P 500** (`data/sp500_historique.csv`, 737 symboles sortis).
+  Yahoo ne fournit que ceux encore cotés sous le même symbole (rétrogradés, encore indépendants) ; les faillis et rachetés restent absents.
+  Tous les examens d'un lot (`lancer_examen`) utilisent ces données : walk-forward, hybride, IA contre HAR, audit, backtests.
+- **Garde-fou contre les symboles réattribués** (un symbole sorti peut avoir été repris par une autre société) : un titre n'est gardé à une date que
+  s'il a un cours **au moins 80 % des séances** de son année d'appartenance précédente ; les séries qui démarrent après la sortie de l'indice sont ainsi
+  écartées d'elles-mêmes (aucune donnée pendant l'appartenance).
+- **Règles, fixées AVANT de voir les résultats** :
+  1. Les décisions de publication restent celles des examens existants (`examen_hybride`, `examen_ia_contre_har`, règles des §§ 4.8 et 4.9), désormais
+     calculées sur les données corrigées. **Si une décision change**, la nouvelle s'applique (c'est la plus honnête), et l'appli suit au passage suivant.
+  2. Constats : couverture du survivant avant / après, par année ; IC et QLIKE de l'IA et de HAR avant / après ; alertes de l'audit avant / après.
+- **Production** : la prévision publiée reste entraînée sur l'univers actuel (télécharger 1 200 titres trois fois par jour est trop lourd). Si les
+  constats montrent un écart d'IC de l'IA > 0,02 entre les deux jeux de données, un entraînement hebdomadaire sur les membres historiques sera proposé.
+- **Limites** : faillis et rachetés absents de Yahoo (biais résiduel, mesuré) ; secteur inconnu des titres sortis (groupe « ? » dans l'audit).
+- **Résultats** : § 19.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
@@ -1278,3 +1340,72 @@ des couples (titre, date) des midcaps, 1,1 % du S&P 500.
 
 **Décision** : la carte « Face aux chocs » affiche la part baissière du risque **sur 1 an** (portefeuille et titres), avec la mention « mesure du passé ;
 elle ne se répète pas ; le sens à venir n'est pas prévisible ». Rien ne change dans le choix des titres.
+
+---
+
+## 18. Premier audit des biais (§ 4.21 ; lot du 24/11/2026 20:24 UTC, PR #41, 920 dates de test 2008-2026, 320 000 prévisions)
+
+### 18.1 Calibration du niveau (hybride publié : ordre de l'IA, niveau HAR)
+- **En moyenne, presque juste** : rapport de variance prévue / réalisée **1,07** (HAR seul : 1,07). Biais médian de σ +27 % (asymétrie attendue, § 9).
+- **Mais très variable dans le temps** : 0,86 ; **1,88** ; 1,01 ; 1,06 selon la fenêtre de test. La deuxième fenêtre (après la crise de 2008) surestime
+  le risque de 88 % : HAR, appris sur une période de crise, met du temps à se calmer.
+- **Aucune sous-estimation persistante** d'un groupe : le portefeuille n'est **pas attiré** vers des titres dont le risque serait caché. C'était le biais
+  le plus dangereux, il n'est pas là.
+- **4 alertes de surestimation persistante** (rapport > 1,25 dans au moins 3 fenêtres sur 4) : **Consumer Staples**, **Utilities**, quintile de bêta
+  le plus **bas**, quintile de volatilité passée le plus **bas**. Les titres **calmes** sont jugés plus risqués qu'ils ne le sont. Cause probable : HAR est
+  estimé en commun pour tous les titres ; sa constante rapproche chaque titre du risque moyen, ce qui gonfle celui des plus calmes.
+  Conséquence : Markowitz les **sous-pondère** un peu. C'est prudent, pas dangereux, mais cela coûte de la diversification.
+
+### 18.2 Classement
+- IC de l'IA **0,78** contre 0,75 pour HAR, meilleur dans les 4 fenêtres.
+- **Dans les secteurs** (titres d'un même secteur classés entre eux) : IA **0,72**, HAR 0,68. L'IA ne se contente pas de classer les secteurs entre
+  eux : elle classe aussi mieux les titres à l'intérieur de chacun. Aucune alerte de classement creux.
+
+### 18.3 Biais du survivant : bien plus fort qu'annoncé
+- Part des membres du S&P 500 de l'époque présents dans les données : **48 % en 2008**, 55 % en 2011, 62 % en 2015, 72 % en 2018, 83 % en 2022,
+  97 % en 2026. Le laboratoire ne téléchargeait que l'univers actuel (§ 4.22).
+- Les verdicts passés restent des comparaisons **à données égales** entre méthodes (IA, HAR, GARCH…), mais sur des titres « survivants ».
+  Correction : § 4.22.
+
+### 18.4 Suites
+1. **§ 4.22** : membres historiques retrouvés (correction de données, en cours).
+2. **Proposé (essai compté, accord de l'utilisateur)** : HAR **relatif au titre** (variance rapportée à celle du titre sur un an), pour corriger la
+   surestimation des titres calmes (§ 18.1).
+3. **Proposé (essai compté)** : donner à l'IA les variances récentes de HAR (1 jour, 1 semaine, 1 mois) et la part baissière, pour mieux classer.
+
+---
+
+## 19. Résultats avec les membres historiques retrouvés (§ 4.22 ; lot du 24/11/2026 20:30 UTC, PR #41)
+
+### 19.1 Biais du survivant : réduit, pas supprimé
+| Année | Avant (univers actuel) | Après (+ anciens membres) |
+|---|---|---|
+| 2008 | 48 % | **61 %** |
+| 2011 | 55 % | 66 % |
+| 2014 | 60 % | 72 % |
+| 2018 | 72 % | 82 % |
+| 2022 | 83 % | 91 % |
+| 2026 | 97 % | 98 % |
+
+Prévisions jugées : 320 000 → **364 000**. Il reste 39 % de membres de 2008 absents : faillis et rachetés, que Yahoo ne fournit pas.
+
+### 19.2 Les décisions ne changent pas (règle 1 du § 4.22)
+- **IA contre HAR sur l'ordre** : IC 0,796 contre 0,767, gain +0,029, t = 5,5 > seuil 2,72 → **l'IA reste** (hybride). Avant : gain +0,034, t = 5,7.
+- **Hybride** : **publié** (il classe mieux que la volatilité 3 mois et HAR ne le bat pas au seuil corrigé).
+- **Re-test mensuel** (`risque_volatilite`, univers actuel, inchangé) : 6 mois **probant** ; 1 an non probant.
+- **Production** : l'IC de l'IA bouge de **+0,013** entre les deux jeux de données, sous le seuil de 0,02 du § 4.22. L'entraînement de production
+  reste sur l'univers actuel.
+
+### 19.3 Ce qui change : le niveau est moins bon qu'on le croyait
+- **QLIKE de l'hybride 0,413 contre 0,397 pour HAR** (Diebold-Mariano t = **+2,18** : l'hybride est **moins bon** que HAR en niveau, sans franchir
+  le seuil corrigé de 2,63). Avant : 0,331 contre 0,332 (t = −1,49). Sur les survivants, convertir l'ordre de l'IA en niveaux HAR ne coûtait rien ;
+  avec les titres sortis de l'indice, cela coûte un peu.
+- **Calibration** : rapport de variance **1,16** (avant 1,07) ; par fenêtre 0,82 ; **2,37** ; 1,14 ; 1,20.
+- **Audit** : **9 alertes**, toutes de **surestimation** (Communication Services, Consumer Staples, Industrials, Real Estate, Utilities ; bêtas et
+  volatilités passées des deux quintiles les plus bas). Toujours **aucune sous-estimation persistante**.
+- **Classement dans les secteurs** : IA 0,72 contre HAR 0,69 (inchangé).
+
+### 19.4 Lecture
+- L'apport de l'IA est **l'ordre** des titres, et il résiste à la correction du biais du survivant.
+- Le **niveau** reste le point faible : il surestime le risque des titres calmes, de plus en plus nettement quand on ajoute les titres sortis.
+  C'est l'essai « HAR relatif au titre » (§ 18.4, point 2) qui y répond. Il reste à lancer avec l'accord de l'utilisateur.
