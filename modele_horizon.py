@@ -261,15 +261,25 @@ def choisir_config(train: pd.DataFrame, h: int, feats: list[str] | None = None) 
     return max(scores, key=scores.get), scores
 
 
+def _spearman(x: pd.Series, y: pd.Series) -> float:
+    """Corrélation de rang de deux colonnes d'une même date. NaN (sans avertissement de NumPy) si l'une
+    des deux est constante : la corrélation n'existe pas, et la date est ensuite écartée par dropna()."""
+    rx, ry = x.rank(), y.rank()
+    ok = rx.notna() & ry.notna()
+    if ok.sum() < 2 or rx[ok].nunique() < 2 or ry[ok].nunique() < 2:
+        return np.nan
+    return rx.corr(ry)
+
+
 def _ic_par_date(df: pd.DataFrame, col: str) -> pd.Series:
     """Corrélation de rang (Spearman) entre `col` et le rendement relatif réalisé, date par date."""
-    return df.groupby("date").apply(lambda g: g[col].rank().corr(g["rel"].rank()) if len(g) > 10 else np.nan,
+    return df.groupby("date").apply(lambda g: _spearman(g[col], g["rel"]) if len(g) > 10 else np.nan,
                                     include_groups=False).dropna()
 
 
 def _corr_par_date(df: pd.DataFrame, a: str, b: str) -> pd.Series:
     """Corrélation de rang (Spearman) entre deux colonnes, date par date."""
-    return df.groupby("date").apply(lambda g: g[a].rank().corr(g[b].rank()) if len(g) > 10 else np.nan,
+    return df.groupby("date").apply(lambda g: _spearman(g[a], g[b]) if len(g) > 10 else np.nan,
                                     include_groups=False).dropna()
 
 
@@ -411,8 +421,8 @@ def membres_a_date(data: pd.DataFrame, composition: pd.DataFrame, par_secteur: b
     """Ne garde, à chaque date, que les titres membres de l'indice ce jour-là, puis
     recalcule les rangs du jour (caractéristiques et cible) parmi ces seuls membres."""
     m = data.merge(composition, on="symbol", how="inner")
-    fin = m["fin"].fillna(pd.Timestamp.max)
-    m = m[(m["date"] >= m["debut"]) & (m["date"] < fin)].drop(columns=["debut", "fin"])
+    encore_membre = m["fin"].isna() | (m["date"] < m["fin"])     # fin vide : toujours dans l'indice
+    m = m[(m["date"] >= m["debut"]) & encore_membre].drop(columns=["debut", "fin"])
     m = m.drop_duplicates(["date", "symbol"])
     m = m[m.groupby("date")["symbol"].transform("size") >= MIN_MEMBRES].copy()
     g = m.groupby("date")

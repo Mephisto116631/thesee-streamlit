@@ -59,9 +59,19 @@ def main(log_id):
     print(f"[CRON] Publication : {resume}")
 
     duree = time.time() - t0
-    msg = f"{n_prix} tickers, {resume['signaux']} signaux, {duree:.0f}s"
-    db.sync_log_end(log_id, "success", msg, n_tickers=n_prix)
-    print(f"[CRON] Synchronisation terminée avec succès ({msg}).")
+    statut, msg = statut_passage(n_prix, resume, duree)
+    db.sync_log_end(log_id, statut, msg, n_tickers=n_prix)
+    print(f"[CRON] Synchronisation terminée ({statut}) : {msg}")
+
+
+def statut_passage(n_prix: int, resume: dict, duree: float) -> tuple[str, str]:
+    """« success » si tout est publié ; « partiel » si une étape non bloquante a échoué
+    (volatilité, portefeuille, comptes SEC…) : l'appli le signale au lieu d'afficher « à jour »."""
+    avert = resume.get("avertissements") or []
+    msg = f"{n_prix} tickers, {resume.get('signaux', 0)} signaux, {duree:.0f}s"
+    if not avert:
+        return "success", msg
+    return "partiel", f"{msg} — {len(avert)} avertissement(s) : " + " | ".join(avert)
 
 
 if __name__ == "__main__":

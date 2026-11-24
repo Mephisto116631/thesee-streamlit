@@ -3,7 +3,6 @@
 # MODULE : CREDIT & BILAN — Z-Score Altman réel + spreads FRED réels
 # ==============================================================================
 import streamlit as st
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from theme import apply_theme, palette_selector_sidebar

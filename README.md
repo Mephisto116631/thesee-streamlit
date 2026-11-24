@@ -15,6 +15,8 @@ GitHub Actions (cron)  ──écrit──▶  Supabase  ◀──lit──  Appl
 | `publish.py` | Tables pour l'appli : `titres_snapshot`, `sector_medians`, `model_runs`, `market_overview`, `portefeuille_recommande`, `suivi_volatilite` |
 | `portefeuille.py` | Portefeuille conseillé : Markowitz sur tout le S&P 500, covariance factorielle, même optimiseur que l'appli |
 | `docs/METHODE.md` | **Journal de la méthode** : chaque choix, ses hypothèses, ses tests et leurs résultats |
+| `docs/REVUE_2026-11.md` | **Revue de code de novembre 2026** : points relevés, corrections, ce qui reste à décider |
+| `requirements-lock.txt` | Versions figées de toutes les dépendances Python (contrainte des workflows) |
 | `modele_risque.py` | **IA de volatilité à 6 mois** (seul modèle probant), bilan en conditions réelles |
 | `modele_horizon.py` | Modèles de rendement 1 mois / 6 mois / 1 an (en test, non probants) |
 | `fondamentaux_sec.py` | Comptes officiels SEC (EDGAR) : facteurs du laboratoire et valorisation de l'appli (PER, ROE…) |
@@ -102,13 +104,15 @@ Le bouton « Relancer le calcul » (Analyse › Modèles IA, Paramètres) appell
 1. GitHub → Settings → Developer settings → Fine-grained tokens → *Generate new token* :
    accès au seul dépôt `thesee-streamlit`, permission **Actions : Read and write**.
 2. Supabase → projet Thésée → Edge Functions → Secrets : ajouter `GH_DISPATCH_TOKEN` = ce jeton.
+3. Conseillé : secret `RELANCE_EMAILS` = votre adresse (seuls ces comptes peuvent relancer).
 
-Garde-fous : refus si un calcul tourne déjà ou a démarré il y a moins de 10 minutes.
+Garde-fous : il faut être connecté (onglet Positions) ; refus si un calcul tourne déjà ou a démarré il y a moins de 10 minutes.
 
 ## Historique des versions
 
 | PR | Apport |
 |---|---|
+| (revue) | Revue de code ([`docs/REVUE_2026-11.md`](docs/REVUE_2026-11.md)) : passage « partiel » signalé dans l'appli au lieu d'un faux « à jour » ; plus de suppression massive de titres sur panne ; versions Python figées et enregistrées avec chaque essai ; « Relancer le calcul » réservé aux comptes connectés ; parité de l'optimiseur vérifiée côté Python ; ruff en CI |
 | #34 | « Hausse ou baisse ? » : part du risque venant des jours de baisse (portefeuille et titres) ; essai : elle ne se répète pas et ne prévoit pas le sens ; écran « Bien utiliser Thésée » |
 | #32 | Suivi en conditions réelles du risque du mois (prévisions enregistrées chaque semaine, garde-fou) ; rappels de révision sur le téléphone (APK) ; glossaire dans l'appli (Analyse › Glossaire, et chaque bouton « ? ») |
 | #31 | Interface : plus de glissement latéral ni de texte coupé (verdicts et filtres qui passent à la ligne, noms sur deux lignes, tableaux en fiches sur téléphone) |

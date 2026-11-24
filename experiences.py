@@ -27,7 +27,6 @@ import backtest_risque as bt  # noqa: E402
 import modele_regime as mreg  # noqa: E402
 import modele_cnn as mcnn     # noqa: E402
 import examen_risque as ex    # noqa: E402
-import portefeuille as pf     # noqa: E402
 import universe              # noqa: E402
 from publish import _clean   # noqa: E402
 
@@ -148,11 +147,35 @@ def verdict_labo(ic, t, n_eff, seuil) -> str:
     return "non probant"
 
 
+BIBLIOTHEQUES = ["numpy", "pandas", "scipy", "scikit-learn", "xgboost", "shap", "yfinance", "torch"]
+
+
+def versions_bibliotheques() -> dict:
+    """Versions de Python et des bibliothèques de calcul : enregistrées avec chaque essai, pour qu'un
+    changement de verdict au re-test mensuel puisse être rapproché d'un changement de bibliothèque."""
+    from importlib.metadata import PackageNotFoundError, version
+    out = {"python": sys.version.split()[0]}
+    for b in BIBLIOTHEQUES:
+        try:
+            out[b] = version(b)
+        except PackageNotFoundError:
+            out[b] = None
+    return out
+
+
+def _ecrire(cli, ligne: dict):
+    """Enregistre un essai dans `experiences`, avec les versions des bibliothèques dans ses diagnostics."""
+    diag = ligne.get("diagnostics")
+    diag = dict(diag) if isinstance(diag, dict) else ({"valeur": diag} if diag is not None else {})
+    diag["versions"] = versions_bibliotheques()
+    return cli.table("experiences").insert(_clean({**ligne, "diagnostics": diag})).execute()
+
+
 def _inserer(cli, lot: str, nom: str, verdict: str, diag: dict, ic=None, t=None, seuil=None, n_essais=1):
-    cli.table("experiences").insert(_clean({
+    _ecrire(cli, {
         "lot": lot, "nom": nom, "horizon": "6m", "description": EXPERIENCES_EXAMEN[nom],
         "ic": ic, "t_stat": t, "seuil_t_global": seuil, "n_essais": n_essais, "verdict": verdict, "diagnostics": diag,
-    })).execute()
+    })
     print(f"[LABO] {nom} -> {verdict} : {diag if len(str(diag)) < 1500 else str(diag)[:1500] + '…'}")
 
 
@@ -427,11 +450,11 @@ def main(noms: list[str]):
             seuil = mh.seuil_t(ev.get("n_effectif"), n_candidats=n_regime)
             v = ("probant" if ev.get("auc", 0) > 0.6 and ev.get("gain_logloss", 0) > 0
                  and ev.get("n_effectif", 0) >= mh.MIN_PERIODES_SIGNAL and ev.get("t_stat", 0) > seuil else "non probant")
-            cli.table("experiences").insert(_clean({
+            _ecrire(cli, {
                 "lot": lot, "nom": nom, "horizon": "6m", "description": description,
                 "ic": ev.get("auc"), "t_stat": ev.get("t_stat"), "seuil_t_global": seuil,
                 "n_essais": n_regime, "verdict": v, "diagnostics": ev,
-            })).execute()
+            })
             print(f"[LABO] {nom} : AUC {ev.get('auc', 0):.3f}, gain log-loss {ev.get('gain_logloss', 0):+.4f}, "
                   f"t {ev.get('t_stat', 0):.2f} (seuil {seuil:.2f}) -> {v} ; aujourd'hui {ev['aujourdhui']['proba']:.1%}")
     noms = [n for n in noms if n not in EXPERIENCES_REGIME]
@@ -476,11 +499,11 @@ def main(noms: list[str]):
             d = ligne["diagnostics"]
             seuil = mh.seuil_t(d.get("n_effectif"), n_candidats=n_essais)
             v = verdict_labo(d.get("ic_moyen"), d.get("t_stat"), d.get("n_effectif"), seuil)
-            cli.table("experiences").insert(_clean({
+            _ecrire(cli, {
                 "lot": lot, "nom": nom, "horizon": h, "description": EXPERIENCES_CNN[nom],
                 "ic": d.get("ic_moyen"), "t_stat": d.get("t_stat"), "seuil_t_global": seuil,
                 "n_essais": n_essais, "verdict": v, "diagnostics": {**d, "importance": ligne.get("importance")},
-            })).execute()
+            })
             print(f"[LABO] cnn {h} : IC {d.get('ic_moyen', 0):+.3f} t {d.get('t_stat', 0):.2f} (seuil {seuil:.2f}) -> {v}")
 
     if "backtest_base_large" in noms:
@@ -501,12 +524,12 @@ def main(noms: list[str]):
                     # Règle de décision (docs/METHODE.md) : la base large est adoptée car elle retire un pari
                     # non prouvé, SAUF si elle est nettement moins bonne (t < −seuil).
                     v = ("probant" if ec["t"] > seuil else "moins bonne" if ec["t"] < -seuil else "équivalente")
-                    cli.table("experiences").insert(_clean({
+                    _ecrire(cli, {
                         "lot": lot, "nom": f"backtest_base_large_{nom_pf}_{variante}", "horizon": "1m",
                         "description": EXPERIENCES_PORTEFEUILLE["backtest_base_large"],
                         "ic": ec["rendement_mensuel"], "t_stat": ec["t"], "seuil_t_global": seuil,
                         "n_essais": 4, "verdict": v, "diagnostics": c,
-                    })).execute()
+                    })
                     print(f"[LABO] base large {nom_pf} {variante} : S&P 500 {c['sp500']} | momentum {c['momentum40']} "
                           f"| indice {c.get('indice')} | écart {ec} -> {v}")
 
@@ -524,11 +547,11 @@ def main(noms: list[str]):
             # 2 portefeuilles × 2 comparaisons : seuil corrigé de 4 essais
             seuil = mh.seuil_t(bloc["n_mois"], n_candidats=4)
             v = "probant" if comp.get("ecart_vol", 0) < 0 and t_moins_risque > seuil else "non probant"
-            cli.table("experiences").insert(_clean({
+            _ecrire(cli, {
                 "lot": lot, "nom": f"{nom}_{nom_pf}", "horizon": "1m", "description": EXPERIENCES_PORTEFEUILLE[nom],
                 "ic": comp.get("ecart_vol"), "t_stat": t_moins_risque, "seuil_t_global": seuil,
                 "n_essais": 4, "verdict": v, "diagnostics": bloc,
-            })).execute()
+            })
             vs = {k: round(x["vol_reelle"], 4) for k, x in bloc["variantes"].items()}
             print(f"[LABO] {nom}_{nom_pf} : vol réelle {vs} ; IA vs 3 ans {comp} -> {v}")
 
@@ -548,11 +571,11 @@ def main(noms: list[str]):
             seuil = mh.seuil_t(d.get("n_effectif"), n_candidats=n_essais_risque)
             v = ("probant" if d["gain"] > mr.GAIN_MIN and d["n_effectif"] >= mh.MIN_PERIODES_SIGNAL
                  and d["t_stat"] > seuil else "non probant")
-            cli.table("experiences").insert(_clean({
+            _ecrire(cli, {
                 "lot": lot, "nom": nom, "horizon": h, "description": description,
                 "ic": d["ic_moyen"], "t_stat": d["t_stat"], "seuil_t_global": seuil,
                 "n_essais": n_essais_risque, "verdict": v, "diagnostics": d,
-            })).execute()
+            })
             print(f"[LABO] {nom:18s} {h:3s} IC {d['ic_moyen']:.3f} vs référence {d['ic_base']:.3f} "
                   f"(gain {d['gain']:+.3f}, t {d['t_stat']:.2f}, seuil {seuil:.2f}) -> {v}")
 
@@ -574,12 +597,12 @@ def main(noms: list[str]):
             d = ligne["diagnostics"]
             seuil = mh.seuil_t(d.get("n_effectif"), n_candidats=n_essais)
             v = verdict_labo(d.get("ic_moyen"), d.get("t_stat"), d.get("n_effectif"), seuil)
-            cli.table("experiences").insert(_clean({
+            _ecrire(cli, {
                 "lot": lot, "nom": nom, "horizon": h, "description": description,
                 "ic": d.get("ic_moyen"), "t_stat": d.get("t_stat"), "seuil_t_global": seuil,
                 "n_essais": n_essais, "verdict": v,
                 "diagnostics": {**d, "importance": ligne.get("importance")},
-            })).execute()
+            })
             reg = d.get("regimes", {})
             print(f"[LABO] {nom:14s} {h:3s} IC {d.get('ic_moyen', 0):+.3f} t {d.get('t_stat', 0):.2f} "
                   f"(seuil {seuil:.2f}, {n_essais} essais) hausse {reg.get('hausse', {}).get('ic')} "

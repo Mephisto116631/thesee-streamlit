@@ -2,8 +2,12 @@
 // ré-entraînement des modèles (workflow GitHub sync.yml) depuis l'appli.
 //
 // Le jeton GitHub reste ici (secret GH_DISPATCH_TOKEN), jamais dans l'APK.
-// Garde-fous : pas de relance si un calcul tourne déjà ou a démarré il y a
-// moins de 10 minutes.
+// Garde-fous :
+//   - réservé à un utilisateur CONNECTÉ (compte de l'onglet Positions) : la clé anon est publique
+//     (embarquée dans la PWA), elle ne suffit pas ;
+//   - si le secret RELANCE_EMAILS est défini (adresses séparées par des virgules), seuls ces comptes
+//     peuvent relancer ;
+//   - pas de relance si un calcul tourne déjà ou a démarré il y a moins de 10 minutes.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -28,8 +32,21 @@ Deno.serve(async (req: Request) => {
     return json(503, { ok: false, message: "Relance non configurée : secret GH_DISPATCH_TOKEN absent dans Supabase." });
   }
 
-  // Dernier passage : évite les relances en rafale
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
+  // Utilisateur connecté obligatoire : le jeton de session arrive dans l'en-tête Authorization
+  const session = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  const { data: auth } = session ? await sb.auth.getUser(session) : { data: { user: null } };
+  const utilisateur = auth?.user;
+  if (!utilisateur) {
+    return json(401, { ok: false, message: "Connecte-toi (onglet Positions) pour relancer le calcul." });
+  }
+  const autorises = (Deno.env.get("RELANCE_EMAILS") ?? "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+  if (autorises.length && !autorises.includes((utilisateur.email ?? "").toLowerCase())) {
+    return json(403, { ok: false, message: "Ce compte n'est pas autorisé à relancer le calcul." });
+  }
+
+  // Dernier passage : évite les relances en rafale
   const { data: dernier } = await sb.from("sync_log").select("status, started_at")
     .order("started_at", { ascending: false }).limit(1).maybeSingle();
   if (dernier) {

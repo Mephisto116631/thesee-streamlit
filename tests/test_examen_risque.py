@@ -355,10 +355,10 @@ def test_nettoyer_retire_cours_aberrants_et_petits_cours():
     assert set(out["symbol"]) >= {"OK"} and (out["symbol"] == "OK").sum() == (data["symbol"] == "OK").sum()
     assert "PENNY" not in set(out["symbol"])
     gardes = out.loc[out["symbol"] == "SAUT", "date"]
-    saut = jours[100]
+    saut = jours.get_loc(jours[100])      # séance du saut
     # retiré si le saut est dans [t − 63, t + 22] séances, gardé loin du saut
-    assert not any((jours.get_loc(d) >= 100 - 22) and (jours.get_loc(d) <= 100 + 64) for d in gardes)
-    assert any(jours.get_loc(d) < 100 - 22 for d in gardes)
+    assert not any((jours.get_loc(d) >= saut - 22) and (jours.get_loc(d) <= saut + 64) for d in gardes)
+    assert any(jours.get_loc(d) < saut - 22 for d in gardes)
     assert 0 < part < 1
 
 

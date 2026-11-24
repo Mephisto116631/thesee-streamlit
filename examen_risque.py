@@ -1121,7 +1121,7 @@ def _ic_rangs(t: pd.DataFrame, a: str, b: str) -> pd.Series:
     """Corrélation de rang entre titres, date par date (au moins 30 titres)."""
     def f(g):
         g = g[[a, b]].dropna()
-        return g[a].rank().corr(g[b].rank()) if len(g) >= 30 else np.nan
+        return mh._spearman(g[a], g[b]) if len(g) >= 30 else np.nan
     return t.groupby("date").apply(f, include_groups=False).dropna()
 
 

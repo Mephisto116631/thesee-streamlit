@@ -236,15 +236,14 @@ def upsert_rows(table: str, records: list[dict], on_conflict: str, chunk_size: i
         client.table(table).upsert(records[i:i + chunk_size], on_conflict=on_conflict).execute()
 
 
-def delete_where_not_in(table: str, column: str, keep: list[str]):
-    """Supprime les lignes dont `column` n'est plus dans `keep` (tickers sortis de l'univers)."""
-    if not keep:
+def delete_in(table: str, column: str, valeurs: list[str]):
+    """Supprime les lignes dont `column` est dans `valeurs` (par paquets, URL courte).
+    Le choix des lignes à retirer, et ses garde-fous, se font chez l'appelant (publish.titres_a_retirer)."""
+    if not valeurs:
         return
     client = get_client()
-    existing = _select_all(lambda: client.table(table).select(column).order(column))
-    obsolete = sorted({r[column] for r in existing} - set(keep))
-    for i in range(0, len(obsolete), TICKER_BATCH):
-        client.table(table).delete().in_(column, obsolete[i:i + TICKER_BATCH]).execute()
+    for i in range(0, len(valeurs), TICKER_BATCH):
+        client.table(table).delete().in_(column, valeurs[i:i + TICKER_BATCH]).execute()
 
 
 _LOG_ID: int | None = None  # passage en cours (pour progression())
@@ -272,14 +271,18 @@ def sync_log_start() -> int | None:
         return None
 
 
+STATUTS_TERMINES = ("success", "partiel")   # « partiel » : publié, mais une étape non bloquante a échoué
+
+
 def sync_log_end(log_id: int | None, status: str, message: str = "", n_tickers: int = 0):
     if log_id is None:
         return
+    termine = status in STATUTS_TERMINES
     try:
         get_client().table("sync_log").update({
             "status": status,
-            "progression": 100 if status == "success" else None,
-            "etape": "Terminé" if status == "success" else "Erreur",
+            "progression": 100 if termine else None,
+            "etape": ("Terminé" if status == "success" else "Terminé avec avertissements") if termine else "Erreur",
             "message": message[:2000],
             "n_tickers": n_tickers,
             "finished_at": pd.Timestamp.now(tz="UTC").isoformat(),

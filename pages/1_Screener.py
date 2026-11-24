@@ -3,7 +3,6 @@
 # MODULE : SCREENER QUANTAMENTAL — univers élargi S&P 500 + Nasdaq 100 + ETFs
 # ==============================================================================
 import streamlit as st
-import pandas as pd
 from theme import apply_theme, palette_selector_sidebar
 import data_pipeline as dp
 import universe

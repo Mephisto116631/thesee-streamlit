@@ -104,7 +104,7 @@ create table if not exists sync_log (
     id           bigint generated always as identity primary key,
     started_at   timestamptz not null default now(),
     finished_at  timestamptz,
-    status       text not null default 'running',   -- running | success | error
+    status       text not null default 'running',   -- running | success | partiel | error
     n_tickers    integer default 0,
     message      text
 );

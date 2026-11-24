@@ -26,6 +26,43 @@ import utils
 # ------------------------------------------------------------------------------
 # Utilitaires
 # ------------------------------------------------------------------------------
+# Étapes « bonus » qui ont échoué pendant ce passage : la publication continue, mais le passage est
+# marqué « partiel » dans sync_log (au lieu de « success ») pour qu'une panne ne passe pas inaperçue.
+AVERTISSEMENTS: list[str] = []
+
+
+def avertir(msg: str) -> None:
+    """Note un échec non bloquant : affiché dans le journal du cron ET remonté dans sync_log."""
+    print(f"[PUBLISH][WARN] {msg}")
+    AVERTISSEMENTS.append(str(msg)[:300])
+
+
+def dernier_essai(nom: str, colonnes: str, horizon: str | None = None) -> list[dict]:
+    """Dernier essai enregistré du laboratoire (table `experiences`) pour `nom` : [] s'il n'y en a pas.
+    Tri par identifiant (ordre d'insertion), le même pour toutes les lectures du laboratoire."""
+    q = db.get_client().table("experiences").select(colonnes).eq("nom", nom)
+    if horizon is not None:
+        q = q.eq("horizon", horizon)
+    return q.order("id", desc=True).limit(1).execute().data or []
+
+
+# Au-delà de cette part de titres à retirer d'un coup, on suppose une panne (Yahoo, liste de l'indice
+# tombée sur sa liste de secours…) plutôt qu'une vraie sortie de l'indice : on ne supprime rien.
+PART_MAX_SUPPRESSION = 0.05
+
+
+def titres_a_retirer(existants: list[str], a_garder: list[str], part_max: float = PART_MAX_SUPPRESSION) -> list[str]:
+    """Titres présents en base mais absents de `a_garder`. Lève ValueError si la suppression
+    toucherait plus de `part_max` des titres existants (au moins 10 titres) : signe d'une panne."""
+    existants = sorted(set(existants))
+    retirer = sorted(set(existants) - set(a_garder))
+    if not a_garder:
+        raise ValueError("liste des titres à garder vide")
+    if len(retirer) > max(10, part_max * len(existants)):
+        raise ValueError(f"{len(retirer)} titres sur {len(existants)} à retirer d'un coup")
+    return retirer
+
+
 def _clean(obj):
     """Convertit récursivement numpy/pandas/NaN en types JSON natifs (NaN -> None)."""
     if isinstance(obj, dict):
@@ -124,7 +161,7 @@ def signaux_du_jour(model_result: dict, features_df: pd.DataFrame, kind: str, to
         import shap
         shap_vals = shap.TreeExplainer(model)(X).values
     except Exception as e:  # SHAP est un bonus : le signal reste publié sans
-        print(f"[PUBLISH][WARN] SHAP indisponible ({e})")
+        avertir(f"SHAP indisponible ({e})")
         shap_vals = np.zeros_like(X)
 
     lignes = []
@@ -193,8 +230,16 @@ def taux_eurusd() -> float | None:
         v = close.iloc[-1]
         return float(v.iloc[0] if hasattr(v, "iloc") else v)
     except Exception as e:
-        print(f"[PUBLISH][WARN] EUR/USD indisponible : {e}")
+        avertir(f"EUR/USD indisponible : {e}")
         return None
+
+
+def vix_long(debut: str = "1998-01-01") -> pd.Series:
+    """Clôtures du VIX depuis `debut` (Yahoo), index de dates sans fuseau : entrée du risque du mois à venir."""
+    v = dp.yf.download("^VIX", start=debut, progress=False, auto_adjust=False)["Close"]
+    v = (v.iloc[:, 0] if isinstance(v, pd.DataFrame) else v).dropna()
+    v.index = pd.to_datetime(v.index).tz_localize(None)
+    return v
 
 
 def ligne_overview(macro_raw: pd.DataFrame, snapshot: pd.DataFrame, spreads: dict) -> dict:
@@ -356,7 +401,7 @@ def publier_valorisation_sec(snap: pd.DataFrame, force: bool = False) -> int:
     """Télécharge les comptes SEC (≈ 5 min) si la dernière mise à jour date de plus de 6 jours."""
     import os
     if not os.environ.get("SEC_USER_AGENT", "").strip():
-        print("[PUBLISH][WARN] SEC_USER_AGENT absent : valorisation SEC non mise à jour.")
+        avertir("SEC_USER_AGENT absent : valorisation SEC non mise à jour.")
         return 0
     cli = db.get_client()
     force = force or os.environ.get("SEC_FORCER") == "1"   # lancement manuel « forcer les comptes SEC »
@@ -411,8 +456,13 @@ def enregistrer_revision(reco: dict, date_marche) -> bool:
     return True
 
 
+LIBELLES_HORIZON = {"court": "1 mois", "6m": "6 mois", "1a": "1 an"}
+
+
 def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
-    """Calcule et écrit toutes les tables d'affichage. Retourne un résumé (logs)."""
+    """Calcule et écrit toutes les tables d'affichage. Retourne un résumé (logs), dont la liste
+    des étapes non bloquantes qui ont échoué (`avertissements`)."""
+    AVERTISSEMENTS.clear()
     symboles_etf = set(universe.ETFS_SECTORIELS.keys())
     raw = data["market_data_raw"]
     macro = data["macro_data_raw"]
@@ -434,7 +484,16 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
     overview = ligne_overview(macro, snap, spreads)
 
     db.upsert_rows("titres_snapshot", _records(snap), on_conflict="symbol")
-    db.delete_where_not_in("titres_snapshot", "symbol", snap["symbol"].tolist() if not snap.empty else [])
+    # Ne retire que les titres sortis de l'indice, jamais une grosse part d'un coup (panne probable)
+    try:
+        existants = [r["symbol"] for r in db._select_all(
+            lambda: db.get_client().table("titres_snapshot").select("symbol").order("symbol"))]
+        retirer = titres_a_retirer(existants, snap["symbol"].tolist() if not snap.empty else [])
+        db.delete_in("titres_snapshot", "symbol", retirer)
+        if retirer:
+            print(f"[PUBLISH] {len(retirer)} titres retirés (sortis de l'univers) : {', '.join(retirer[:20])}")
+    except ValueError as e:
+        avertir(f"Aucun titre retiré de titres_snapshot ({e}) : panne de téléchargement probable")
     db.upsert_rows("sector_medians", _records(med), on_conflict="secteur")
     if modele_1j:
         db.upsert_rows("signals", _records(sig), on_conflict="symbol")
@@ -447,7 +506,7 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
         db.progression(62, "Comptes officiels (SEC)")
         publier_valorisation_sec(snap)
     except Exception as e:
-        print(f"[PUBLISH][WARN] Valorisation SEC non mise à jour : {e}")
+        avertir(f"Valorisation SEC non mise à jour : {e}")
 
     # Modèles « horizon » (1 mois, 6 mois, 1 an) : classement relatif des titres
     # Sur l'historique long (depuis 2005, non stocké) : bien plus de périodes de test indépendantes.
@@ -456,7 +515,7 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
     composition = modele_horizon.charger_composition()   # membres réels de l'indice à chaque date
     n_scores = 0
     for k, nom in enumerate(modele_horizon.HORIZONS):
-        db.progression(65 + 10 * k, f"Modèle IA {dict(court='1 mois', **{'6m': '6 mois', '1a': '1 an'})[nom]}")
+        db.progression(65 + 10 * k, f"Modèle IA {LIBELLES_HORIZON.get(nom, nom)}")
         try:
             ligne, scores = modele_horizon.entrainer_horizon(
                 raw_horizon, snap["symbol"].tolist(), nom, composition, dict(zip(snap["symbol"], snap["secteur"])))
@@ -468,24 +527,21 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
                 print(f"[PUBLISH] Modèle {nom} : IC {d.get('ic_moyen', 0):.3f} (t={d.get('t_stat', 0):.1f}, "
                       f"momentum seul {d.get('ic_momentum') or 0:.3f}) -> {ligne['verdict']}")
         except Exception as e:
-            print(f"[PUBLISH][WARN] Modèle horizon {nom} non calculé : {e}")
+            avertir(f"Modèle horizon {nom} non calculé : {e}")
 
     # Volatilité prévue par l'IA de risque (6 mois) : calculée et SUIVIE à chaque passage,
     # mais montrée dans l'appli seulement si le dernier test du laboratoire est probant.
     vol_publiee = None
     try:
         db.progression(93, "Volatilité prévue par l'IA")
-        lab = db.get_client().table("experiences").select("nom,horizon,verdict,t_stat,seuil_t_global,diagnostics,cree_le") \
-            .eq("nom", modele_risque.NOM_LABO).eq("horizon", "6m").order("cree_le", desc=True).limit(1).execute().data
+        lab = dernier_essai(modele_risque.NOM_LABO, "nom,horizon,verdict,t_stat,seuil_t_global,diagnostics,cree_le", "6m")
         fiab = modele_risque.verdict_labo(lab)
         # Source de la prévision (docs/METHODE.md § 4.9) : l'examen « examen_hybride » décide entre
         # l'hybride (ordre de l'IA, niveaux HAR) et HAR seul ; sans examen, l'IA seule (ancien comportement).
-        ex_h = db.get_client().table("experiences").select("diagnostics->decision,cree_le") \
-            .eq("nom", "examen_hybride").order("id", desc=True).limit(1).execute().data
+        ex_h = dernier_essai("examen_hybride", "diagnostics->decision,cree_le")
         decision = (ex_h[0].get("decision") if ex_h else None) or "ia"
         # Règle 6 (§ 4.9) : si l'IA ne bat pas HAR sur l'ordre des titres, HAR seul
-        ex_r = db.get_client().table("experiences").select("diagnostics->decision") \
-            .eq("nom", "examen_ia_contre_har").order("id", desc=True).limit(1).execute().data
+        ex_r = dernier_essai("examen_ia_contre_har", "diagnostics->decision")
         if ex_r and ex_r[0].get("decision") == "har":
             decision = "har"
         fiab["source"] = {"hybride": "hybride", "har": "har"}.get(decision, "ia")
@@ -507,7 +563,7 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
         print(f"[PUBLISH] Bilan réel : {bilan.get('verdict', 'en attente')} "
               f"({bilan.get('n_dates', 0)} dates jugées, premier bilan {bilan.get('premier_bilan')})")
     except Exception as e:
-        print(f"[PUBLISH][WARN] Volatilité IA non calculée : {e}")
+        avertir(f"Volatilité IA non calculée : {e}")
 
     # Portefeuille recommandé : bonus, ne doit jamais faire échouer la publication
     n_lignes = 0
@@ -529,20 +585,16 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
                     u["chocs"] = portefeuille.chocs_historiques(raw_horizon, u["symbols"])
                     print(f"[PUBLISH] Stress test : {len((u['chocs'] or {}).get('crises', []))} crises rejouées")
             except Exception as e:
-                print(f"[PUBLISH][WARN] Stress test non calculé : {e}")
+                avertir(f"Stress test non calculé : {e}")
             # Risque du mois à venir (docs/METHODE.md §§ 4.16-4.17) : publié seulement si la dernière confirmation est réussie
             try:
                 u = reco.get("univers_facteurs") or {}
-                ex_1m = db.get_client().table("experiences").select(
-                    "decision:diagnostics->>decision,avert:diagnostics->avertissement_couverture,"
-                    "part:diagnostics->midcaps->couverture->harx->part_depassements") \
-                    .eq("nom", modele_risque.NOM_LABO_1M).order("id", desc=True).limit(1).execute().data
+                ex_1m = dernier_essai(modele_risque.NOM_LABO_1M,
+                                      "decision:diagnostics->>decision,avert:diagnostics->avertissement_couverture,"
+                                      "part:diagnostics->midcaps->couverture->harx->part_depassements")
                 if u.get("symbols") and ex_1m and ex_1m[0].get("decision") == "confirme":
-                    import yfinance as yf
-                    v = yf.download("^VIX", start="1998-01-01", progress=False, auto_adjust=False)["Close"]
-                    v = (v.iloc[:, 0] if isinstance(v, pd.DataFrame) else v).dropna()
-                    v.index = pd.to_datetime(v.index).tz_localize(None)
-                    vol_1m, vol_har_1m, info = modele_risque.niveaux_harx_1m_du_jour(raw_horizon, u["symbols"], v, composition)
+                    vol_1m, vol_har_1m, info = modele_risque.niveaux_harx_1m_du_jour(
+                        raw_horizon, u["symbols"], vix_long(), composition)
                     bilan_1m = suivre_risque_mois(vol_1m, vol_har_1m, raw, snap["date"].max())
                     if bilan_1m.get("garde_fou"):
                         print("[PUBLISH] Risque du mois à venir NON publié : moins bon que HAR en conditions réelles (§ 4.18)")
@@ -555,7 +607,7 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
                 else:
                     print("[PUBLISH] Risque du mois à venir NON publié : confirmation absente ou non réussie")
             except Exception as e:
-                print(f"[PUBLISH][WARN] Risque du mois à venir non calculé : {e}")
+                avertir(f"Risque du mois à venir non calculé : {e}")
             enregistrer_revision(reco, snap["date"].max())
             db.upsert_rows("portefeuille_recommande", [_clean({
                 "id": 1, "date": snap["date"].max(), **reco,
@@ -563,9 +615,10 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
             })], on_conflict="id")
             n_lignes = len(reco["lignes"])
     except Exception as e:
-        print(f"[PUBLISH][WARN] Portefeuille recommandé non calculé : {e}")
+        avertir(f"Portefeuille recommandé non calculé : {e}")
 
-    return {"snapshot": len(snap), "secteurs": len(med), "signaux": len(sig), "portefeuille": n_lignes, "scores_horizon": n_scores}
+    return {"snapshot": len(snap), "secteurs": len(med), "signaux": len(sig), "portefeuille": n_lignes,
+            "scores_horizon": n_scores, "avertissements": list(AVERTISSEMENTS)}
 
 
 if __name__ == "__main__":

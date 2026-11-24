@@ -1,0 +1,9 @@
+# Relecture automatique du code Python (lancée par .github/workflows/tests.yml).
+# Règles volontairement limitées à ce qui signale de VRAIS problèmes : erreurs de syntaxe,
+# noms non définis, imports ou variables inutilisés, redéfinitions. Le style n'est pas imposé.
+line-length = 130
+target-version = "py311"
+extend-exclude = ["mobile"]
+
+[lint]
+select = ["E9", "F63", "F7", "F82", "F401", "F811", "F841"]
