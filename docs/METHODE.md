@@ -1443,3 +1443,43 @@ Prévisions jugées : 320 000 → **364 000**. Il reste 39 % de membres de 2008 
 - L'apport de l'IA est **l'ordre** des titres, et il résiste à la correction du biais du survivant.
 - Le **niveau** reste le point faible : il surestime le risque des titres calmes, de plus en plus nettement quand on ajoute les titres sortis.
   C'est l'essai « HAR relatif au titre » (§ 18.4, point 2) qui y répond. Il reste à lancer avec l'accord de l'utilisateur.
+
+---
+
+## 20. Résultats des essais « HAR relatif au titre » et « IA plus informée » (§§ 4.23-4.24 ; lot du 24/11/2026 21:06 UTC, PR #42)
+
+### 20.1 HAR relatif au titre : **non adopté** (règles 1, 2 et 3 non réunies)
+| Règle | Mesure | Résultat |
+|---|---|---|
+| 1. Niveau | QLIKE 0,337 contre 0,397 pour HAR (−15 %), t = −0,72, p unilatéral 0,24 (il fallait < 0,003) | **échoue** : l'écart n'est pas distinguable du hasard (n effectif ≈ 39, écart détectable ≈ 0,25) |
+| 2. Crises | rapport QLIKE : 2008 **1,04** ; 2020 **1,72** ; 2022 0,72 | **échoue** : nettement pire pendant le choc du Covid |
+| 3. Stabilité | meilleur dans 2 fenêtres sur 4 (très bon dans 2, nettement moins bon dans 2) | **échoue** |
+| 4. Biais | alertes de surestimation **9 → 2**, aucune sous-estimation ; biais médian +38 % → +16 % | réussit |
+| 5. Placebo | `L` d'un autre titre : moins bon que HAR (t = +1,77) | réussit : le gain vient bien du risque propre de chaque titre |
+
+- **Lecture** : ancrer chaque titre sur **son** risque habituel corrige bien la surestimation des titres calmes (règle 4), comme prévu.
+  Mais cet ancrage **freine la réaction aux chocs brutaux** : en 2020, le risque d'un titre calme qui s'agite d'un coup reste tiré vers son passé calme.
+  C'est précisément la sous-estimation en crise que la règle 2 interdit. Les coefficients sont, eux, stables (constante ≈ 0,68 à 1,02).
+- **Constat** : l'hybride construit sur le relatif aurait une QLIKE de 0,358 contre 0,413 pour l'hybride publié, et un rapport de variance de 1,19
+  contre 1,16. Ce n'est pas une décision : même limite en crise.
+- **Décision** : HAR reste le niveau publié. Le défaut connu (titres calmes surestimés, donc un peu sous-pondérés) reste ; il va dans le sens prudent.
+
+### 20.2 IA plus informée : **non adoptée** (règle 2 non réunie)
+| Règle | Mesure | Résultat |
+|---|---|---|
+| 1. Preuve | écart d'IC **+0,0042**, t = **5,1** > seuil 2,79 | réussit : l'amélioration est **réelle** |
+| 2. Taille | 0,0042 < **0,005** ; positif dans **4 fenêtres sur 4** (0,002 à 0,006) ; 80 % des dates gagnantes | **échoue** de peu : trop petite pour changer le portefeuille |
+| 3. Placebo | écart +0,0005, t = 1,43 | réussit |
+
+- **Lecture** : la volatilité du dernier mois (`vol_1m`, 7 % de l'importance) et celle de la semaine (2 %) apportent une information réelle mais
+  **faible** : IC 0,796 → 0,800. La part baissière n'apporte presque rien au classement (0,4 %), ce qui rejoint le § 17.
+  La volatilité 3 mois reste de loin la première caractéristique (61 %).
+- **Décision** : l'IA actuelle reste. La règle de taille, fixée avant l'essai, n'est pas assouplie après coup.
+
+### 20.3 Bilan des deux essais et suites
+- Le modèle publié **ne change pas**. Les deux essais confirment que **l'ordre des titres par l'IA** est solide, et que le **niveau** HAR est
+  difficile à améliorer sans payer en crise.
+- Famille « références » : 16 essais ; famille « classement » : 6 essais.
+- **Pistes**, chacune serait un **nouvel essai compté** et suggérée **après** avoir vu ces résultats, donc à juger avec d'autant plus de prudence :
+  1. un HAR relatif **protégé en crise** (le plus grand du relatif et de HAR quand le risque récent dépasse nettement le risque habituel) ;
+  2. un « marché du jour » dans l'ordre des titres (VIX × bêta), déjà utile au niveau à 1 mois (§ 16).
