@@ -59,8 +59,6 @@ export function App() {
     case "portefeuille": screen = <Portfolio />; break;
     case "positions": screen = <PositionsEcran />; break;
     case "analyse": screen = <Analyse />; break;
-    case "court": screen = <Portfolio />; break;   // mode court terme retiré (non probant)
-    case "titres": screen = <Portfolio />; break;   // « Composer » fusionné dans Portefeuille
     case "risque": screen = <Risk tab={arg === "ia" ? "ia" : "credit"} go={go} />; break;
     case "glossaire": screen = <Glossaire />; break;
     case "guide": screen = <Guide />; break;
@@ -68,7 +66,7 @@ export function App() {
     default: screen = <Home go={go} />;
   }
   // Onglet actif : les écrans d'analyse (marché, risque, réglages…) sont rangés sous « Analyse »
-  const ANALYSE = ["marche", "titre", "risque", "court", "titres", "parametres", "analyse", "glossaire", "guide"];
+  const ANALYSE = ["marche", "titre", "risque", "parametres", "analyse", "glossaire", "guide"];
   const active = ANALYSE.includes(route ?? "") ? "#/analyse" : `#/${route ?? ""}`;
 
   return (
