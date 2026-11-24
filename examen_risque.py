@@ -1280,24 +1280,26 @@ def couverture_survivant(ret: pd.DataFrame, composition: pd.DataFrame | None, da
     return {int(a): float(np.mean(v)) for a, v in sorted(out.items())}
 
 
-def audit_biais(t: pd.DataFrame, ret: pd.DataFrame | None = None, composition: pd.DataFrame | None = None) -> dict:
-    """Audit du § 4.21 sur le walk-forward de l'examen : calibration et IC par groupe, alertes, biais du survivant."""
+def audit_biais(t: pd.DataFrame, ret: pd.DataFrame | None = None, composition: pd.DataFrame | None = None,
+                col: str = "lvl_hybride", ref: str = "lvl_har") -> dict:
+    """Audit du § 4.21 sur le walk-forward de l'examen : calibration et IC par groupe, alertes, biais du survivant.
+    `col` : niveau audité (l'hybride publié par défaut) ; `ref` : référence de classement (HAR)."""
     t = t.copy()
     groupes = {}
     if "secteur" in t:
         groupes["secteur"] = t["secteur"]
-    for nom, col in [("taille", "liquidite"), ("beta", "beta_1a"), ("volatilite_passee", "vol_3m")]:
-        if col in t:
-            groupes[nom] = pd.qcut(t[col], 5, labels=["1 (bas)", "2", "3", "4", "5 (haut)"], duplicates="drop")
+    for nom, caract in [("taille", "liquidite"), ("beta", "beta_1a"), ("volatilite_passee", "vol_3m")]:
+        if caract in t:
+            groupes[nom] = pd.qcut(t[caract], 5, labels=["1 (bas)", "2", "3", "4", "5 (haut)"], duplicates="drop")
     groupes["annee"] = pd.DatetimeIndex(t["date"]).year
 
-    out = {"global": _bilan_groupe(t), "groupes": {}, "alertes": []}
+    out = {"global": _bilan_groupe(t, col, ref), "groupes": {}, "alertes": []}
     for nom, cle in groupes.items():
         out["groupes"][nom] = {}
         for val, g in t.groupby(cle, observed=True):
             if g["date"].nunique() < 3:
                 continue
-            b = _bilan_groupe(g)
+            b = _bilan_groupe(g, col, ref)
             out["groupes"][nom][str(val)] = b
             if nom != "annee":                    # une année ne couvre qu'une fenêtre : pas d'alerte de persistance
                 out["alertes"] += [{"groupe": nom, "valeur": str(val), "alerte": a} for a in alertes_groupe(b)]
@@ -1316,3 +1318,187 @@ def verdict_audit(a: dict) -> str:
     n = len(a.get("alertes", []))
     return "aucune alerte" if n == 0 else f"{n} alerte(s) : " + " ; ".join(f"{x['groupe']} {x['valeur']} ({x['alerte']})"
                                                                             for x in a["alertes"][:6])
+
+
+# ------------------------------------------------------------------------------
+# Essai « HAR relatif au titre » (protocole : docs/METHODE.md § 4.23, écrit avant l'essai)
+# ------------------------------------------------------------------------------
+N_ESSAIS_HAR_RELATIF = 16                 # 16e essai de la famille « références »
+CRISES_HAR_RELATIF = ("2008", "2020", "2022")
+SEUIL_CRISE_RELATIF = 1.10
+COLS_RELATIF = ["v1", "v5", "v22", "v63"]
+
+
+def ajouter_risque_habituel(data: pd.DataFrame, ret: pd.DataFrame) -> pd.DataFrame:
+    """Ajoute `L` : variance quotidienne moyenne des 252 séances passées (le risque habituel du titre, connu à t)."""
+    L = ret.pow(2).rolling(252, min_periods=int(252 * 0.8)).mean()
+    s = L.reindex(pd.DatetimeIndex(data["date"].unique())).stack(future_stack=True).rename("L")
+    s.index.names = ["date", "symbol"]
+    return data.drop(columns=["L"], errors="ignore").merge(s.reset_index(), on=["date", "symbol"], how="left")
+
+
+def _x_relatif(df: pd.DataFrame) -> np.ndarray:
+    L = df["L"].values
+    return np.column_stack([np.ones(len(df))] + [df[c].values / L for c in COLS_RELATIF])
+
+
+def har_relatif_ajuster(train: pd.DataFrame) -> np.ndarray:
+    """σ²_futur / L = c + Σ b·v/L, moindres carrés sur le passé seulement."""
+    X = _x_relatif(train)
+    y = (train["brut"].values ** 2 / 252) / train["L"].values
+    ok = np.isfinite(X).all(axis=1) & np.isfinite(y)
+    coef, *_ = np.linalg.lstsq(X[ok], y[ok], rcond=None)
+    return coef
+
+
+def har_relatif_prevoir(df: pd.DataFrame, coef: np.ndarray) -> np.ndarray:
+    v = df["L"].values * (_x_relatif(df) @ coef)
+    return np.sqrt(np.maximum(v, df["v63"].values * 0.25) * 252)
+
+
+def _melanger_L(df: pd.DataFrame, graine: int) -> pd.DataFrame:
+    """Placebo (règle 5) : `L` d'un autre titre tiré au hasard, à chaque date."""
+    rng = np.random.default_rng(graine)
+    df = df.copy()
+    df["L"] = df.groupby("date")["L"].transform(lambda x: rng.permutation(x.values))
+    return df
+
+
+def walk_forward_har_relatif(data: pd.DataFrame, h: int = H, placebo: bool = False, graine: int = 0) -> pd.DataFrame:
+    """HAR et HAR relatif, fenêtre par fenêtre (mêmes fenêtres et embargo que `walk_forward`)."""
+    data = data.dropna(subset=["L"] + COLS_RELATIF)
+    if placebo:
+        data = _melanger_L(data, graine)
+    dates = np.sort(data["date"].unique())
+    bornes = np.array_split(dates[len(dates) // 3:], mh.N_FENETRES)
+    embargo = pd.Timedelta(days=int(h * 7 / 5) + 1)
+    sorties = []
+    for k, bloc in enumerate(bornes):
+        debut = pd.Timestamp(bloc[0])
+        train = data[data["date"] < debut - embargo]
+        test = data[data["date"].isin(bloc)].copy()
+        if len(train) < 2000 or test.empty:
+            continue
+        coef = har_relatif_ajuster(train)
+        test["lvl_har"] = har_prevoir(test, har_ajuster(train))
+        test["lvl_rel"] = har_relatif_prevoir(test, coef)
+        test["fenetre"], test["coef_rel"] = k, [list(map(float, coef))] * len(test)
+        sorties.append(test)
+    return pd.concat(sorties, ignore_index=True) if sorties else pd.DataFrame()
+
+
+def _alertes_niveau(a: dict) -> dict:
+    al = [x["alerte"] for x in a["alertes"]]
+    return {"sur": sum(x == "surestimation persistante" for x in al), "sous": sum(x == "sous-estimation persistante" for x in al)}
+
+
+def comparer_har_relatif(tr: pd.DataFrame, tp: pd.DataFrame, h: int = H) -> dict:
+    """Règles 1 à 5 du § 4.23 (d = QLIKE relatif − QLIKE HAR ; < 0 : relatif meilleur)."""
+    a, b = _pertes_par_date(tr, "lvl_rel"), _pertes_par_date(tr, "lvl_har")
+    d = (a - b.reindex(a.index)).dropna()
+    dm = inf.rapport_dm(d.values, h / mh.PAS_ECHANTILLON)
+    alpha = 0.05 / N_ESSAIS_HAR_RELATIF
+    crises = {}
+    for nom, (d0, d1) in CRISES.items():
+        i = (a.index >= pd.Timestamp(d0)) & (a.index <= pd.Timestamp(d1))
+        if i.sum() >= 3:
+            crises[nom] = {"ratio": float(a[i].mean() / b.reindex(a.index)[i].mean()), "n_dates": int(i.sum())}
+    cles = [c for c in crises if c.startswith(CRISES_HAR_RELATIF)]
+    par_fenetre = {}
+    for f, g in tr.groupby("fenetre"):
+        pr, ph = _pertes_par_date(g, "lvl_rel"), _pertes_par_date(g, "lvl_har")
+        par_fenetre[int(f)] = {"qlike_rel": float(pr.mean()), "qlike_har": float(ph.mean()),
+                               "rapport_variance_rel": _rapport_variance(g, "lvl_rel"),
+                               "rapport_variance_har": _rapport_variance(g, "lvl_har"), "coef": g["coef_rel"].iloc[0]}
+    n_mieux = sum(v["qlike_rel"] < v["qlike_har"] for v in par_fenetre.values())
+    audit_rel = audit_biais(tr.assign(pred=tr["lvl_rel"]), col="lvl_rel", ref="lvl_har")
+    audit_har = audit_biais(tr.assign(pred=tr["lvl_har"]), col="lvl_har", ref="lvl_har")
+    n_rel, n_har = _alertes_niveau(audit_rel), _alertes_niveau(audit_har)
+    ap, bp = _pertes_par_date(tp, "lvl_rel"), _pertes_par_date(tp, "lvl_har")
+    plc = inf.rapport_dm((ap - bp.reindex(ap.index)).dropna().values, h / mh.PAS_ECHANTILLON)
+    regles = {
+        "1_niveau": bool(dm.get("ecart", 0) < 0 and dm.get("p_unilateral_A_meilleur", 1) < alpha),
+        "2_crises": bool(cles) and all(crises[c]["ratio"] <= SEUIL_CRISE_RELATIF for c in cles),
+        "3_stabilite": n_mieux >= 3,
+        "4_biais": n_rel["sur"] < n_har["sur"] and n_rel["sous"] == 0,
+        "5_placebo": plc.get("t", 0) > -2,
+    }
+    return {"qlike_rel": float(a.mean()), "qlike_har": float(b.mean()), "dm": dm, "alpha": alpha, "crises": crises,
+            "par_fenetre": par_fenetre, "fenetres_meilleures": n_mieux, "alertes_rel": n_rel, "alertes_har": n_har,
+            "liste_alertes_rel": audit_rel["alertes"], "liste_alertes_har": audit_har["alertes"],
+            "rapport_variance_rel": audit_rel["global"]["rapport_variance"], "rapport_variance_har": audit_har["global"]["rapport_variance"],
+            "calibration_rel": calibration(tr, "lvl_rel"), "calibration_har": calibration(tr, "lvl_har"),
+            "placebo": plc, "regles": regles, "adopte": bool(all(regles.values())),
+            "n_essais_total": N_ESSAIS_HAR_RELATIF, "t_max_attendu": inf.t_max_attendu(N_ESSAIS_HAR_RELATIF)}
+
+
+def verdict_har_relatif(c: dict) -> str:
+    if c["adopte"]:
+        return "adopté (règles 1 à 5 réunies)"
+    return "non adopté : " + ", ".join(k for k, ok in c["regles"].items() if not ok)
+
+
+# ------------------------------------------------------------------------------
+# Essai « IA plus informée » (protocole : docs/METHODE.md § 4.24, écrit avant l'essai)
+# ------------------------------------------------------------------------------
+N_CANDIDATS_INFORMEE = 6                  # 6e essai de la famille « classement »
+FEATURES_INFORMEE = ["vol_1j", "vol_1s", "vol_1m", "part_baisse"]
+GAIN_MIN_INFORMEE = 0.005
+
+
+def ajouter_variables_ia(data: pd.DataFrame, ret: pd.DataFrame) -> pd.DataFrame:
+    """Ajoute les 4 caractéristiques du § 4.24, en rang du jour parmi les titres de `data` (les membres)."""
+    px = (1 + ret.fillna(0)).cumprod().where(ret.notna())
+    tables = {"vol_1j": ret.abs(), "vol_1s": ret.rolling(5).std(), "vol_1m": ret.rolling(22).std(),
+              "part_baisse": parts_baisse(px, FENETRE_ASYM)}
+    dates = pd.DatetimeIndex(data["date"].unique())
+    out = data.drop(columns=FEATURES_INFORMEE, errors="ignore")
+    for nom, tab in tables.items():
+        st = tab.reindex(dates).stack(future_stack=True).rename(nom)
+        st.index.names = ["date", "symbol"]
+        out = out.merge(st.reset_index(), on=["date", "symbol"], how="left")
+        out[nom] = out.groupby("date")[nom].rank(pct=True).fillna(0.5)
+    return out
+
+
+def _melanger_informee(graine: int = 0):
+    """Placebo (règle 3) : les 4 nouvelles caractéristiques mélangées entre titres à chaque date (entraînement et test)."""
+    rng = np.random.default_rng(graine)
+
+    def f(train, test):
+        for df in (train, test):
+            for c in FEATURES_INFORMEE:
+                df[c] = df.groupby("date")[c].transform(lambda x: rng.permutation(x.values))
+        return train, test
+    return f
+
+
+def comparer_informee(t_base: pd.DataFrame, t_plus: pd.DataFrame, t_plc: pd.DataFrame, h: int = H) -> dict:
+    """Règles 1 à 3 du § 4.24 : IC(IA+) − IC(IA) par date."""
+    def ecart(tb, tp):
+        ib = mh._ic_par_date(tb.assign(rel=tb["brut"]), "pred")
+        ip = mh._ic_par_date(tp.assign(rel=tp["brut"]), "pred")
+        return (ip - ib.reindex(ip.index)).dropna()
+    g = ecart(t_base, t_plus)
+    n_eff = max(1.0, len(g) * mh.PAS_ECHANTILLON / h)
+    seuil = mh.seuil_t(n_eff, n_candidats=N_CANDIDATS_INFORMEE)
+    t_g = float(g.mean() / g.std() * np.sqrt(n_eff)) if g.std() > 0 else 0.0
+    fen = dict(zip(t_plus["date"], t_plus["fenetre"]))
+    par_fenetre = {int(k): float(v.mean()) for k, v in g.groupby(g.index.map(fen))}
+    gp = ecart(t_base, t_plc)
+    t_p = float(gp.mean() / gp.std() * np.sqrt(n_eff)) if gp.std() > 0 else 0.0
+    regles = {"1_preuve": t_g >= seuil,
+              "2_taille": bool(g.mean() >= GAIN_MIN_INFORMEE and sum(v > 0 for v in par_fenetre.values()) >= 3),
+              "3_placebo": abs(t_p) < 2}
+    return {"ic_base": float(mh._ic_par_date(t_base.assign(rel=t_base["brut"]), "pred").mean()),
+            "ic_plus": float(mh._ic_par_date(t_plus.assign(rel=t_plus["brut"]), "pred").mean()),
+            "gain": float(g.mean()), "t": t_g, "seuil": seuil, "force": t_g / seuil, "n_effectif": n_eff,
+            "par_fenetre": par_fenetre, "part_dates_gagnantes": float((g > 0).mean()),
+            "placebo": {"gain": float(gp.mean()), "t": t_p}, "regles": regles, "adopte": bool(all(regles.values())),
+            "configs": sorted(set(t_plus["config"])) if "config" in t_plus else None}
+
+
+def verdict_informee(c: dict) -> str:
+    if c["adopte"]:
+        return "adopté (règles 1 à 3 réunies)"
+    return "non adopté : " + ", ".join(k for k, ok in c["regles"].items() if not ok)
