@@ -1,16 +1,12 @@
 """Preuve continue de l'IA de volatilité : bilan en conditions réelles, garde-fou de
 publication, valorisation SEC actuelle (PER, ROE...)."""
-import sys
 
 import numpy as np
 import pandas as pd
 
-import _st_shim
-sys.modules.setdefault("streamlit", _st_shim)
-
-import fondamentaux_sec as fsec   # noqa: E402
-import modele_risque as mr        # noqa: E402
-import publish                    # noqa: E402
+import fondamentaux_sec as fsec
+import modele_risque as mr
+import publish
 
 
 def _marche(n_titres=60, n_jours=520, graine=0):

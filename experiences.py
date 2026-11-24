@@ -11,24 +11,22 @@
 import os
 import sys
 import time
+from dataclasses import dataclass
 
-import _st_shim
-sys.modules["streamlit"] = _st_shim
+import pandas as pd
+import yfinance as yf
 
-import pandas as pd  # noqa: E402
-import yfinance as yf  # noqa: E402
-
-import data_pipeline as dp   # noqa: E402
-import db                    # noqa: E402
-import fondamentaux_sec as fsec  # noqa: E402
-import modele_horizon as mh  # noqa: E402
-import modele_risque as mr   # noqa: E402
-import backtest_risque as bt  # noqa: E402
-import modele_regime as mreg  # noqa: E402
-import modele_cnn as mcnn     # noqa: E402
-import examen_risque as ex    # noqa: E402
-import universe              # noqa: E402
-from publish import _clean   # noqa: E402
+import data_pipeline as dp
+import db
+import fondamentaux_sec as fsec
+import modele_horizon as mh
+import modele_risque as mr
+import backtest_risque as bt
+import modele_regime as mreg
+import modele_cnn as mcnn
+import examen_risque as ex
+import universe
+from publish import _clean
 
 # nom -> (mode de cible, facteurs retirés, description[, fondamentaux SEC])
 EXPERIENCES = {
@@ -179,8 +177,310 @@ def _inserer(cli, lot: str, nom: str, verdict: str, diag: dict, ic=None, t=None,
     print(f"[LABO] {nom} -> {verdict} : {diag if len(str(diag)) < 1500 else str(diag)[:1500] + '…'}")
 
 
+@dataclass
+class Contexte:
+    """Données communes aux examens d'un même lot : chargées une fois, partagées par tous les examens."""
+    cli: object
+    lot: str
+    snap: pd.DataFrame
+    secteurs: dict
+    raw: pd.DataFrame
+    compo: pd.DataFrame | None
+    data: pd.DataFrame
+    ret: pd.DataFrame
+    t: pd.DataFrame | None = None      # walk-forward commun (IA et références), calculé si un examen en a besoin
+
+
+def _examen_references(ctx: Contexte, nom: str):
+    cli, lot, t = ctx.cli, ctx.lot, ctx.t
+    c = ex.comparer_references(t)
+    b = c["meilleure_reference"]
+    v = "l'IA reste" if c["ia_reste"] else f"bascule sur {b.upper()}"
+    c["debut_test"] = str(pd.Timestamp(t["date"].min()).date())
+    c["garch_ab"] = sorted(t["garch_ab"].unique().tolist())
+    _inserer(cli, lot, nom, v, c, ic=c["ic"]["ia"], t=-c["dm"][b]["t"], seuil=c["seuil"], n_essais=3)
+
+
+def _examen_calibration(ctx: Contexte, nom: str):
+    cli, lot, t = ctx.cli, ctx.lot, ctx.t
+    c = {k: ex.calibration(t, col) for k, col in
+         [("ia", "lvl_ia"), ("vol_3m", "lvl_vol_3m"), ("ewma", "lvl_ewma"), ("garch", "lvl_garch"), ("har", "lvl_har")]
+         if t[col].notna().any()}
+    b = c["ia"]["biais_median"]
+    v = "calibrée" if abs(b) <= 0.10 else ("surestime" if b > 0 else "sous-estime") + f" de {abs(b):.0%}"
+    _inserer(cli, lot, nom, v, c, ic=b)
+
+
+def _examen_crises(ctx: Contexte, nom: str):
+    cli, lot, t = ctx.cli, ctx.lot, ctx.t
+    vix = None
+    try:
+        vix = mreg.telecharger(DEBUT_EXAMEN)["vix"]
+    except Exception as e:
+        print(f"[LABO][WARN] VIX indisponible : {e}")
+    c = ex.par_periode(t, vix)
+    gagnees = sum(1 for r in c["crises"].values() if r["gain_qlike"] > 0)
+    v = f"IA meilleure dans {gagnees}/{len(c['crises'])} crises"
+    _inserer(cli, lot, nom, v, c, ic=gagnees / max(1, len(c["crises"])))
+
+
+def _examen_placebo(ctx: Contexte, nom: str):
+    cli, lot, data, ret = ctx.cli, ctx.lot, ctx.data, ctx.ret
+    c = ex.placebo(data, ret)        # 10 tirages : règle 4 de la PR #27, |moyenne| < 2 %
+    ok = abs(c["ic_cible_melangee"] or 0) < 0.02 and (c["ic_fuite_volontaire"] or 0) > 0.5
+    _inserer(cli, lot, nom, "réussi" if ok else "ÉCHEC : chercher une fuite", c, ic=c["ic_cible_melangee"])
+
+
+def _examen_sensibilite(ctx: Contexte, nom: str):
+    cli, lot, data, ret = ctx.cli, ctx.lot, ctx.data, ctx.ret
+    c = ex.sensibilite(data, ret)
+    ok = all(r["gain"] > 0 for r in c.values())
+    _inserer(cli, lot, nom, "réussi (gain positif partout)" if ok else "fragile", c,
+             ic=min(r["gain"] for r in c.values()) if c else None)
+
+
+def _examen_midcap(ctx: Contexte, nom: str):
+    cli, lot, data = ctx.cli, ctx.lot, ctx.data
+    m = universe.get_sp400_tickers()
+    raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
+    data_m, _ = ex.preparer(raw_m, m["symbol"].tolist(), None)
+    c = ex.autre_marche(data, data_m)
+    _inserer(cli, lot, nom, "même résultat" if c["gain"] > 0 else "ne se généralise pas", c,
+             ic=c["gain"], t=c["t"])
+
+
+def _examen_hybride(ctx: Contexte, nom: str):
+    cli, lot, t = ctx.cli, ctx.lot, ctx.t
+    c = ex.comparer_hybride(t)
+    c["debut_test"] = str(pd.Timestamp(t["date"].min()).date())
+    v = "publié" if c["publie"] else "HAR seul"
+    _inserer(cli, lot, nom, v, c, ic=c["ic"]["hybride"], t=c["t_ic"], seuil=c["seuil"], n_essais=4)
+
+
+def _examen_ia_contre_har(ctx: Contexte, nom: str):
+    cli, lot, raw, snap, compo, secteurs, t = ctx.cli, ctx.lot, ctx.raw, ctx.snap, ctx.compo, ctx.secteurs, ctx.t
+    c = ex.ia_contre_har(t)
+    tous = {"sharpe_max": None, "risque_15": 0.15}
+    res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",
+                      variantes=["hybride", "har"], secteurs=secteurs, portefeuilles=tous, garder_poids=True)
+    px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
+    c["backtest"] = {f"{pf_}_{v}": bt.backtest_reel(res, px, pf_, v, revision_mois=6)
+                     for pf_ in tous for v in ["hybride", "har"]}
+    v = "l'IA reste (hybride)" if c["ia_reste"] else "HAR seul"
+    _inserer(cli, lot, nom, v, c, ic=c["gain"], t=c["t"], seuil=c["seuil"], n_essais=5)
+
+
+def _examen_xgb_niveau(ctx: Contexte, nom: str):
+    cli, lot, data = ctx.cli, ctx.lot, ctx.data
+    tb = ex.walk_forward_niveau(data, "B")
+    ta = ex.walk_forward_niveau(data, "A")
+    tp = ex.walk_forward_niveau(data, "B", melange=True)
+    c = ex.comparer_niveau(tb, ta, tp)
+    c["debut_test"] = str(pd.Timestamp(tb["date"].min()).date())
+    v = ("candidate (règles 1, 2 et 3 réunies)" if c["candidate"]
+         else "non candidate : " + ", ".join(k for k, ok in c["regles"].items() if not ok))
+    _inserer(cli, lot, nom, v, c, ic=c["ic"]["xgb"], t=c["B"]["t"], seuil=c["B"]["seuil"], n_essais=7)
+
+
+def _examen_echelle_har(ctx: Contexte, nom: str):
+    cli, lot, data = ctx.cli, ctx.lot, ctx.data
+    te = ex.walk_forward_echelle(data)
+    c = ex.comparer_echelle(te)
+    c["debut_test"] = str(pd.Timestamp(te["date"].min()).date())
+    v = ("candidat (règles 1, 2 et 3 réunies)" if c["candidate"]
+         else "non candidat : " + ", ".join(k for k, ok in c["regles"].items() if not ok))
+    _inserer(cli, lot, nom, v, c, ic=c["ecart"], t=c["t"], seuil=c["seuil"], n_essais=8)
+
+
+def _examen_multi_horizon(ctx: Contexte, nom: str):
+    cli, lot, data, raw, snap, compo, secteurs = ctx.cli, ctx.lot, ctx.data, ctx.raw, ctx.snap, ctx.compo, ctx.secteurs
+    par_h, plc = {}, {}
+    for hh in ex.HORIZONS_MULTI:
+        d_h = data if hh == ex.H else ex.preparer(raw, snap["symbol"].tolist(), compo, secteurs, h=hh)[0]
+        par_h[hh] = ex.walk_forward_niveau(d_h, "B", h=hh)
+        plc[hh] = ex.walk_forward_niveau(d_h, "B", h=hh, melange=True)
+        print(f"[LABO] multi-horizon : h = {hh} j terminé")
+    c = ex.comparer_multi(par_h, plc)
+    r = c["regles"]
+    v = ("piste" if r["1_piste"] else "fuite probable" if r["2_fuite_probable"] else "B pire que HAR" if r["3_B_pire"]
+         else "équivalence démontrée" if (r["4_equivalence"] and c["peut_conclure_equivalence"]) else "sans pouvoir de conclure")
+    _inserer(cli, lot, nom, v, c, ic=c["aspa"]["ecart"], t=c["aspa"]["t"], seuil=2.0, n_essais=1)
+
+
+def _examen_harx(ctx: Contexte, nom: str):
+    cli, lot, data, raw, snap, compo, secteurs = ctx.cli, ctx.lot, ctx.data, ctx.raw, ctx.snap, ctx.compo, ctx.secteurs
+    vix = _vix(DEBUT_EXAMEN)
+    beta = ex.beta_depuis_cours(raw, snap["symbol"].tolist())
+    par_h, plc = {}, {}
+    for hh in ex.HORIZONS_HARX:
+        d_h = data if hh == ex.H else ex.preparer(raw, snap["symbol"].tolist(), compo, secteurs, h=hh)[0]
+        par_h[hh] = ex.walk_forward_harx(ex.ajouter_x_vix(d_h, beta, vix), h=hh)
+        plc[hh] = ex.walk_forward_harx(ex.ajouter_x_vix(d_h, beta, vix, decalage=ex.DECALAGE_PLACEBO_VIX), h=hh)
+        print(f"[LABO] HAR-X : h = {hh} j terminé")
+    c = ex.comparer_harx(par_h, plc)
+    c["debut_test"] = str(pd.Timestamp(par_h[ex.H]["date"].min()).date())
+    rep = None
+    if c["regles"].get(ex.H, {}).get("2abc"):      # règle 2 (d), calculée seulement si (a) à (c) tiennent
+        m = universe.get_sp400_tickers()
+        raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
+        data_m, _ = ex.preparer(raw_m, m["symbol"].tolist(), None)
+        beta_m = ex.beta_depuis_cours(raw_m, m["symbol"].tolist())
+        rep = ex.replication_harx(ex.walk_forward_harx(ex.ajouter_x_vix(data_m, beta_m, vix)))
+        c["replication_midcap"] = rep
+    r = c["horizons"][ex.H]["dm"]
+    _inserer(cli, lot, nom, ex.verdict_harx(c, rep), c, ic=r.get("ecart"), t=r.get("t"), seuil=2.0,
+             n_essais=ex.N_ESSAIS_HARX)
+
+
+def _examen_har_etendu(ctx: Contexte, nom: str):
+    cli, lot, data, raw, snap = ctx.cli, ctx.lot, ctx.data, ctx.raw, ctx.snap
+    import fred
+    vix = _vix(DEBUT_EXAMEN)
+    macro = pd.DataFrame({k: fred._fetch_fred_serie(sid, start_date=DEBUT_EXAMEN).set_index("date")["valeur"]
+                          for k, sid in mreg.SERIES_FRED.items()})
+    macro.index = pd.to_datetime(macro.index)
+    tables = ex.variables_cours(raw, snap["symbol"].tolist())
+    d, modeles = ex.modeles_etendus(ex.ajouter_etendu(data, tables, vix, macro))
+    d_plc, _ = ex.modeles_etendus(ex.ajouter_etendu(data, tables, vix, macro, decalage=ex.DECALAGE_PLACEBO_VIX))
+    te, tp = ex.walk_forward_lineaire(d, modeles), ex.walk_forward_lineaire(d_plc, modeles)
+    c = ex.comparer_etendu(te, tp)
+    c["debut_test"] = str(pd.Timestamp(te["date"].min()).date())
+    c["variables"] = modeles
+    rep = None
+    if c["regles"]["2abcd"] and c["regles"]["3_placebo_ne_bat_pas_m1"]:     # règle 2 (e), conditionnelle
+        m = universe.get_sp400_tickers()
+        raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
+        data_m, _ = ex.preparer(raw_m, m["symbol"].tolist(), None)
+        dm_, mod_m = ex.modeles_etendus(ex.ajouter_etendu(data_m, ex.variables_cours(raw_m, m["symbol"].tolist()), vix, macro))
+        rep = ex.replication_etendu(ex.walk_forward_lineaire(dm_, mod_m))
+        c["replication_midcap"] = rep
+    r = c["m2_contre_har"]
+    _inserer(cli, lot, nom, ex.verdict_etendu(c, rep), c, ic=r.get("ecart"), t=r.get("t"), seuil=2.0,
+             n_essais=ex.N_ESSAIS_ETENDU)
+
+
+def _examen_harx_1m(ctx: Contexte, nom: str):
+    cli, lot, raw, snap, compo, secteurs = ctx.cli, ctx.lot, ctx.raw, ctx.snap, ctx.compo, ctx.secteurs
+    vix = _vix(DEBUT_EXAMEN)
+    m = universe.get_sp400_tickers()
+    raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
+    c_mid = ex.essai_harx_1m(raw_m, m["symbol"].tolist(), vix)
+    c_sp = ex.essai_harx_1m(raw, snap["symbol"].tolist(), vix, compo, secteurs)
+    v, cond = ex.verdict_harx_1m(c_mid)
+    diag = {"midcaps": c_mid, "sp500_reproduction": c_sp, "conditions": cond,
+            "decision": "confirme" if v == "confirmé" else "non_confirme",
+            "avertissement_couverture": c_mid["couverture"]["harx"]["avertissement"]}
+    r = c_mid["horizons"][ex.H_MOIS]["dm"]
+    _inserer(cli, lot, nom, v, diag, ic=r.get("ecart"), t=r.get("t"), seuil=2.0, n_essais=ex.N_ESSAIS_HARX_1M)
+
+
+def _examen_harx_1m_v2(ctx: Contexte, nom: str):
+    cli, lot, raw, snap, compo, secteurs = ctx.cli, ctx.lot, ctx.raw, ctx.snap, ctx.compo, ctx.secteurs
+    vix = _vix(DEBUT_EXAMEN)
+    m = universe.get_sp400_tickers()
+    raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
+    c_mid = ex.essai_harx_1m(raw_m, m["symbol"].tolist(), vix, nettoyage=True)
+    c_sp = ex.essai_harx_1m(raw, snap["symbol"].tolist(), vix, compo, secteurs, nettoyage=True,
+                            winsor=c_mid["etape"] == 2)      # même étape que les midcaps (§ 4.17)
+    v, cond = ex.verdict_harx_1m(c_mid)
+    diag = {"midcaps": c_mid, "sp500_reproduction": c_sp, "conditions": cond, "etape": c_mid["etape"],
+            "decision": "confirme" if v == "confirmé" else "non_confirme",
+            "avertissement_couverture": c_mid["couverture"]["harx"]["avertissement"]}
+    r = c_mid["horizons"][ex.H_MOIS]["dm"]
+    _inserer(cli, lot, nom, v, diag, ic=r.get("ecart"), t=r.get("t"), seuil=2.0, n_essais=ex.N_ESSAIS_HARX_1M_V2)
+
+
+def _examen_asymetrie(ctx: Contexte, nom: str):
+    cli, lot, data, raw = ctx.cli, ctx.lot, ctx.data, ctx.raw
+    c = ex.essai_asymetrie(data, raw)
+    pl = ex.essai_asymetrie(data, raw, melange=True)
+    v, propre = ex.verdict_asymetrie(c, pl)
+    c["placebo"] = {k: {"ic": x.get("ecart"), "t": x.get("t")} for k, x in pl["tests"].items()}
+    c["placebo_propre"] = propre
+    a = c["tests"]["A_persistance_126"]
+    _inserer(cli, lot, nom, v, c, ic=a.get("ecart"), t=a.get("t"), seuil=2.0, n_essais=ex.N_ESSAIS_ASYM)
+
+
+def _examen_marge(ctx: Contexte, nom: str):
+    cli, lot, raw, snap, compo, secteurs = ctx.cli, ctx.lot, ctx.raw, ctx.snap, ctx.compo, ctx.secteurs
+    tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
+    res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",
+                      variantes=["hist_3a", "hybride"], secteurs=secteurs, portefeuilles=tous,
+                      garder_poids=True, garder_frontieres=True)
+    px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
+    c = {"marges": {}, "rythmes": {}, "couverture": {}, "marges_par_source": {}}
+    for lim in [0.10, 0.12, 0.15, 0.18]:
+        c["marges"][f"{int(lim * 100)}"] = bt.marge_walk_forward(res, px, lim, "hybride", revision_mois=6)
+    # Correction du 23/11/2026 (METHODE § 7.4) : chaque source et une grille de limites de 8 à 35 %
+    for var in ["hist_3a", "hybride"]:
+        c["marges_par_source"][var] = {f"{int(round(lim * 100))}": bt.marge_walk_forward(res, px, lim, var, revision_mois=6)
+                                       for lim in bt.LIMITES_MARGE}
+    for rythme in [1, 6, 12]:
+        for nom_pf in ["sharpe_max", "risque_15"]:
+            c["rythmes"][f"{nom_pf}_{rythme}m"] = bt.backtest_reel(res, px, nom_pf, "hybride", revision_mois=rythme)
+    c["couverture"] = {var: bt.couverture_fourchette(res, px, "sharpe_max", var) for var in ["hist_3a", "hybride"]}
+    # Règle 5 : loi de Student à 5 degrés (90 % des scénarios dans ±2,015 σ), revérifiée
+    c["couverture"]["hybride_student5"] = bt.couverture_fourchette(res, px, "sharpe_max", "hybride", z=2.015)
+    c["debut"] = str(pd.Timestamp(res["date"].min()).date())
+    parts = [m["part_respectee_avec_marge"] for m in c["marges"].values() if m["part_respectee_avec_marge"] is not None]
+    ok = bool(parts) and min(parts) >= 0.70                 # règle 3 : au moins 70 % des semestres
+    m15 = c["marges"]["15"]
+    # Publication de la marge pour l'appli (lue dans model_runs, kind « marge_risque »)
+    cli.table("model_runs").upsert(_clean({
+        "kind": "marge_risque", "trained_at": pd.Timestamp.now(tz="UTC").isoformat(),
+        "verdict": "respectée" if ok else "insuffisante",
+        "diagnostics": {"marge": m15["marge_actuelle"], "marges": c["marges"], "marges_par_source": c["marges_par_source"],
+                        "part_respectee": m15["part_respectee_avec_marge"], "depuis": c["debut"]},
+    }), on_conflict="kind").execute()
+    v = (f"limite tenue {min(parts):.0%} des semestres au moins" if parts else "non calculable")
+    _inserer(cli, lot, nom, v, c, ic=m15["marge_actuelle"])
+
+
+def _examen_backtest_reel(ctx: Contexte, nom: str):
+    cli, lot, raw, snap, compo, secteurs = ctx.cli, ctx.lot, ctx.raw, ctx.snap, ctx.compo, ctx.secteurs
+    tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
+    res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base=bt.BASES,
+                      variantes=["hist_3a", "ia"], secteurs=secteurs, portefeuilles=tous, garder_poids=True)
+    px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
+    c = {"reel": {}, "couverture": {}}
+    for nom_pf in tous:
+        for var in ["hist_3a", "ia"]:
+            c["reel"][f"{nom_pf}_{var}"] = bt.backtest_reel(res, px, nom_pf, var)
+    c["couverture"] = {var: bt.couverture_fourchette(res, px, "sharpe_max", var) for var in ["hist_3a", "ia"]}
+    mat = (res[res["portefeuille"] != "indice"]
+           .assign(col=lambda x: x["base"] + "_" + x["variante"] + "_" + x["portefeuille"])
+           .pivot_table(index="date", columns="col", values="rendement"))
+    c["pbo"] = ex.pbo(mat)
+    c["debut"] = str(pd.Timestamp(res["date"].min()).date())
+    p = c["pbo"]["pbo"]
+    _inserer(cli, lot, nom, f"PBO {p:.0%}" if p is not None else "PBO non calculable", c, ic=p)
+
+
+EXAMENS = {   # nom -> (fonction, besoin du walk-forward commun `t`)
+    "examen_references": (_examen_references, True),
+    "examen_calibration": (_examen_calibration, True),
+    "examen_crises": (_examen_crises, True),
+    "examen_placebo": (_examen_placebo, False),
+    "examen_sensibilite": (_examen_sensibilite, False),
+    "examen_midcap": (_examen_midcap, False),
+    "examen_hybride": (_examen_hybride, True),
+    "examen_ia_contre_har": (_examen_ia_contre_har, True),
+    "examen_xgb_niveau": (_examen_xgb_niveau, False),
+    "examen_echelle_har": (_examen_echelle_har, False),
+    "examen_multi_horizon": (_examen_multi_horizon, False),
+    "examen_harx": (_examen_harx, False),
+    "examen_har_etendu": (_examen_har_etendu, False),
+    "examen_harx_1m": (_examen_harx_1m, False),
+    "examen_harx_1m_v2": (_examen_harx_1m_v2, False),
+    "examen_asymetrie": (_examen_asymetrie, False),
+    "examen_marge": (_examen_marge, False),
+    "examen_backtest_reel": (_examen_backtest_reel, False),
+}
+
+
 def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
-    """Examen approfondi de l'IA de volatilité. Règles de décision : docs/METHODE.md § 4.8."""
+    """Examen approfondi de l'IA de volatilité. Règles de décision : docs/METHODE.md § 4.8.
+    Chaque examen est une fonction `_examen_…(ctx, nom)` du registre EXAMENS. Retourne les examens en échec."""
     echecs = []
     snap = pd.DataFrame(cli.table("titres_snapshot").select("symbol,secteur").execute().data)
     secteurs = dict(zip(snap["symbol"], snap["secteur"]))
@@ -190,228 +490,21 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
     data, ret = ex.preparer(raw, snap["symbol"].tolist(), compo, secteurs)
     print(f"[LABO] Examen : {data['symbol'].nunique()} titres, {data['date'].nunique()} dates depuis "
           f"{pd.Timestamp(data['date'].min()).date()}")
-    t = None
-    if {"examen_references", "examen_calibration", "examen_crises", "examen_hybride", "examen_ia_contre_har"} & set(noms):
+    ctx = Contexte(cli=cli, lot=lot, snap=snap, secteurs=secteurs, raw=raw, compo=compo, data=data, ret=ret)
+    besoin_t = [n for n in noms if n in EXAMENS and EXAMENS[n][1]]
+    if besoin_t:
         try:
-            t = ex.walk_forward(data, ret)
-            print(f"[LABO] Examen : test de {pd.Timestamp(t['date'].min()).date()} à {pd.Timestamp(t['date'].max()).date()}")
+            ctx.t = ex.walk_forward(data, ret)
+            print(f"[LABO] Examen : test de {pd.Timestamp(ctx.t['date'].min()).date()} à {pd.Timestamp(ctx.t['date'].max()).date()}")
         except Exception as e:
             print(f"[LABO][ERREUR] walk-forward de l'examen : {type(e).__name__} : {e}")
-            echecs += [n for n in noms if n in ("examen_references", "examen_calibration", "examen_crises", "examen_hybride",
-                                                "examen_ia_contre_har")]
+            echecs += besoin_t
     for nom in noms:
+        fonction, besoin = EXAMENS.get(nom, (None, False))
+        if fonction is None or (besoin and ctx.t is None):
+            continue
         try:
-            if nom == "examen_references" and t is not None:
-                c = ex.comparer_references(t)
-                b = c["meilleure_reference"]
-                v = "l'IA reste" if c["ia_reste"] else f"bascule sur {b.upper()}"
-                c["debut_test"] = str(pd.Timestamp(t["date"].min()).date())
-                c["garch_ab"] = sorted(t["garch_ab"].unique().tolist())
-                _inserer(cli, lot, nom, v, c, ic=c["ic"]["ia"], t=-c["dm"][b]["t"], seuil=c["seuil"], n_essais=3)
-            elif nom == "examen_calibration" and t is not None:
-                c = {k: ex.calibration(t, col) for k, col in
-                     [("ia", "lvl_ia"), ("vol_3m", "lvl_vol_3m"), ("ewma", "lvl_ewma"), ("garch", "lvl_garch"), ("har", "lvl_har")]
-                     if t[col].notna().any()}
-                b = c["ia"]["biais_median"]
-                v = "calibrée" if abs(b) <= 0.10 else ("surestime" if b > 0 else "sous-estime") + f" de {abs(b):.0%}"
-                _inserer(cli, lot, nom, v, c, ic=b)
-            elif nom == "examen_crises" and t is not None:
-                vix = None
-                try:
-                    vix = mreg.telecharger(DEBUT_EXAMEN)["vix"]
-                except Exception as e:
-                    print(f"[LABO][WARN] VIX indisponible : {e}")
-                c = ex.par_periode(t, vix)
-                gagnees = sum(1 for r in c["crises"].values() if r["gain_qlike"] > 0)
-                v = f"IA meilleure dans {gagnees}/{len(c['crises'])} crises"
-                _inserer(cli, lot, nom, v, c, ic=gagnees / max(1, len(c["crises"])))
-            elif nom == "examen_placebo":
-                c = ex.placebo(data, ret)        # 10 tirages : règle 4 de la PR #27, |moyenne| < 2 %
-                ok = abs(c["ic_cible_melangee"] or 0) < 0.02 and (c["ic_fuite_volontaire"] or 0) > 0.5
-                _inserer(cli, lot, nom, "réussi" if ok else "ÉCHEC : chercher une fuite", c, ic=c["ic_cible_melangee"])
-            elif nom == "examen_sensibilite":
-                c = ex.sensibilite(data, ret)
-                ok = all(r["gain"] > 0 for r in c.values())
-                _inserer(cli, lot, nom, "réussi (gain positif partout)" if ok else "fragile", c,
-                         ic=min(r["gain"] for r in c.values()) if c else None)
-            elif nom == "examen_midcap":
-                m = universe.get_sp400_tickers()
-                raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
-                data_m, _ = ex.preparer(raw_m, m["symbol"].tolist(), None)
-                c = ex.autre_marche(data, data_m)
-                _inserer(cli, lot, nom, "même résultat" if c["gain"] > 0 else "ne se généralise pas", c,
-                         ic=c["gain"], t=c["t"])
-            elif nom == "examen_hybride" and t is not None:
-                c = ex.comparer_hybride(t)
-                c["debut_test"] = str(pd.Timestamp(t["date"].min()).date())
-                v = "publié" if c["publie"] else "HAR seul"
-                _inserer(cli, lot, nom, v, c, ic=c["ic"]["hybride"], t=c["t_ic"], seuil=c["seuil"], n_essais=4)
-            elif nom == "examen_ia_contre_har" and t is not None:
-                c = ex.ia_contre_har(t)
-                tous = {"sharpe_max": None, "risque_15": 0.15}
-                res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",
-                                  variantes=["hybride", "har"], secteurs=secteurs, portefeuilles=tous, garder_poids=True)
-                px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
-                c["backtest"] = {f"{pf_}_{v}": bt.backtest_reel(res, px, pf_, v, revision_mois=6)
-                                 for pf_ in tous for v in ["hybride", "har"]}
-                v = "l'IA reste (hybride)" if c["ia_reste"] else "HAR seul"
-                _inserer(cli, lot, nom, v, c, ic=c["gain"], t=c["t"], seuil=c["seuil"], n_essais=5)
-            elif nom == "examen_xgb_niveau":
-                tb = ex.walk_forward_niveau(data, "B")
-                ta = ex.walk_forward_niveau(data, "A")
-                tp = ex.walk_forward_niveau(data, "B", melange=True)
-                c = ex.comparer_niveau(tb, ta, tp)
-                c["debut_test"] = str(pd.Timestamp(tb["date"].min()).date())
-                v = ("candidate (règles 1, 2 et 3 réunies)" if c["candidate"]
-                     else "non candidate : " + ", ".join(k for k, ok in c["regles"].items() if not ok))
-                _inserer(cli, lot, nom, v, c, ic=c["ic"]["xgb"], t=c["B"]["t"], seuil=c["B"]["seuil"], n_essais=7)
-            elif nom == "examen_echelle_har":
-                te = ex.walk_forward_echelle(data)
-                c = ex.comparer_echelle(te)
-                c["debut_test"] = str(pd.Timestamp(te["date"].min()).date())
-                v = ("candidat (règles 1, 2 et 3 réunies)" if c["candidate"]
-                     else "non candidat : " + ", ".join(k for k, ok in c["regles"].items() if not ok))
-                _inserer(cli, lot, nom, v, c, ic=c["ecart"], t=c["t"], seuil=c["seuil"], n_essais=8)
-            elif nom == "examen_multi_horizon":
-                par_h, plc = {}, {}
-                for hh in ex.HORIZONS_MULTI:
-                    d_h = data if hh == ex.H else ex.preparer(raw, snap["symbol"].tolist(), compo, secteurs, h=hh)[0]
-                    par_h[hh] = ex.walk_forward_niveau(d_h, "B", h=hh)
-                    plc[hh] = ex.walk_forward_niveau(d_h, "B", h=hh, melange=True)
-                    print(f"[LABO] multi-horizon : h = {hh} j terminé")
-                c = ex.comparer_multi(par_h, plc)
-                r = c["regles"]
-                v = ("piste" if r["1_piste"] else "fuite probable" if r["2_fuite_probable"] else "B pire que HAR" if r["3_B_pire"]
-                     else "équivalence démontrée" if (r["4_equivalence"] and c["peut_conclure_equivalence"]) else "sans pouvoir de conclure")
-                _inserer(cli, lot, nom, v, c, ic=c["aspa"]["ecart"], t=c["aspa"]["t"], seuil=2.0, n_essais=1)
-            elif nom == "examen_harx":
-                vix = _vix(DEBUT_EXAMEN)
-                beta = ex.beta_depuis_cours(raw, snap["symbol"].tolist())
-                par_h, plc = {}, {}
-                for hh in ex.HORIZONS_HARX:
-                    d_h = data if hh == ex.H else ex.preparer(raw, snap["symbol"].tolist(), compo, secteurs, h=hh)[0]
-                    par_h[hh] = ex.walk_forward_harx(ex.ajouter_x_vix(d_h, beta, vix), h=hh)
-                    plc[hh] = ex.walk_forward_harx(ex.ajouter_x_vix(d_h, beta, vix, decalage=ex.DECALAGE_PLACEBO_VIX), h=hh)
-                    print(f"[LABO] HAR-X : h = {hh} j terminé")
-                c = ex.comparer_harx(par_h, plc)
-                c["debut_test"] = str(pd.Timestamp(par_h[ex.H]["date"].min()).date())
-                rep = None
-                if c["regles"].get(ex.H, {}).get("2abc"):      # règle 2 (d), calculée seulement si (a) à (c) tiennent
-                    m = universe.get_sp400_tickers()
-                    raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
-                    data_m, _ = ex.preparer(raw_m, m["symbol"].tolist(), None)
-                    beta_m = ex.beta_depuis_cours(raw_m, m["symbol"].tolist())
-                    rep = ex.replication_harx(ex.walk_forward_harx(ex.ajouter_x_vix(data_m, beta_m, vix)))
-                    c["replication_midcap"] = rep
-                r = c["horizons"][ex.H]["dm"]
-                _inserer(cli, lot, nom, ex.verdict_harx(c, rep), c, ic=r.get("ecart"), t=r.get("t"), seuil=2.0,
-                         n_essais=ex.N_ESSAIS_HARX)
-            elif nom == "examen_har_etendu":
-                import fred
-                vix = _vix(DEBUT_EXAMEN)
-                macro = pd.DataFrame({k: fred._fetch_fred_serie(sid, start_date=DEBUT_EXAMEN).set_index("date")["valeur"]
-                                      for k, sid in mreg.SERIES_FRED.items()})
-                macro.index = pd.to_datetime(macro.index)
-                tables = ex.variables_cours(raw, snap["symbol"].tolist())
-                d, modeles = ex.modeles_etendus(ex.ajouter_etendu(data, tables, vix, macro))
-                dp, _ = ex.modeles_etendus(ex.ajouter_etendu(data, tables, vix, macro, decalage=ex.DECALAGE_PLACEBO_VIX))
-                te, tp = ex.walk_forward_lineaire(d, modeles), ex.walk_forward_lineaire(dp, modeles)
-                c = ex.comparer_etendu(te, tp)
-                c["debut_test"] = str(pd.Timestamp(te["date"].min()).date())
-                c["variables"] = modeles
-                rep = None
-                if c["regles"]["2abcd"] and c["regles"]["3_placebo_ne_bat_pas_m1"]:     # règle 2 (e), conditionnelle
-                    m = universe.get_sp400_tickers()
-                    raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
-                    data_m, _ = ex.preparer(raw_m, m["symbol"].tolist(), None)
-                    dm_, mod_m = ex.modeles_etendus(ex.ajouter_etendu(data_m, ex.variables_cours(raw_m, m["symbol"].tolist()), vix, macro))
-                    rep = ex.replication_etendu(ex.walk_forward_lineaire(dm_, mod_m))
-                    c["replication_midcap"] = rep
-                r = c["m2_contre_har"]
-                _inserer(cli, lot, nom, ex.verdict_etendu(c, rep), c, ic=r.get("ecart"), t=r.get("t"), seuil=2.0,
-                         n_essais=ex.N_ESSAIS_ETENDU)
-            elif nom == "examen_harx_1m":
-                vix = _vix(DEBUT_EXAMEN)
-                m = universe.get_sp400_tickers()
-                raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
-                c_mid = ex.essai_harx_1m(raw_m, m["symbol"].tolist(), vix)
-                c_sp = ex.essai_harx_1m(raw, snap["symbol"].tolist(), vix, compo, secteurs)
-                v, cond = ex.verdict_harx_1m(c_mid)
-                diag = {"midcaps": c_mid, "sp500_reproduction": c_sp, "conditions": cond,
-                        "decision": "confirme" if v == "confirmé" else "non_confirme",
-                        "avertissement_couverture": c_mid["couverture"]["harx"]["avertissement"]}
-                r = c_mid["horizons"][ex.H_MOIS]["dm"]
-                _inserer(cli, lot, nom, v, diag, ic=r.get("ecart"), t=r.get("t"), seuil=2.0, n_essais=ex.N_ESSAIS_HARX_1M)
-            elif nom == "examen_harx_1m_v2":
-                vix = _vix(DEBUT_EXAMEN)
-                m = universe.get_sp400_tickers()
-                raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
-                c_mid = ex.essai_harx_1m(raw_m, m["symbol"].tolist(), vix, nettoyage=True)
-                c_sp = ex.essai_harx_1m(raw, snap["symbol"].tolist(), vix, compo, secteurs, nettoyage=True,
-                                        winsor=c_mid["etape"] == 2)      # même étape que les midcaps (§ 4.17)
-                v, cond = ex.verdict_harx_1m(c_mid)
-                diag = {"midcaps": c_mid, "sp500_reproduction": c_sp, "conditions": cond, "etape": c_mid["etape"],
-                        "decision": "confirme" if v == "confirmé" else "non_confirme",
-                        "avertissement_couverture": c_mid["couverture"]["harx"]["avertissement"]}
-                r = c_mid["horizons"][ex.H_MOIS]["dm"]
-                _inserer(cli, lot, nom, v, diag, ic=r.get("ecart"), t=r.get("t"), seuil=2.0, n_essais=ex.N_ESSAIS_HARX_1M_V2)
-            elif nom == "examen_asymetrie":
-                c = ex.essai_asymetrie(data, raw)
-                pl = ex.essai_asymetrie(data, raw, melange=True)
-                v, propre = ex.verdict_asymetrie(c, pl)
-                c["placebo"] = {k: {"ic": x.get("ecart"), "t": x.get("t")} for k, x in pl["tests"].items()}
-                c["placebo_propre"] = propre
-                a = c["tests"]["A_persistance_126"]
-                _inserer(cli, lot, nom, v, c, ic=a.get("ecart"), t=a.get("t"), seuil=2.0, n_essais=ex.N_ESSAIS_ASYM)
-            elif nom == "examen_marge":
-                tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
-                res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",
-                                  variantes=["hist_3a", "hybride"], secteurs=secteurs, portefeuilles=tous,
-                                  garder_poids=True, garder_frontieres=True)
-                px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
-                c = {"marges": {}, "rythmes": {}, "couverture": {}, "marges_par_source": {}}
-                for lim in [0.10, 0.12, 0.15, 0.18]:
-                    c["marges"][f"{int(lim * 100)}"] = bt.marge_walk_forward(res, px, lim, "hybride", revision_mois=6)
-                # Correction du 23/11/2026 (METHODE § 7.4) : chaque source et une grille de limites de 8 à 35 %
-                for var in ["hist_3a", "hybride"]:
-                    c["marges_par_source"][var] = {f"{int(round(lim * 100))}": bt.marge_walk_forward(res, px, lim, var, revision_mois=6)
-                                                   for lim in bt.LIMITES_MARGE}
-                for rythme in [1, 6, 12]:
-                    for nom_pf in ["sharpe_max", "risque_15"]:
-                        c["rythmes"][f"{nom_pf}_{rythme}m"] = bt.backtest_reel(res, px, nom_pf, "hybride", revision_mois=rythme)
-                c["couverture"] = {var: bt.couverture_fourchette(res, px, "sharpe_max", var) for var in ["hist_3a", "hybride"]}
-                # Règle 5 : loi de Student à 5 degrés (90 % des scénarios dans ±2,015 σ), revérifiée
-                c["couverture"]["hybride_student5"] = bt.couverture_fourchette(res, px, "sharpe_max", "hybride", z=2.015)
-                c["debut"] = str(pd.Timestamp(res["date"].min()).date())
-                parts = [m["part_respectee_avec_marge"] for m in c["marges"].values() if m["part_respectee_avec_marge"] is not None]
-                ok = bool(parts) and min(parts) >= 0.70                 # règle 3 : au moins 70 % des semestres
-                m15 = c["marges"]["15"]
-                # Publication de la marge pour l'appli (lue dans model_runs, kind « marge_risque »)
-                cli.table("model_runs").upsert(_clean({
-                    "kind": "marge_risque", "trained_at": pd.Timestamp.now(tz="UTC").isoformat(),
-                    "verdict": "respectée" if ok else "insuffisante",
-                    "diagnostics": {"marge": m15["marge_actuelle"], "marges": c["marges"], "marges_par_source": c["marges_par_source"],
-                                    "part_respectee": m15["part_respectee_avec_marge"], "depuis": c["debut"]},
-                }), on_conflict="kind").execute()
-                v = (f"limite tenue {min(parts):.0%} des semestres au moins" if parts else "non calculable")
-                _inserer(cli, lot, nom, v, c, ic=m15["marge_actuelle"])
-            elif nom == "examen_backtest_reel":
-                tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
-                res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base=bt.BASES,
-                                  variantes=["hist_3a", "ia"], secteurs=secteurs, portefeuilles=tous, garder_poids=True)
-                px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
-                c = {"reel": {}, "couverture": {}}
-                for nom_pf in tous:
-                    for var in ["hist_3a", "ia"]:
-                        c["reel"][f"{nom_pf}_{var}"] = bt.backtest_reel(res, px, nom_pf, var)
-                c["couverture"] = {var: bt.couverture_fourchette(res, px, "sharpe_max", var) for var in ["hist_3a", "ia"]}
-                mat = (res[res["portefeuille"] != "indice"]
-                       .assign(col=lambda x: x["base"] + "_" + x["variante"] + "_" + x["portefeuille"])
-                       .pivot_table(index="date", columns="col", values="rendement"))
-                c["pbo"] = ex.pbo(mat)
-                c["debut"] = str(pd.Timestamp(res["date"].min()).date())
-                p = c["pbo"]["pbo"]
-                _inserer(cli, lot, nom, f"PBO {p:.0%}" if p is not None else "PBO non calculable", c, ic=p)
+            fonction(ctx, nom)
         except Exception as e:
             print(f"[LABO][ERREUR] {nom} : {type(e).__name__} : {e}")
             echecs.append(nom)

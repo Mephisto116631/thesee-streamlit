@@ -6,16 +6,10 @@ import os
 import pandas as pd
 from datetime import date, timedelta
 from supabase import create_client, Client
-import streamlit as st
 
 
 def _get_secret(key: str, default: str = "") -> str:
-    """Lit depuis st.secrets (local via .streamlit/secrets.toml, ou Streamlit Cloud > Settings > Secrets)."""
-    try:
-        if key in st.secrets:
-            return st.secrets[key]
-    except Exception:
-        pass
+    """Lit un secret dans les variables d'environnement (secrets GitHub Actions, ou export local)."""
     return os.environ.get(key, default)
 
 
@@ -32,7 +26,7 @@ def get_client() -> Client:
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError(
             "SUPABASE_URL / SUPABASE_KEY manquants. "
-            "Verifie ton fichier .env ou tes secrets Streamlit Cloud."
+            "Définis-les dans l'environnement (secrets GitHub Actions, ou export local)."
         )
     _CLIENT = create_client(SUPABASE_URL, SUPABASE_KEY)
     return _CLIENT

@@ -24,7 +24,7 @@
 import numpy as np
 import pandas as pd
 
-RF = 0.0435             # taux sans risque annuel (même valeur que l'appli)
+RF = 0.0435             # taux sans risque de repli et du laboratoire (le cron lit le taux du jour : METHODE § 2.1)
 N_CANDIDATS = 40        # ancienne présélection par momentum (gardée pour le backtest comparatif)
 N_FACTEURS = 20         # composantes principales de la covariance publiée
 ITERATIONS = 400        # itérations FISTA (comme l'appli)
@@ -49,7 +49,7 @@ def _matrice_rendements(market_raw: pd.DataFrame, symboles: list[str], jours: in
     return px.pct_change().dropna()
 
 
-def estimations(R: pd.DataFrame, marche: pd.Series | None = None) -> tuple[np.ndarray, np.ndarray]:
+def estimations(R: pd.DataFrame, marche: pd.Series | None = None, rf: float = RF) -> tuple[np.ndarray, np.ndarray]:
     """(rendements attendus annuels, covariance annuelle Ledoit-Wolf).
 
     Rendement attendu = 90 % modèle CAPM (taux sans risque + bêta x prime de risque
@@ -63,7 +63,7 @@ def estimations(R: pd.DataFrame, marche: pd.Series | None = None) -> tuple[np.nd
     m = marche.reindex(R.index).fillna(0.0) if marche is not None else R.mean(axis=1)
     var_m = float(m.var())
     betas = np.array([float(R[c].cov(m)) / var_m if var_m > 0 else 1.0 for c in R.columns])
-    mu_capm = RF + betas * PRIME_RISQUE
+    mu_capm = rf + betas * PRIME_RISQUE
     mu = (1 - POIDS_HISTORIQUE) * mu_capm + POIDS_HISTORIQUE * mu_hist
     return mu, cov
 
@@ -175,7 +175,7 @@ def resoudre_epure(B: np.ndarray, D: np.ndarray, mu: np.ndarray, lam: float, poi
 
 
 def frontiere_lambdas(B: np.ndarray, D: np.ndarray, mu: np.ndarray, n_points: int = N_LAMBDAS,
-                      poids_max: float = POIDS_MAX) -> list[dict]:
+                      poids_max: float = POIDS_MAX, rf: float = RF) -> list[dict]:
     """Points de la frontière efficiente pour une grille de λ (même grille que l'appli).
     Chaque point : {rendement, volatilite, sharpe, idx, w}, triés, sans points dominés."""
     n = len(mu)
@@ -190,7 +190,7 @@ def frontiere_lambdas(B: np.ndarray, D: np.ndarray, mu: np.ndarray, n_points: in
         w = w / w.sum()
         r = float(w @ mu[idx])
         vol = float(np.sqrt(max(variance(B[idx], D[idx], w), 0)))
-        pts.append({"rendement": r, "volatilite": vol, "sharpe": (r - RF) / vol if vol > 0 else 0.0,
+        pts.append({"rendement": r, "volatilite": vol, "sharpe": (r - rf) / vol if vol > 0 else 0.0,
                     "idx": idx, "w": w})
     pts.sort(key=lambda p: p["rendement"])
     garde = [a for a in pts if not any(b is not a and b["rendement"] > a["rendement"] + 1e-6
@@ -202,10 +202,10 @@ def frontiere_lambdas(B: np.ndarray, D: np.ndarray, mu: np.ndarray, n_points: in
     return out
 
 
-def optimiser(mu: np.ndarray, B: np.ndarray, D: np.ndarray, colonnes, cible) -> pd.Series | None:
+def optimiser(mu: np.ndarray, B: np.ndarray, D: np.ndarray, colonnes, cible, rf: float = RF) -> pd.Series | None:
     """Portefeuille épuré : cible=None -> meilleur ratio de Sharpe de la frontière ;
     cible non finie (nan, -inf) -> variance minimale."""
-    pts = frontiere_lambdas(B, D, mu)
+    pts = frontiere_lambdas(B, D, mu, rf=rf)
     if not pts:
         return None
     if cible is None:
@@ -261,13 +261,13 @@ def markowitz_tangent(R: pd.DataFrame, poids_max: float = POIDS_MAX, marche: pd.
     return w if w is not None else pd.Series(1 / R.shape[1], index=R.columns)
 
 
-def frontiere_efficiente(R: pd.DataFrame, marche: pd.Series | None = None) -> list[dict]:
+def frontiere_efficiente(R: pd.DataFrame, marche: pd.Series | None = None, rf: float = RF) -> list[dict]:
     """Frontière publiée : {cible, rendement, volatilite, sharpe, lignes: [{symbol, poids}]}."""
-    mu, cov = estimations(R, marche)
+    mu, cov = estimations(R, marche, rf)
     B, D = facteurs(cov)
     cols = list(R.columns)
     out = []
-    for p in frontiere_lambdas(B, D, mu):
+    for p in frontiere_lambdas(B, D, mu, rf=rf):
         w = _nettoyer(pd.Series(p["w"], index=[cols[i] for i in p["idx"]]))
         out.append({"cible": p["rendement"], "rendement": p["rendement"], "volatilite": p["volatilite"],
                     "sharpe": p["sharpe"], "lignes": [{"symbol": k, "poids": float(v)} for k, v in w.items()]})
@@ -288,7 +288,7 @@ def _nettoyer(w: pd.Series) -> pd.Series:
     return w.sort_values(ascending=False)
 
 
-def stats_portefeuille(R: pd.DataFrame, w: pd.Series) -> dict:
+def stats_portefeuille(R: pd.DataFrame, w: pd.Series, rf: float = RF) -> dict:
     pr = R[w.index].values @ w.values
     ann_ret = float((1 + pr).prod() ** (JOURS / len(pr)) - 1)
     ann_vol = float(pr.std() * np.sqrt(JOURS))
@@ -297,14 +297,16 @@ def stats_portefeuille(R: pd.DataFrame, w: pd.Series) -> dict:
     return {
         "rendement_1y": ann_ret,
         "volatilite": ann_vol,
-        "sharpe": (ann_ret - RF) / ann_vol if ann_vol > 0 else None,
+        "sharpe": (ann_ret - rf) / ann_vol if ann_vol > 0 else None,
         "perte_max": mdd,
         "n_jours": int(len(pr)),
     }
 
 
-def portefeuille_recommande(market_raw: pd.DataFrame, snapshot: pd.DataFrame) -> dict | None:
-    """Retourne {lignes: [...], stats: {...}, methode: str} ou None si données insuffisantes."""
+def portefeuille_recommande(market_raw: pd.DataFrame, snapshot: pd.DataFrame, rf: float = RF,
+                            date_rf: str | None = None) -> dict | None:
+    """Retourne {lignes: [...], stats: {...}, methode: str} ou None si données insuffisantes.
+    rf : taux sans risque du jour (docs/METHODE.md § 2.1), date_rf : sa date (None = valeur de repli)."""
     if market_raw.empty or snapshot.empty:
         return None
     cands = candidats(market_raw, snapshot)
@@ -318,9 +320,9 @@ def portefeuille_recommande(market_raw: pd.DataFrame, snapshot: pd.DataFrame) ->
     if R.shape[1] < 5 or len(R) < JOURS // 2:
         return None
 
-    mu, cov = estimations(R, marche)
+    mu, cov = estimations(R, marche, rf)
     B, D = facteurs(cov)
-    w = optimiser(mu, B, D, list(R.columns), None)
+    w = optimiser(mu, B, D, list(R.columns), None, rf=rf)
     if w is None:
         return None
     wv = w.reindex(R.columns).fillna(0).values
@@ -352,23 +354,24 @@ def portefeuille_recommande(market_raw: pd.DataFrame, snapshot: pd.DataFrame) ->
         secteurs[l["secteur"] or "Autre"] += l["poids"]
     return {
         "lignes": lignes,
-        "stats": stats_portefeuille(R.iloc[-JOURS:], w) | {
+        "stats": stats_portefeuille(R.iloc[-JOURS:], w, rf) | {
             "poids_secteur_max": float(secteurs.max()),
             "secteur_principal": str(secteurs.idxmax()),
             "rendement_attendu": float(wv @ mu),
             "volatilite_attendue": float(np.sqrt(variance(B, D, wv))),
         },
-        "frontiere": frontiere_efficiente(R, marche=marche),
+        "frontiere": frontiere_efficiente(R, marche=marche, rf=rf),
         "titres": titres,
         # Nouveau format (forme factorielle) sous une nouvelle clé : les anciennes versions de l'appli,
         # qui attendent `univers.cov`, voient `univers` vide et affichent la frontière du serveur.
         "univers": None,
-        "univers_facteurs": ingredients(R, marche),
+        "univers_facteurs": ingredients(R, marche) | {"taux_sans_risque": float(rf), "taux_sans_risque_date": date_rf},
         "methode": (f"Markowitz (meilleur ratio de Sharpe) parmi les {R.shape[1]} titres du S&P 500 "
                     f"ayant 3 ans d'historique, plafond {int(POIDS_MAX * 100)} % par ligne, "
                     f"au plus {N_MAX_LIGNES} lignes d'au moins {int(POIDS_MIN * 100)} %, "
                     f"covariance Ledoit-Wolf sur 3 ans ({N_FACTEURS} facteurs), rendements attendus = 90 % CAPM "
-                    f"(taux sans risque + bêta x prime de risque de {int(PRIME_RISQUE * 100)} %) + 10 % historique."),
+                    f"(taux sans risque de {rf:.2%}" + (f" au {date_rf}" if date_rf else ", valeur de repli")
+                    + f" + bêta x prime de risque de {int(PRIME_RISQUE * 100)} %) + 10 % historique."),
     }
 
 

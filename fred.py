@@ -5,12 +5,12 @@
 # ==============================================================================
 import requests
 import pandas as pd
-import streamlit as st
 
 import db
 
 SERIE_HY = "BAMLH0A0HYM2"  # ICE BofA US High Yield Index Option-Adjusted Spread
 SERIE_IG = "BAMLC0A0CM"    # ICE BofA US Corporate Index Option-Adjusted Spread (proxy IG)
+SERIE_TAUX_3M = "DGS3MO"   # Bons du Trésor US à 3 mois, marché secondaire (% par an) : taux sans risque
 
 FRED_API_KEY = db._get_secret("FRED_API_KEY")
 FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
@@ -43,12 +43,10 @@ def _fetch_fred_serie(serie_id: str, start_date: str = "2015-01-01") -> pd.DataF
     return df
 
 
-@st.cache_data(ttl=86400, show_spinner=False)
 def sync_credit_spread(serie_id: str) -> pd.DataFrame:
     """
     Synchronise une série FRED vers Supabase (table credit_spreads).
-    TTL 24h en cache Streamlit — les spreads bougent quotidiennement max,
-    pas besoin de re-fetch à chaque rerun de session.
+    Ne télécharge que les jours postérieurs à la dernière date en base.
     """
     derniere_date_db = db.last_credit_spread_date(serie_id)
 
@@ -64,7 +62,7 @@ def sync_credit_spread(serie_id: str) -> pd.DataFrame:
     try:
         df_fresh = _fetch_fred_serie(serie_id, start_date=start)
     except Exception as e:
-        st.warning(f"Erreur FRED sur {serie_id} : {e}")
+        print(f"[FRED][WARN] Erreur FRED sur {serie_id} : {e}")
         return db.fetch_credit_spreads(serie_id)
 
     if not df_fresh.empty:
@@ -92,3 +90,31 @@ def get_spreads_hy_ig() -> dict:
     ig_actuel = df_ig["valeur"].iloc[-1] * 100 if not df_ig.empty else None
 
     return {"hy": df_hy, "ig": df_ig, "hy_actuel": hy_actuel, "ig_actuel": ig_actuel}
+
+
+TAUX_MIN, TAUX_MAX = -0.01, 0.20     # bornes de plausibilité (docs/METHODE.md § 2.1)
+TAUX_AGE_MAX_JOURS = 15
+
+
+def choisir_taux(serie: pd.DataFrame, aujourdhui=None) -> tuple[float, str] | None:
+    """Dernière valeur plausible et récente d'une série de taux FRED [date, valeur en %] -> (fraction, date ISO).
+    None si la série est vide, trop ancienne ou hors bornes : l'appelant prend alors la valeur de repli."""
+    if serie is None or serie.empty:
+        return None
+    s = serie.dropna(subset=["valeur"]).sort_values("date")
+    if s.empty:
+        return None
+    der = s.iloc[-1]
+    date_ = pd.Timestamp(der["date"])
+    aujourdhui = pd.Timestamp(aujourdhui) if aujourdhui is not None else pd.Timestamp.today()
+    taux = float(der["valeur"]) / 100
+    if not (TAUX_MIN <= taux <= TAUX_MAX) or (aujourdhui - date_).days > TAUX_AGE_MAX_JOURS:
+        return None
+    return taux, str(date_.date())
+
+
+def taux_sans_risque() -> tuple[float, str] | None:
+    """Taux sans risque du jour (docs/METHODE.md § 2.1) : bons du Trésor US à 3 mois, FRED DGS3MO.
+    (taux en fraction, date) ; None si FRED est indisponible ou la valeur non plausible."""
+    debut = str((pd.Timestamp.today() - pd.Timedelta(days=40)).date())
+    return choisir_taux(_fetch_fred_serie(SERIE_TAUX_3M, start_date=debut))

@@ -208,7 +208,7 @@ create or replace view price_history_1y as
 -- ==============================================================================
 -- SÉCURITÉ — RLS : la clé "anon" (embarquée dans l'APK, publique par nature)
 -- peut uniquement LIRE. Le cron écrit avec la clé service_role (secret GitHub),
--- qui contourne RLS. L'app Streamlit peut garder la clé service_role ou anon.
+-- qui contourne RLS.
 -- ==============================================================================
 do $$
 declare t text;

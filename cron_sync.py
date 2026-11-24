@@ -1,28 +1,19 @@
 # cron_sync.py
 # ==============================================================================
 # SCRIPT DE SYNCHRONISATION AUTOMATIQUE — exécuté par GitHub Actions (CRON)
-# Réutilise data_pipeline.py / db.py / fred.py / universe.py hors serveur : on
-# remplace le module `streamlit` par un shim (_st_shim.py) AVANT tout import.
 #
 # Rôle : faire TOUS les calculs (prix, fondamentaux, Z-Score, modèles IA,
-# signaux, indicateurs) et écrire dans Supabase des tables prêtes à afficher.
-# L'appli mobile et l'app Streamlit ne font plus que LIRE.
+# indicateurs, portefeuille) et écrire dans Supabase des tables prêtes à afficher.
+# L'appli mobile (APK / PWA) ne fait que LIRE.
 # ==============================================================================
 import sys
 import time
 
-import _st_shim
-sys.modules["streamlit"] = _st_shim
-
-import data_pipeline as dp   # noqa: E402  (import après l'injection du shim, volontaire)
-import db                    # noqa: E402
-import fred                  # noqa: E402
-import publish               # noqa: E402
-import universe              # noqa: E402
-
-# Ancien modèle IA « hausse demain » (XGBoost) : non probant, retiré de l'appli. Le code est
-# conservé ; passer à True pour le recalculer (environ 40 s de plus par passage).
-MODELE_1J = False
+import data_pipeline as dp
+import db
+import fred
+import publish
+import universe
 
 
 def main(log_id):
@@ -35,14 +26,13 @@ def main(log_id):
     tickers_univers = univers_df["symbol"].tolist()
     print(f"[CRON] {len(tickers_univers)} tickers dans l'univers élargi.")
 
-    # --- 2. Pipeline complet en mode écriture (prix incrémentaux, fondamentaux, Z-Score, modèles) ---
+    # --- 2. Collecte : prix incrémentaux, macro, fondamentaux, Z-Score ---
     db.progression(5, "Cours de bourse")
-    data = dp.get_all_data(univers_etendu=tickers_univers, telecharger=True, entrainer_1j=MODELE_1J)
+    data = dp.get_all_data(univers_etendu=tickers_univers)
     n_prix = data["market_data_raw"]["symbol"].nunique() if not data["market_data_raw"].empty else 0
     print(
         f"[CRON] Pipeline terminé — {n_prix} tickers (prix), "
-        f"{len(data['fonda_data_clean'])} fondamentaux, {len(data['zscore_df'])} Z-Scores, "
-        f"modèle 1 jour : {'calculé' if MODELE_1J else 'désactivé'}"
+        f"{len(data['fonda_data_clean'])} fondamentaux, {len(data['zscore_df'])} Z-Scores"
     )
 
     # --- 3. Spreads de crédit FRED ---
@@ -68,7 +58,7 @@ def statut_passage(n_prix: int, resume: dict, duree: float) -> tuple[str, str]:
     """« success » si tout est publié ; « partiel » si une étape non bloquante a échoué
     (volatilité, portefeuille, comptes SEC…) : l'appli le signale au lieu d'afficher « à jour »."""
     avert = resume.get("avertissements") or []
-    msg = f"{n_prix} tickers, {resume.get('signaux', 0)} signaux, {duree:.0f}s"
+    msg = f"{n_prix} tickers, {resume.get('portefeuille', 0)} lignes de portefeuille, {duree:.0f}s"
     if not avert:
         return "success", msg
     return "partiel", f"{msg} — {len(avert)} avertissement(s) : " + " | ".join(avert)

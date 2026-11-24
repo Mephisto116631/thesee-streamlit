@@ -1,11 +1,6 @@
 """Tests des ratios calculés depuis les bilans Alpha Vantage (sans réseau)."""
-import sys
 
-import _st_shim
-
-sys.modules.setdefault("streamlit", _st_shim)
-
-import data_pipeline as dp  # noqa: E402
+import data_pipeline as dp
 
 BS = {
     "totalAssets": "1000", "totalLiabilities": "600", "totalShareholderEquity": "400",

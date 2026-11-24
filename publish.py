@@ -4,7 +4,7 @@
 # ==============================================================================
 # L'appli mobile (APK / PWA) ne fait AUCUN calcul lourd : elle lit des tables
 # Supabase déjà calculées ici, à chaque run du cron :
-#   titres_snapshot, sector_medians, signals, model_runs, market_overview
+#   titres_snapshot, sector_medians, model_runs, scores_horizon, market_overview, portefeuille_recommande…
 # Les fourchettes d'interprétation sont dans ranges.json (partagé avec l'appli).
 # ==============================================================================
 import json
@@ -16,11 +16,11 @@ import pandas as pd
 import data_pipeline as dp
 import db
 import fondamentaux_sec as fsec
+import fred
 import modele_horizon
 import modele_risque
 import portefeuille
 import universe
-import utils
 
 
 # ------------------------------------------------------------------------------
@@ -96,17 +96,6 @@ def _rsi(close: pd.Series) -> pd.Series:
     return 100 - (100 / (1 + (up / down.replace(0, np.inf))))
 
 
-def verdict_modele(gain_pts: float | None) -> str:
-    """Même bornes que ranges.json > gain_pts."""
-    if gain_pts is None:
-        return "aucun"
-    if gain_pts <= 0:
-        return "aucun"
-    if gain_pts <= 2:
-        return "bruit"
-    return "signal"
-
-
 # ------------------------------------------------------------------------------
 # 1. Indicateurs du dernier jour par ticker
 # ------------------------------------------------------------------------------
@@ -145,69 +134,7 @@ def indicateurs_derniere_seance(market_raw: pd.DataFrame) -> pd.DataFrame:
 
 
 # ------------------------------------------------------------------------------
-# 2. Signaux IA du jour + explication SHAP
-# ------------------------------------------------------------------------------
-def signaux_du_jour(model_result: dict, features_df: pd.DataFrame, kind: str, top_n: int = 5) -> pd.DataFrame:
-    model = model_result.get("model")
-    if model is None or features_df.empty:
-        return pd.DataFrame()
-    feat = model_result["features"]
-    derniers = features_df.sort_values("date").groupby("symbol").tail(1).reset_index(drop=True)
-    X_raw = derniers[feat].values
-    X = model_result["scaler"].transform(model_result["imputer"].transform(X_raw))
-    proba = model.predict_proba(X)[:, 1]
-
-    try:
-        import shap
-        shap_vals = shap.TreeExplainer(model)(X).values
-    except Exception as e:  # SHAP est un bonus : le signal reste publié sans
-        avertir(f"SHAP indisponible ({e})")
-        shap_vals = np.zeros_like(X)
-
-    lignes = []
-    for i, row in derniers.iterrows():
-        ordre = np.argsort(-np.abs(shap_vals[i]))[:top_n]
-        facteurs = [{
-            "feature": feat[j],
-            "label": utils.FEATURE_LABELS.get(feat[j], feat[j]),
-            "valeur": X_raw[i][j],
-            "impact": shap_vals[i][j],
-        } for j in ordre]
-        lignes.append({
-            "symbol": row["symbol"],
-            "kind": kind,
-            "date": pd.Timestamp(row["date"]).date().isoformat(),
-            "proba_hausse": proba[i],
-            "facteurs": _clean(facteurs),
-        })
-    return pd.DataFrame(lignes)
-
-
-def ligne_model_run(model_result: dict, kind: str) -> dict:
-    diag = model_result.get("diagnostics") or {}
-    gain = diag.get("amelioration_vs_baseline")
-    importance = []
-    if model_result.get("model") is not None:
-        imp = model_result["model"].feature_importances_
-        importance = sorted(
-            [{"feature": f, "label": utils.FEATURE_LABELS.get(f, f), "importance": float(v)}
-             for f, v in zip(model_result["features"], imp)],
-            key=lambda d: -d["importance"],
-        )
-    return _clean({
-        "kind": kind,
-        "trained_at": pd.Timestamp.now(tz="UTC").isoformat(),
-        "accuracy": diag.get("accuracy"),
-        "baseline": diag.get("baseline_accuracy"),
-        "gain_pts": gain,
-        "verdict": verdict_modele(gain),
-        "importance": importance,
-        "diagnostics": diag,
-    })
-
-
-# ------------------------------------------------------------------------------
-# 3. Vue d'ensemble du marché
+# 2. Vue d'ensemble du marché
 # ------------------------------------------------------------------------------
 def _stats_spread(df: pd.DataFrame) -> dict:
     if df is None or df.empty:
@@ -268,9 +195,9 @@ def ligne_overview(macro_raw: pd.DataFrame, snapshot: pd.DataFrame, spreads: dic
 
 
 # ------------------------------------------------------------------------------
-# 4. Point d'entrée
+# 3. Instantané par titre et point d'entrée
 # ------------------------------------------------------------------------------
-def construire_snapshot(data: dict, univers_df: pd.DataFrame, signals_df: pd.DataFrame) -> pd.DataFrame:
+def construire_snapshot(data: dict, univers_df: pd.DataFrame) -> pd.DataFrame:
     ind = indicateurs_derniere_seance(data["market_data_raw"])
     if ind.empty:
         return ind
@@ -289,9 +216,7 @@ def construire_snapshot(data: dict, univers_df: pd.DataFrame, signals_df: pd.Dat
     r = data["ratings_df"]
     if not r.empty:
         snap = snap.merge(r[["symbol", "rating_sp"]], on="symbol", how="left")
-    if not signals_df.empty:
-        snap = snap.merge(signals_df[["symbol", "proba_hausse"]], on="symbol", how="left")
-
+    # proba_hausse : ancien modèle « hausse demain », retiré (non probant) ; la colonne est vidée
     for col in ["roe", "margin", "ev_ebitda", "debt_eq", "z_score", "rating_sp", "proba_hausse"]:
         if col not in snap.columns:
             snap[col] = None
@@ -460,29 +385,36 @@ LIBELLES_HORIZON = {"court": "1 mois", "6m": "6 mois", "1a": "1 an"}
 
 
 def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
-    """Calcule et écrit toutes les tables d'affichage. Retourne un résumé (logs), dont la liste
-    des étapes non bloquantes qui ont échoué (`avertissements`)."""
+    """Calcule et écrit toutes les tables d'affichage, étape par étape. Seules les tables de base
+    (instantané, médianes, vue d'ensemble) sont indispensables ; une étape suivante qui échoue est notée
+    dans `avertissements` (passage « partiel ») sans arrêter les autres. Retourne un résumé (logs)."""
     AVERTISSEMENTS.clear()
-    symboles_etf = set(universe.ETFS_SECTORIELS.keys())
     raw = data["market_data_raw"]
-    macro = data["macro_data_raw"]
-
-    modele_1j = data["model_result"].get("model") is not None
-    sig = pd.DataFrame()
-    if modele_1j:
-        # Features AVEC la dernière séance (le signal du jour porte sur demain)
-        feats_actions = dp.build_features(raw[~raw["symbol"].isin(symboles_etf)], macro,
-                                          utils.dict_secteurs, data["fonda_data_clean"], garder_dernier=True)
-        feats_etf = dp.build_features_etf(raw[raw["symbol"].isin(symboles_etf)], macro, garder_dernier=True)
-        sig = pd.concat([
-            signaux_du_jour(data["model_result"], feats_actions, "actions"),
-            signaux_du_jour(data["model_result_etf"], feats_etf, "etf"),
-        ], ignore_index=True)
-
-    snap = construire_snapshot(data, univers_df, sig)
+    snap = construire_snapshot(data, univers_df)
     med = construire_medianes(snap) if not snap.empty else pd.DataFrame()
-    overview = ligne_overview(macro, snap, spreads)
+    publier_tables_de_base(snap, med, ligne_overview(data["macro_data_raw"], snap, spreads))
 
+    # Valorisation (PER, ROE…) depuis les comptes officiels SEC : une fois par semaine
+    try:
+        db.progression(62, "Comptes officiels (SEC)")
+        publier_valorisation_sec(snap)
+    except Exception as e:
+        avertir(f"Valorisation SEC non mise à jour : {e}")
+
+    # Historique long (depuis 2005, non stocké) : bien plus de périodes de test indépendantes
+    raw_long = dp.historique_long()
+    raw_horizon = raw_long if raw_long is not None and not raw_long.empty else raw
+    composition = modele_horizon.charger_composition()   # membres réels de l'indice à chaque date
+
+    n_scores = publier_modeles_horizon(raw_horizon, snap, composition)
+    vol_publiee = publier_volatilite(raw, raw_horizon, snap, composition)
+    n_lignes = publier_portefeuille(raw, raw_horizon, snap, composition, vol_publiee)
+    return {"snapshot": len(snap), "secteurs": len(med), "portefeuille": n_lignes,
+            "scores_horizon": n_scores, "avertissements": list(AVERTISSEMENTS)}
+
+
+def publier_tables_de_base(snap: pd.DataFrame, med: pd.DataFrame, overview: dict) -> None:
+    """Instantané par titre, médianes par secteur, vue d'ensemble du marché."""
     db.upsert_rows("titres_snapshot", _records(snap), on_conflict="symbol")
     # Ne retire que les titres sortis de l'indice, jamais une grosse part d'un coup (panne probable)
     try:
@@ -495,24 +427,11 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
     except ValueError as e:
         avertir(f"Aucun titre retiré de titres_snapshot ({e}) : panne de téléchargement probable")
     db.upsert_rows("sector_medians", _records(med), on_conflict="secteur")
-    if modele_1j:
-        db.upsert_rows("signals", _records(sig), on_conflict="symbol")
-        db.upsert_rows("model_runs", [ligne_model_run(data["model_result"], "actions"),
-                                      ligne_model_run(data["model_result_etf"], "etf")], on_conflict="kind")
     db.upsert_rows("market_overview", [overview], on_conflict="id")
 
-    # Valorisation (PER, ROE…) depuis les comptes officiels SEC : une fois par semaine
-    try:
-        db.progression(62, "Comptes officiels (SEC)")
-        publier_valorisation_sec(snap)
-    except Exception as e:
-        avertir(f"Valorisation SEC non mise à jour : {e}")
 
-    # Modèles « horizon » (1 mois, 6 mois, 1 an) : classement relatif des titres
-    # Sur l'historique long (depuis 2005, non stocké) : bien plus de périodes de test indépendantes.
-    raw_long = dp.historique_long()
-    raw_horizon = raw_long if raw_long is not None and not raw_long.empty else raw
-    composition = modele_horizon.charger_composition()   # membres réels de l'indice à chaque date
+def publier_modeles_horizon(raw_horizon: pd.DataFrame, snap: pd.DataFrame, composition) -> int:
+    """Modèles « horizon » (1 mois, 6 mois, 1 an) : classement relatif des titres. Retourne le nombre de scores."""
     n_scores = 0
     for k, nom in enumerate(modele_horizon.HORIZONS):
         db.progression(65 + 10 * k, f"Modèle IA {LIBELLES_HORIZON.get(nom, nom)}")
@@ -528,27 +447,35 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
                       f"momentum seul {d.get('ic_momentum') or 0:.3f}) -> {ligne['verdict']}")
         except Exception as e:
             avertir(f"Modèle horizon {nom} non calculé : {e}")
+    return n_scores
 
-    # Volatilité prévue par l'IA de risque (6 mois) : calculée et SUIVIE à chaque passage,
-    # mais montrée dans l'appli seulement si le dernier test du laboratoire est probant.
+
+def source_volatilite() -> dict:
+    """Fiabilité et source de la prévision de volatilité, d'après les derniers essais du laboratoire.
+    Source (docs/METHODE.md § 4.9) : « examen_hybride » décide entre l'hybride (ordre de l'IA, niveaux HAR)
+    et HAR seul ; sans examen, l'IA seule. Règle 6 : si l'IA ne bat pas HAR sur l'ordre des titres, HAR seul."""
+    lab = dernier_essai(modele_risque.NOM_LABO, "nom,horizon,verdict,t_stat,seuil_t_global,diagnostics,cree_le", "6m")
+    fiab = modele_risque.verdict_labo(lab)
+    ex_h = dernier_essai("examen_hybride", "diagnostics->decision,cree_le")
+    decision = (ex_h[0].get("decision") if ex_h else None) or "ia"
+    ex_r = dernier_essai("examen_ia_contre_har", "diagnostics->decision")
+    if ex_r and ex_r[0].get("decision") == "har":
+        decision = "har"
+    fiab["source"] = {"hybride": "hybride", "har": "har"}.get(decision, "ia")
+    if fiab["source"] == "har":
+        fiab["probant"] = True       # HAR : méthode de référence retenue par l'examen, sans dépendre de l'IA
+    return fiab
+
+
+def publier_volatilite(raw: pd.DataFrame, raw_horizon: pd.DataFrame, snap: pd.DataFrame, composition) -> pd.Series | None:
+    """Volatilité prévue à 6 mois : calculée et SUIVIE à chaque passage, mais montrée dans l'appli seulement
+    si le dernier test du laboratoire est probant. Retourne la prévision publiée (None si non publiée)."""
     vol_publiee = None
     try:
         db.progression(93, "Volatilité prévue par l'IA")
-        lab = dernier_essai(modele_risque.NOM_LABO, "nom,horizon,verdict,t_stat,seuil_t_global,diagnostics,cree_le", "6m")
-        fiab = modele_risque.verdict_labo(lab)
-        # Source de la prévision (docs/METHODE.md § 4.9) : l'examen « examen_hybride » décide entre
-        # l'hybride (ordre de l'IA, niveaux HAR) et HAR seul ; sans examen, l'IA seule (ancien comportement).
-        ex_h = dernier_essai("examen_hybride", "diagnostics->decision,cree_le")
-        decision = (ex_h[0].get("decision") if ex_h else None) or "ia"
-        # Règle 6 (§ 4.9) : si l'IA ne bat pas HAR sur l'ordre des titres, HAR seul
-        ex_r = dernier_essai("examen_ia_contre_har", "diagnostics->decision")
-        if ex_r and ex_r[0].get("decision") == "har":
-            decision = "har"
-        fiab["source"] = {"hybride": "hybride", "har": "har"}.get(decision, "ia")
+        fiab = source_volatilite()
         niveaux = {"hybride": "har", "har": "har_seul"}.get(fiab["source"], "vol_3m")
         vol_ia = modele_risque.predire_volatilite(raw_horizon, snap["symbol"].tolist(), composition, niveaux=niveaux)
-        if fiab["source"] == "har":
-            fiab["probant"] = True       # HAR : méthode de référence retenue par l'examen, sans dépendre de l'IA
         vol_publiee = filtrer_vol_ia(vol_ia, fiab)
         if vol_publiee is None:
             # Preuve tombée : on efface les anciennes valeurs, l'appli revient à l'historique
@@ -564,61 +491,93 @@ def publier(data: dict, univers_df: pd.DataFrame, spreads: dict) -> dict:
               f"({bilan.get('n_dates', 0)} dates jugées, premier bilan {bilan.get('premier_bilan')})")
     except Exception as e:
         avertir(f"Volatilité IA non calculée : {e}")
+    return vol_publiee
 
-    # Portefeuille recommandé : bonus, ne doit jamais faire échouer la publication
-    n_lignes = 0
+
+def ajouter_vol_publiee(reco: dict, vol_publiee: pd.Series | None) -> None:
+    """Joint la volatilité prévue (si publiée) à l'univers et aux titres du portefeuille."""
+    if vol_publiee is None:
+        return
+    syms = (reco.get("univers_facteurs") or {}).get("symbols", [])
+    if syms:
+        reco["univers_facteurs"]["vol_ia"] = [float(vol_publiee[s]) if s in vol_publiee else None for s in syms]
+    for s, t in (reco.get("titres") or {}).items():
+        if s in vol_publiee:
+            t["vol_ia"] = float(vol_publiee[s])
+
+
+def ajouter_stress_test(reco: dict, raw_horizon: pd.DataFrame) -> None:
+    """Stress test (docs/METHODE.md § 14) : crises passées rejouées sur les titres d'aujourd'hui."""
+    try:
+        u = reco.get("univers_facteurs") or {}
+        if u.get("symbols"):
+            u["chocs"] = portefeuille.chocs_historiques(raw_horizon, u["symbols"])
+            print(f"[PUBLISH] Stress test : {len((u['chocs'] or {}).get('crises', []))} crises rejouées")
+    except Exception as e:
+        avertir(f"Stress test non calculé : {e}")
+
+
+def ajouter_risque_mois(reco: dict, raw: pd.DataFrame, raw_horizon: pd.DataFrame, snap: pd.DataFrame, composition) -> None:
+    """Risque du mois à venir (docs/METHODE.md §§ 4.16-4.18) : publié seulement si la dernière confirmation
+    du laboratoire est réussie et si HAR-X ne fait pas pire que HAR en conditions réelles."""
+    try:
+        u = reco.get("univers_facteurs") or {}
+        ex_1m = dernier_essai(modele_risque.NOM_LABO_1M,
+                              "decision:diagnostics->>decision,avert:diagnostics->avertissement_couverture,"
+                              "part:diagnostics->midcaps->couverture->harx->part_depassements")
+        if not (u.get("symbols") and ex_1m and ex_1m[0].get("decision") == "confirme"):
+            print("[PUBLISH] Risque du mois à venir NON publié : confirmation absente ou non réussie")
+            return
+        vol_1m, vol_har_1m, info = modele_risque.niveaux_harx_1m_du_jour(raw_horizon, u["symbols"], vix_long(), composition)
+        bilan_1m = suivre_risque_mois(vol_1m, vol_har_1m, raw, snap["date"].max())
+        if bilan_1m.get("garde_fou"):
+            print("[PUBLISH] Risque du mois à venir NON publié : moins bon que HAR en conditions réelles (§ 4.18)")
+            return
+        u["vol_1m"] = [float(vol_1m[s]) if s in vol_1m.index else None for s in u["symbols"]]
+        u["info_1m"] = {**info, "avertissement": bool(ex_1m[0].get("avert")), "part_depassements": ex_1m[0].get("part"),
+                        "reel": {k: bilan_1m.get(k) for k in ("verdict", "n_dates", "premier_bilan", "couverture_mauvais_cas")}}
+        print(f"[PUBLISH] Risque du mois à venir : {len(vol_1m)} titres (VIX {info['vix']:.1f}) ; "
+              f"réel : {bilan_1m.get('verdict')} ({bilan_1m.get('n_dates', 0)} dates jugées)")
+    except Exception as e:
+        avertir(f"Risque du mois à venir non calculé : {e}")
+
+
+def taux_du_jour() -> tuple[float, str | None]:
+    """Taux sans risque du jour (FRED, docs/METHODE.md § 2.1), ou la valeur de repli avec un avertissement."""
+    try:
+        lu = fred.taux_sans_risque()
+    except Exception as e:
+        lu = None
+        print(f"[PUBLISH] Taux FRED illisible : {e}")
+    if lu is None:
+        avertir(f"Taux sans risque FRED indisponible : repli sur {portefeuille.RF:.2%}")
+        return portefeuille.RF, None
+    print(f"[PUBLISH] Taux sans risque : {lu[0]:.2%} au {lu[1]} (FRED {fred.SERIE_TAUX_3M})")
+    return lu
+
+
+def publier_portefeuille(raw: pd.DataFrame, raw_horizon: pd.DataFrame, snap: pd.DataFrame, composition,
+                         vol_publiee: pd.Series | None) -> int:
+    """Portefeuille recommandé, avec ses compléments (volatilité prévue, stress test, risque du mois).
+    Ne fait jamais échouer la publication. Retourne le nombre de lignes du portefeuille."""
     try:
         db.progression(97, "Portefeuille recommandé")
-        reco = portefeuille.portefeuille_recommande(raw, snap)
-        if reco:
-            if vol_publiee is not None:
-                syms = (reco.get("univers_facteurs") or {}).get("symbols", [])
-                if syms:
-                    reco["univers_facteurs"]["vol_ia"] = [float(vol_publiee[s]) if s in vol_publiee else None for s in syms]
-                for s, t in (reco.get("titres") or {}).items():
-                    if s in vol_publiee:
-                        t["vol_ia"] = float(vol_publiee[s])
-            # Stress test (docs/METHODE.md § 14) : crises passées rejouées sur les titres d'aujourd'hui
-            try:
-                u = reco.get("univers_facteurs") or {}
-                if u.get("symbols"):
-                    u["chocs"] = portefeuille.chocs_historiques(raw_horizon, u["symbols"])
-                    print(f"[PUBLISH] Stress test : {len((u['chocs'] or {}).get('crises', []))} crises rejouées")
-            except Exception as e:
-                avertir(f"Stress test non calculé : {e}")
-            # Risque du mois à venir (docs/METHODE.md §§ 4.16-4.17) : publié seulement si la dernière confirmation est réussie
-            try:
-                u = reco.get("univers_facteurs") or {}
-                ex_1m = dernier_essai(modele_risque.NOM_LABO_1M,
-                                      "decision:diagnostics->>decision,avert:diagnostics->avertissement_couverture,"
-                                      "part:diagnostics->midcaps->couverture->harx->part_depassements")
-                if u.get("symbols") and ex_1m and ex_1m[0].get("decision") == "confirme":
-                    vol_1m, vol_har_1m, info = modele_risque.niveaux_harx_1m_du_jour(
-                        raw_horizon, u["symbols"], vix_long(), composition)
-                    bilan_1m = suivre_risque_mois(vol_1m, vol_har_1m, raw, snap["date"].max())
-                    if bilan_1m.get("garde_fou"):
-                        print("[PUBLISH] Risque du mois à venir NON publié : moins bon que HAR en conditions réelles (§ 4.18)")
-                    else:
-                        u["vol_1m"] = [float(vol_1m[s]) if s in vol_1m.index else None for s in u["symbols"]]
-                        u["info_1m"] = {**info, "avertissement": bool(ex_1m[0].get("avert")), "part_depassements": ex_1m[0].get("part"),
-                                        "reel": {k: bilan_1m.get(k) for k in ("verdict", "n_dates", "premier_bilan", "couverture_mauvais_cas")}}
-                        print(f"[PUBLISH] Risque du mois à venir : {len(vol_1m)} titres (VIX {info['vix']:.1f}) ; "
-                              f"réel : {bilan_1m.get('verdict')} ({bilan_1m.get('n_dates', 0)} dates jugées)")
-                else:
-                    print("[PUBLISH] Risque du mois à venir NON publié : confirmation absente ou non réussie")
-            except Exception as e:
-                avertir(f"Risque du mois à venir non calculé : {e}")
-            enregistrer_revision(reco, snap["date"].max())
-            db.upsert_rows("portefeuille_recommande", [_clean({
-                "id": 1, "date": snap["date"].max(), **reco,
-                "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
-            })], on_conflict="id")
-            n_lignes = len(reco["lignes"])
+        rf, date_rf = taux_du_jour()
+        reco = portefeuille.portefeuille_recommande(raw, snap, rf=rf, date_rf=date_rf)
+        if not reco:
+            return 0
+        ajouter_vol_publiee(reco, vol_publiee)
+        ajouter_stress_test(reco, raw_horizon)
+        ajouter_risque_mois(reco, raw, raw_horizon, snap, composition)
+        enregistrer_revision(reco, snap["date"].max())
+        db.upsert_rows("portefeuille_recommande", [_clean({
+            "id": 1, "date": snap["date"].max(), **reco,
+            "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
+        })], on_conflict="id")
+        return len(reco["lignes"])
     except Exception as e:
         avertir(f"Portefeuille recommandé non calculé : {e}")
-
-    return {"snapshot": len(snap), "secteurs": len(med), "signaux": len(sig), "portefeuille": n_lignes,
-            "scores_horizon": n_scores, "avertissements": list(AVERTISSEMENTS)}
+        return 0
 
 
 if __name__ == "__main__":
