@@ -947,6 +947,40 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
 - **Limites** : faillis et rachetés absents de Yahoo (biais résiduel, mesuré) ; secteur inconnu des titres sortis (groupe « ? » dans l'audit).
 - **Résultats** : § 19.
 
+
+### 4.23 Essai « HAR relatif au titre » (protocole écrit le 24/11/2026, AVANT tout code ; accord de l'utilisateur du 24/11/2026)
+- **Origine** : § 18.1 et § 19.3 : le niveau HAR **surestime** le risque des titres calmes de façon persistante (9 alertes, aucune sous-estimation).
+  Cause probable : HAR est estimé en commun pour tous les titres ; sa constante tire chaque titre vers le risque **moyen** du marché.
+- **Méthode** : on divise tout par le risque habituel du titre, `L` = variance quotidienne moyenne des 252 séances passées (connue à t) :
+  σ²_futur / L = c + b1·v1/L + b5·v5/L + b22·v22/L + b63·v63/L, puis prévision = L × (…). Moindres carrés sur le passé seulement (mêmes fenêtres que
+  `walk_forward`), même plancher que HAR (0,25 × v63). La constante ramène désormais chaque titre vers **son propre** risque habituel. Aucun réglage.
+- **Données** : celles de l'examen (§ 4.22 : univers actuel + anciens membres), horizon 126 jours, 4 fenêtres de test depuis 2008.
+- **Règles de décision, fixées AVANT l'essai** (16e essai de la famille « références » ; d = QLIKE(HAR relatif) − QLIKE(HAR), < 0 : relatif meilleur) :
+  1. **Niveau** : d moyen < 0 et p unilatéral (`inference.rapport_dm`, EWC) **< 0,05 / 16**.
+  2. **Crises** : QLIKE(relatif) / QLIKE(HAR) ≤ **1,10** pour chacune des crises 2008, 2020 et 2022 (la sous-estimation en crise est le risque à éviter).
+  3. **Stabilité** : relatif meilleur dans au moins **3 des 4** fenêtres.
+  4. **Biais** (audit du § 4.21 appliqué au relatif) : **moins** d'alertes de surestimation que HAR, et **aucune** alerte de sous-estimation.
+  5. **Placebo** : même calcul avec `L` d'un **autre** titre tiré au hasard à chaque date. Il ne doit pas battre HAR (t > −2) : sinon le gain viendrait
+     d'une simple remise à l'échelle, pas du risque propre à chaque titre.
+- **Si les 5 règles tiennent** : HAR relatif remplace HAR comme niveau de l'hybride et de « HAR seul », par une PR dédiée. Sinon, rien ne change.
+- **Constats** : rapport de variance par groupe et par fenêtre (relatif contre HAR), biais médian, part de sous-estimations, coefficients par fenêtre,
+  QLIKE de l'hybride construit sur le relatif.
+- **Limites** : un titre récent n'a pas 252 séances (il sort de l'échantillon, comme pour les autres caractéristiques) ; secteur inconnu des anciens membres.
+
+### 4.24 Essai « IA plus informée » (protocole écrit le 24/11/2026, AVANT tout code ; accord de l'utilisateur du 24/11/2026)
+- **Origine** : l'IA classe mieux que HAR (§ 19.2), mais ne voit pas les volatilités **récentes** que HAR utilise (1 jour, 1 semaine, 1 mois), ni la
+  **part baissière** du risque, que le § 17 a trouvée **persistante**.
+- **Méthode** : même modèle, mêmes réglages candidats, même choix du réglage sur le passé, mêmes fenêtres. Quatre caractéristiques ajoutées, en rang du
+  jour parmi les membres : `vol_1j` (|rendement| du dernier jour), `vol_1s` (5 séances), `vol_1m` (22 séances), `part_baisse` (126 séances, § 4.19).
+- **Mesure** : à chaque date, IC (IA+) − IC (IA actuelle) sur la volatilité réalisée à 126 jours.
+- **Règles de décision, fixées AVANT l'essai** (6e essai de la famille « classement » : seuil `seuil_t(n_effectif, 6)`) :
+  1. **Preuve** : t de l'écart moyen ≥ seuil corrigé.
+  2. **Taille** : écart moyen ≥ **0,005** (en dessous, le portefeuille ne change presque pas) **et** positif dans au moins **3 des 4** fenêtres.
+  3. **Placebo** : les 4 caractéristiques **mélangées entre titres** à chaque date ; l'écart doit rester non significatif (|t| < 2).
+- **Si les 3 règles tiennent** : la production et le re-test mensuel passent aux nouvelles caractéristiques, par une PR dédiée. Sinon, rien ne change.
+- **Constats** : importance des nouvelles caractéristiques, IC par fenêtre, IC dans les secteurs, effet sur l'hybride (QLIKE, IC).
+- **Limites** : rendements de clôture ; `vol_1j` très bruitée (gardée car le modèle peut l'ignorer).
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
@@ -1409,3 +1443,43 @@ Prévisions jugées : 320 000 → **364 000**. Il reste 39 % de membres de 2008 
 - L'apport de l'IA est **l'ordre** des titres, et il résiste à la correction du biais du survivant.
 - Le **niveau** reste le point faible : il surestime le risque des titres calmes, de plus en plus nettement quand on ajoute les titres sortis.
   C'est l'essai « HAR relatif au titre » (§ 18.4, point 2) qui y répond. Il reste à lancer avec l'accord de l'utilisateur.
+
+---
+
+## 20. Résultats des essais « HAR relatif au titre » et « IA plus informée » (§§ 4.23-4.24 ; lot du 24/11/2026 21:06 UTC, PR #42)
+
+### 20.1 HAR relatif au titre : **non adopté** (règles 1, 2 et 3 non réunies)
+| Règle | Mesure | Résultat |
+|---|---|---|
+| 1. Niveau | QLIKE 0,337 contre 0,397 pour HAR (−15 %), t = −0,72, p unilatéral 0,24 (il fallait < 0,003) | **échoue** : l'écart n'est pas distinguable du hasard (n effectif ≈ 39, écart détectable ≈ 0,25) |
+| 2. Crises | rapport QLIKE : 2008 **1,04** ; 2020 **1,72** ; 2022 0,72 | **échoue** : nettement pire pendant le choc du Covid |
+| 3. Stabilité | meilleur dans 2 fenêtres sur 4 (très bon dans 2, nettement moins bon dans 2) | **échoue** |
+| 4. Biais | alertes de surestimation **9 → 2**, aucune sous-estimation ; biais médian +38 % → +16 % | réussit |
+| 5. Placebo | `L` d'un autre titre : moins bon que HAR (t = +1,77) | réussit : le gain vient bien du risque propre de chaque titre |
+
+- **Lecture** : ancrer chaque titre sur **son** risque habituel corrige bien la surestimation des titres calmes (règle 4), comme prévu.
+  Mais cet ancrage **freine la réaction aux chocs brutaux** : en 2020, le risque d'un titre calme qui s'agite d'un coup reste tiré vers son passé calme.
+  C'est précisément la sous-estimation en crise que la règle 2 interdit. Les coefficients sont, eux, stables (constante ≈ 0,68 à 1,02).
+- **Constat** : l'hybride construit sur le relatif aurait une QLIKE de 0,358 contre 0,413 pour l'hybride publié, et un rapport de variance de 1,19
+  contre 1,16. Ce n'est pas une décision : même limite en crise.
+- **Décision** : HAR reste le niveau publié. Le défaut connu (titres calmes surestimés, donc un peu sous-pondérés) reste ; il va dans le sens prudent.
+
+### 20.2 IA plus informée : **non adoptée** (règle 2 non réunie)
+| Règle | Mesure | Résultat |
+|---|---|---|
+| 1. Preuve | écart d'IC **+0,0042**, t = **5,1** > seuil 2,79 | réussit : l'amélioration est **réelle** |
+| 2. Taille | 0,0042 < **0,005** ; positif dans **4 fenêtres sur 4** (0,002 à 0,006) ; 80 % des dates gagnantes | **échoue** de peu : trop petite pour changer le portefeuille |
+| 3. Placebo | écart +0,0005, t = 1,43 | réussit |
+
+- **Lecture** : la volatilité du dernier mois (`vol_1m`, 7 % de l'importance) et celle de la semaine (2 %) apportent une information réelle mais
+  **faible** : IC 0,796 → 0,800. La part baissière n'apporte presque rien au classement (0,4 %), ce qui rejoint le § 17.
+  La volatilité 3 mois reste de loin la première caractéristique (61 %).
+- **Décision** : l'IA actuelle reste. La règle de taille, fixée avant l'essai, n'est pas assouplie après coup.
+
+### 20.3 Bilan des deux essais et suites
+- Le modèle publié **ne change pas**. Les deux essais confirment que **l'ordre des titres par l'IA** est solide, et que le **niveau** HAR est
+  difficile à améliorer sans payer en crise.
+- Famille « références » : 16 essais ; famille « classement » : 6 essais.
+- **Pistes**, chacune serait un **nouvel essai compté** et suggérée **après** avoir vu ces résultats, donc à juger avec d'autant plus de prudence :
+  1. un HAR relatif **protégé en crise** (le plus grand du relatif et de HAR quand le risque récent dépasse nettement le risque habituel) ;
+  2. un « marché du jour » dans l'ordre des titres (VIX × bêta), déjà utile au niveau à 1 mois (§ 16).

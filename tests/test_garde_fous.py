@@ -123,7 +123,7 @@ def test_chaque_examen_a_sa_fonction():
     assert set(experiences.EXAMENS) == set(experiences.EXPERIENCES_EXAMEN)
     besoin_t = {n for n, (_, b) in experiences.EXAMENS.items() if b}
     assert besoin_t == {"examen_references", "examen_calibration", "examen_crises", "examen_hybride", "examen_ia_contre_har",
-                        "examen_audit_biais"}
+                        "examen_audit_biais", "examen_har_relatif", "examen_ia_informee"}
     assert all(callable(f) for f, _ in experiences.EXAMENS.values())
 
 

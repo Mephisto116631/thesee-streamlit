@@ -98,6 +98,8 @@ EXPERIENCES_EXAMEN = {
     "examen_asymetrie": "Part baissière du risque : persiste-t-elle (22 et 126 j) et prévoit-elle le sens du rendement ? Holm, placebo",
     "examen_marge": "Marge de sécurité apprise sur le passé ; rythmes de révision mensuel, semestriel, annuel avec frais ; fourchette avec l'hybride",
     "examen_audit_biais": "Audit des biais (§ 4.21) : calibration et classement par secteur, taille, bêta, volatilité, année ; alertes fixées à l'avance ; biais du survivant",
+    "examen_har_relatif": "HAR relatif au titre (variance rapportée au risque habituel du titre) contre HAR : QLIKE, crises, stabilité, biais, placebo (§ 4.23)",
+    "examen_ia_informee": "IA plus informée (+ volatilités 1 jour, 1 semaine, 1 mois, part baissière) contre l'IA actuelle sur l'ordre des titres, placebo (§ 4.24)",
 }
 DEBUT_EXAMEN = "1998-01-01"
 
@@ -466,6 +468,42 @@ def _examen_audit_biais(ctx: Contexte, nom: str):
     _inserer(ctx.cli, ctx.lot, nom, ex.verdict_audit(a), a, ic=g.get("rapport_variance"), n_essais=0)
 
 
+def _examen_har_relatif(ctx: Contexte, nom: str):
+    """Essai du § 4.23 (16e de la famille « références »)."""
+    d = ex.ajouter_risque_habituel(ctx.data, ctx.ret)
+    tr = ex.walk_forward_har_relatif(d)
+    tp = ex.walk_forward_har_relatif(d, placebo=True)
+    c = ex.comparer_har_relatif(tr, tp)
+    c["debut_test"] = str(pd.Timestamp(tr["date"].min()).date())
+    # Constat : l'hybride construit sur le relatif (ordre de l'IA, niveaux HAR relatif)
+    t = ctx.t.merge(tr[["date", "symbol", "lvl_rel"]], on=["date", "symbol"], how="inner")
+    t["lvl_hyb_rel"] = ex._rang_vers_niveau(t, "pred", "lvl_rel")
+    c["hybride_relatif"] = {"qlike": float(ex._pertes_par_date(t, "lvl_hyb_rel").mean()),
+                            "qlike_hybride": float(ex._pertes_par_date(t, "lvl_hybride").mean()),
+                            "rapport_variance": ex._rapport_variance(t, "lvl_hyb_rel"),
+                            "rapport_variance_hybride": ex._rapport_variance(t, "lvl_hybride")}
+    c["decision"] = "har_relatif" if c["adopte"] else "har"
+    _inserer(ctx.cli, ctx.lot, nom, ex.verdict_har_relatif(c), c, ic=c["dm"].get("ecart"), t=c["dm"].get("t"),
+             n_essais=ex.N_ESSAIS_HAR_RELATIF)
+
+
+def _examen_ia_informee(ctx: Contexte, nom: str):
+    """Essai du § 4.24 (6e de la famille « classement »)."""
+    dplus = ex.ajouter_variables_ia(ctx.data, ctx.ret)
+    feats = mh.FEATURES + ex.FEATURES_INFORMEE
+    t_plus = ex.walk_forward(dplus, ctx.ret, feats=feats, references=False)
+    t_plc = ex.walk_forward(dplus, ctx.ret, feats=feats, references=False, transformer=ex._melanger_informee())
+    c = ex.comparer_informee(ctx.t, t_plus, t_plc)
+    c["debut_test"] = str(pd.Timestamp(t_plus["date"].min()).date())
+    config = t_plus["config"].mode().iloc[0]
+    m = mh._modele(config).fit(dplus[feats], dplus["y"])
+    c["importance"] = sorted([{"feature": f, "importance": float(v)} for f, v in zip(feats, mh._importances(m, config))],
+                             key=lambda x: -x["importance"])
+    c["decision"] = "informee" if c["adopte"] else "actuelle"
+    _inserer(ctx.cli, ctx.lot, nom, ex.verdict_informee(c), c, ic=c["gain"], t=c["t"], seuil=c["seuil"],
+             n_essais=ex.N_CANDIDATS_INFORMEE)
+
+
 EXAMENS = {   # nom -> (fonction, besoin du walk-forward commun `t`)
     "examen_references": (_examen_references, True),
     "examen_calibration": (_examen_calibration, True),
@@ -485,6 +523,8 @@ EXAMENS = {   # nom -> (fonction, besoin du walk-forward commun `t`)
     "examen_asymetrie": (_examen_asymetrie, False),
     "examen_marge": (_examen_marge, False),
     "examen_audit_biais": (_examen_audit_biais, True),
+    "examen_har_relatif": (_examen_har_relatif, True),
+    "examen_ia_informee": (_examen_ia_informee, True),
     "examen_backtest_reel": (_examen_backtest_reel, False),
 }
 

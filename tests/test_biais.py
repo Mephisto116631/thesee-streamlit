@@ -128,3 +128,82 @@ def test_couverture_ecarte_un_titre_peu_cote():
     sans, _ = ex.preparer(raw, syms, compo, h=63)
     assert "T03" not in set(avec["symbol"]) and "T00" in set(avec["symbol"])
     assert set(avec["symbol"]) <= set(sans["symbol"])
+
+
+# --- §§ 4.23-4.24 : essais « HAR relatif » et « IA plus informée » ------------------------------------------
+def _cours_niveaux_propres(n=60, jours=1500, seed=4):
+    """Chaque titre a SON niveau de risque, très différent d'un titre à l'autre, et persistant ; régime commun qui varie."""
+    rng = np.random.default_rng(seed)
+    dates = pd.bdate_range("2012-01-02", periods=jours)
+    regime = np.exp(0.4 * np.sin(np.arange(jours) / 120))
+    marche = rng.normal(0.0002, 0.008, jours) * regime
+    rows = []
+    for i in range(n):
+        sig = 0.004 + 0.03 * (i / n) ** 2                          # titres très calmes à très agités
+        px = 100 * np.cumprod(1 + 0.8 * marche + rng.normal(0, sig, jours) * regime)
+        rows += [{"symbol": f"T{i:02d}", "date": d, "close": p, "volume": 1e6} for d, p in zip(dates, px)]
+    rows += [{"symbol": "SPY", "date": d, "close": p, "volume": 1e7} for d, p in zip(dates, 100 * np.cumprod(1 + marche))]
+    syms = [f"T{i:02d}" for i in range(n)]
+    compo = pd.DataFrame({"symbol": syms, "debut": pd.Timestamp("2000-01-01"), "fin": pd.NaT})
+    return pd.DataFrame(rows), syms, compo
+
+
+def test_har_relatif_ramene_chaque_titre_vers_son_propre_risque():
+    raw, syms, compo = _cours_niveaux_propres()
+    data, ret = ex.preparer(raw, syms, compo)
+    d = ex.ajouter_risque_habituel(data, ret)
+    assert d["L"].notna().mean() > 0.9
+    tr = ex.walk_forward_har_relatif(d)
+    tp = ex.walk_forward_har_relatif(d, placebo=True)
+    assert set(tr["fenetre"]) and {"lvl_rel", "lvl_har"} <= set(tr.columns)
+    c = ex.comparer_har_relatif(tr, tp)
+    assert set(c["regles"]) == {"1_niveau", "2_crises", "3_stabilite", "4_biais", "5_placebo"}
+    # HAR commun tire les titres calmes vers le haut et les agités vers le bas ; le relatif les ramène vers leur propre risque.
+    # (Qu'il gagne aussi en QLIKE est la question de l'essai : dans cette simulation, non, car il est plus dispersé.)
+    calmes, agites = tr[tr["vol_3m"] <= 0.2], tr[tr["vol_3m"] >= 0.8]
+    for g in (calmes, agites):
+        assert abs(ex._rapport_variance(g, "lvl_rel") - 1) < abs(ex._rapport_variance(g, "lvl_har") - 1)
+    # Placebo : chaque date garde les mêmes valeurs de L, attribuées à d'autres titres
+    m = ex._melanger_L(d.dropna(subset=["L"]), 0)
+    base = d.dropna(subset=["L"])
+    assert np.allclose(np.sort(m["L"].values), np.sort(base["L"].values)) and not np.allclose(m["L"].values, base["L"].values)
+    assert ex.verdict_har_relatif(c).startswith(("adopté", "non adopté"))
+
+
+def test_har_relatif_retrouve_des_coefficients_connus():
+    rng = np.random.default_rng(2)
+    n = 5000
+    df = pd.DataFrame({"L": rng.uniform(1e-5, 1e-3, n)})
+    for c in ex.COLS_RELATIF:
+        df[c] = df["L"] * rng.uniform(0.5, 2, n)
+    vrai = np.array([0.1, 0.05, 0.1, 0.2, 0.5])
+    var = df["L"] * (vrai[0] + sum(b * df[c] / df["L"] for b, c in zip(vrai[1:], ex.COLS_RELATIF)))
+    df["brut"] = np.sqrt(var * 252)
+    np.testing.assert_allclose(ex.har_relatif_ajuster(df), vrai, atol=1e-8)
+    np.testing.assert_allclose(ex.har_relatif_prevoir(df, vrai), df["brut"].values, rtol=1e-9)
+
+
+def test_variables_ia_en_rangs_du_jour():
+    raw, syms, compo = _cours(n=55, jours=700)
+    data, ret = ex.preparer(raw, syms, compo, h=63)
+    d = ex.ajouter_variables_ia(data, ret)
+    for c in ex.FEATURES_INFORMEE:
+        assert d[c].between(0, 1).all() and d[c].notna().all()
+    assert len(d) == len(data)
+
+
+def test_comparer_informee_regles():
+    rng = np.random.default_rng(1)
+    dates = pd.bdate_range("2010-01-01", periods=200, freq="W-FRI")
+    lignes = []
+    for k, dt in enumerate(dates):
+        for i in range(50):
+            brut = 0.1 + 0.01 * i
+            lignes.append({"date": dt, "symbol": f"S{i}", "brut": brut, "fenetre": k * 4 // len(dates), "config": "lineaire",
+                           "base": brut + rng.normal(0, 0.15), "plus": brut + rng.normal(0, 0.05), "plc": brut + rng.normal(0, 0.15)})
+    t = pd.DataFrame(lignes)
+    c = ex.comparer_informee(t.assign(pred=t["base"]), t.assign(pred=t["plus"]), t.assign(pred=t["plc"]), h=126)
+    assert c["gain"] > 0.05 and c["regles"]["1_preuve"] and c["regles"]["2_taille"] and c["regles"]["3_placebo"]
+    assert c["adopte"] and ex.verdict_informee(c).startswith("adopté")
+    c2 = ex.comparer_informee(t.assign(pred=t["base"]), t.assign(pred=t["plc"]), t.assign(pred=t["plc"]), h=126)
+    assert not c2["adopte"]
