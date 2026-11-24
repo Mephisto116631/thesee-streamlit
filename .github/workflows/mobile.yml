@@ -73,6 +73,9 @@ jobs:
           # Android 11+ : déclarer l'appli Trade Republic pour pouvoir l'ouvrir depuis Thésée
           sed -i 's#</manifest>#    <queries><package android:name="de.traderepublic.app" /></queries>\n</manifest>#' android/app/src/main/AndroidManifest.xml
           grep -q "de.traderepublic.app" android/app/src/main/AndroidManifest.xml
+          # Connexion Google (comme Sysiphe) : retour de Supabase par com.thesee.app://login-callback
+          sed -i 's#</activity>#    <intent-filter>\n                <action android:name="android.intent.action.VIEW" />\n                <category android:name="android.intent.category.DEFAULT" />\n                <category android:name="android.intent.category.BROWSABLE" />\n                <data android:scheme="com.thesee.app" android:host="login-callback" />\n            </intent-filter>\n        </activity>#' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:scheme="com.thesee.app"' android/app/src/main/AndroidManifest.xml
           # Mise à jour intégrée (comme Sisyphe) : plugin natif + droit d'ouvrir l'installeur
           cp native/MiseAJourPlugin.java native/MainActivity.java android/app/src/main/java/com/thesee/app/
           sed -i 's#<uses-permission android:name="android.permission.INTERNET" />#&\n    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />#' android/app/src/main/AndroidManifest.xml

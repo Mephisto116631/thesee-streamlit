@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import {
-  ajouterPositions, api, connexion, deconnexion, lirePositions, modifierPosition, type Position,
+  ajouterPositions, api, connexion, connexionGoogle, deconnexion, lirePositions, modifierPosition, type Position,
   supprimerPosition, surChangementSession, utilisateurCourant,
 } from "../api";
 import { Card, Details, Loading, Stat, useData } from "../components";
@@ -32,10 +32,18 @@ function Connexion() {
     setEnCours(false);
     setMsg(err ?? "");
   };
+  const google = async () => {
+    setEnCours(true);
+    const err = await connexionGoogle();
+    setEnCours(false);
+    setMsg(err ?? "");
+  };
   return (
     <Card title="Mes positions">
       <p class="hint" style={{ marginTop: 0 }}>Connecte-toi pour enregistrer ce que tu possèdes. Tes positions sont stockées dans Supabase
         et visibles uniquement par ton compte (téléphone et ordinateur).</p>
+      <button class="more" disabled={enCours} onClick={google}>Continuer avec Google</button>
+      <p class="hint">ou avec une adresse e-mail :</p>
       <label class="field">E-mail<input type="email" autocomplete="email" value={email} onInput={(e) => setEmail((e.target as HTMLInputElement).value)} /></label>
       <label class="field" style={{ marginTop: 8 }}>Mot de passe
         <input type="password" autocomplete="current-password" value={mdp} onInput={(e) => setMdp((e.target as HTMLInputElement).value)} /></label>

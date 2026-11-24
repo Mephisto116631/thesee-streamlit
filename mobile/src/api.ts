@@ -2,6 +2,10 @@
 // (supabase_schema.sql) : impossible d'écrire avec. Toutes les tables sont
 // pré-calculées par le cron (publish.py).
 import { createClient } from "@supabase/supabase-js";
+import { App as CapApp } from "@capacitor/app";
+import { Browser } from "@capacitor/browser";
+import { Capacitor } from "@capacitor/core";
+import { adresseRetourWeb, analyserRetour, RETOUR_GOOGLE } from "./auth";
 import type { LaboVol } from "./fiabilite";
 import { definirTauxMarche } from "./settings";
 
@@ -11,7 +15,8 @@ export const configured = Boolean(URL && KEY);
 // Session conservée sur le téléphone : nécessaire pour « Mes positions » (connexion).
 // Les autres données restent publiques en lecture seule (RLS).
 const sb = configured ? createClient(URL!, KEY!, {
-  auth: { persistSession: true, autoRefreshToken: true, storageKey: "thesee-auth" },
+  // PKCE : la connexion Google revient avec un code (?code=…) échangé contre une session (APK et PWA)
+  auth: { persistSession: true, autoRefreshToken: true, storageKey: "thesee-auth", flowType: "pkce", detectSessionInUrl: true },
 }) : null;
 
 export interface Snapshot {
@@ -263,6 +268,33 @@ export async function connexion(email: string, motDePasse: string, creer: boolea
 }
 
 export async function deconnexion() { await sb?.auth.signOut(); }
+
+/** Connexion avec un compte Google (comme Sysiphe). APK : page Google dans le navigateur, retour par
+ *  com.thesee.app://login-callback (voir ecouterRetourGoogle). PWA : la page part chez Google et revient. */
+export async function connexionGoogle(): Promise<string | null> {
+  if (!sb) return "Appli non configurée.";
+  const natif = Capacitor.isNativePlatform();
+  const { data, error } = await sb.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: natif ? RETOUR_GOOGLE : adresseRetourWeb(location), skipBrowserRedirect: natif },
+  });
+  if (error) return error.message;
+  if (natif && data.url) await Browser.open({ url: data.url });
+  return null;
+}
+
+/** APK : au retour de Google, échange le code contre une session et ferme le navigateur. À appeler une fois au lancement. */
+export function ecouterRetourGoogle(surErreur: (msg: string) => void = () => {}) {
+  if (!sb || !Capacitor.isNativePlatform()) return;
+  CapApp.addListener("appUrlOpen", async ({ url }) => {
+    const r = analyserRetour(url);
+    if (!r) return;
+    Browser.close().catch(() => {});
+    if (r.erreur) { surErreur(r.erreur); return; }
+    const { error } = await sb!.auth.exchangeCodeForSession(r.code!);
+    if (error) surErreur(error.message);
+  }).catch(() => {});
+}
 
 export async function lirePositions(): Promise<Position[]> {
   const { data, error } = await sb!.from("positions").select("*").order("date_achat", { ascending: false });
