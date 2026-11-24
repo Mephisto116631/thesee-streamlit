@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { App as CapApp } from "@capacitor/app";
-import { configured } from "./api";
+import { configured, ecouterRetourGoogle } from "./api";
 import { reprogrammerAuLancement } from "./rappels";
 import { lireParametres } from "./settings";
 import { Home } from "./screens/Home";
@@ -42,6 +42,8 @@ export function App() {
   const hash = useHash();
   // Mise à jour (APK uniquement) : vérifiée une fois par lancement, proposée dans une fenêtre
   useEffect(() => { verifierAuLancement(); reprogrammerAuLancement(lireParametres().rythmeRevision ?? 6); }, []);
+  // Connexion Google dans l'APK : retour par com.thesee.app://login-callback
+  useEffect(() => { ecouterRetourGoogle((m) => alert(`Connexion Google impossible : ${m}`)); }, []);
 
   // Bouton retour Android : remonte l'historique, quitte l'appli depuis l'accueil
   useEffect(() => {

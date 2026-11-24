@@ -95,6 +95,20 @@ Règle de l'appli : un chiffre ne sert à décider que s'il est **prouvé**, sin
   plausibles, ou impossible à calculer de façon sûre (plusieurs catégories d'actions), est affichée « n.d. »
   plutôt que fausse. Au laboratoire, ces ratios n'ont pas prédit la performance : ils servent à comprendre un titre.
 
+## Connexion avec Google (comme Sysiphe)
+
+Onglet Positions › « Continuer avec Google ». À configurer une fois :
+
+1. **Google Cloud Console** › API et services › Identifiants : dans le client OAuth « Application Web » (celui de
+   Sysiphe convient), ajouter l'URI de redirection autorisée
+   `https://ommkiaoqnavcxvxsoiwg.supabase.co/auth/v1/callback`.
+2. **Supabase** (projet Thésée) › Authentication › Sign In / Providers › **Google** : activer, coller l'ID client et le
+   code secret de ce client OAuth.
+3. **Supabase** › Authentication › URL Configuration › **Redirect URLs** : ajouter
+   `com.thesee.app://login-callback` (APK) et `https://mephisto116631.github.io/thesee-streamlit/` (ordinateur).
+
+L'APK déclare le lien `com.thesee.app://login-callback` (ajouté à `AndroidManifest.xml` par `mobile.yml`).
+
 ## Relancer le calcul depuis l'appli
 
 Le bouton « Relancer le calcul » (Analyse › Modèles IA, Paramètres) appelle la fonction Supabase
