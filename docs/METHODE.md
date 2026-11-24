@@ -947,6 +947,40 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
 - **Limites** : faillis et rachetés absents de Yahoo (biais résiduel, mesuré) ; secteur inconnu des titres sortis (groupe « ? » dans l'audit).
 - **Résultats** : § 19.
 
+
+### 4.23 Essai « HAR relatif au titre » (protocole écrit le 24/11/2026, AVANT tout code ; accord de l'utilisateur du 24/11/2026)
+- **Origine** : § 18.1 et § 19.3 : le niveau HAR **surestime** le risque des titres calmes de façon persistante (9 alertes, aucune sous-estimation).
+  Cause probable : HAR est estimé en commun pour tous les titres ; sa constante tire chaque titre vers le risque **moyen** du marché.
+- **Méthode** : on divise tout par le risque habituel du titre, `L` = variance quotidienne moyenne des 252 séances passées (connue à t) :
+  σ²_futur / L = c + b1·v1/L + b5·v5/L + b22·v22/L + b63·v63/L, puis prévision = L × (…). Moindres carrés sur le passé seulement (mêmes fenêtres que
+  `walk_forward`), même plancher que HAR (0,25 × v63). La constante ramène désormais chaque titre vers **son propre** risque habituel. Aucun réglage.
+- **Données** : celles de l'examen (§ 4.22 : univers actuel + anciens membres), horizon 126 jours, 4 fenêtres de test depuis 2008.
+- **Règles de décision, fixées AVANT l'essai** (16e essai de la famille « références » ; d = QLIKE(HAR relatif) − QLIKE(HAR), < 0 : relatif meilleur) :
+  1. **Niveau** : d moyen < 0 et p unilatéral (`inference.rapport_dm`, EWC) **< 0,05 / 16**.
+  2. **Crises** : QLIKE(relatif) / QLIKE(HAR) ≤ **1,10** pour chacune des crises 2008, 2020 et 2022 (la sous-estimation en crise est le risque à éviter).
+  3. **Stabilité** : relatif meilleur dans au moins **3 des 4** fenêtres.
+  4. **Biais** (audit du § 4.21 appliqué au relatif) : **moins** d'alertes de surestimation que HAR, et **aucune** alerte de sous-estimation.
+  5. **Placebo** : même calcul avec `L` d'un **autre** titre tiré au hasard à chaque date. Il ne doit pas battre HAR (t > −2) : sinon le gain viendrait
+     d'une simple remise à l'échelle, pas du risque propre à chaque titre.
+- **Si les 5 règles tiennent** : HAR relatif remplace HAR comme niveau de l'hybride et de « HAR seul », par une PR dédiée. Sinon, rien ne change.
+- **Constats** : rapport de variance par groupe et par fenêtre (relatif contre HAR), biais médian, part de sous-estimations, coefficients par fenêtre,
+  QLIKE de l'hybride construit sur le relatif.
+- **Limites** : un titre récent n'a pas 252 séances (il sort de l'échantillon, comme pour les autres caractéristiques) ; secteur inconnu des anciens membres.
+
+### 4.24 Essai « IA plus informée » (protocole écrit le 24/11/2026, AVANT tout code ; accord de l'utilisateur du 24/11/2026)
+- **Origine** : l'IA classe mieux que HAR (§ 19.2), mais ne voit pas les volatilités **récentes** que HAR utilise (1 jour, 1 semaine, 1 mois), ni la
+  **part baissière** du risque, que le § 17 a trouvée **persistante**.
+- **Méthode** : même modèle, mêmes réglages candidats, même choix du réglage sur le passé, mêmes fenêtres. Quatre caractéristiques ajoutées, en rang du
+  jour parmi les membres : `vol_1j` (|rendement| du dernier jour), `vol_1s` (5 séances), `vol_1m` (22 séances), `part_baisse` (126 séances, § 4.19).
+- **Mesure** : à chaque date, IC (IA+) − IC (IA actuelle) sur la volatilité réalisée à 126 jours.
+- **Règles de décision, fixées AVANT l'essai** (6e essai de la famille « classement » : seuil `seuil_t(n_effectif, 6)`) :
+  1. **Preuve** : t de l'écart moyen ≥ seuil corrigé.
+  2. **Taille** : écart moyen ≥ **0,005** (en dessous, le portefeuille ne change presque pas) **et** positif dans au moins **3 des 4** fenêtres.
+  3. **Placebo** : les 4 caractéristiques **mélangées entre titres** à chaque date ; l'écart doit rester non significatif (|t| < 2).
+- **Si les 3 règles tiennent** : la production et le re-test mensuel passent aux nouvelles caractéristiques, par une PR dédiée. Sinon, rien ne change.
+- **Constats** : importance des nouvelles caractéristiques, IC par fenêtre, IC dans les secteurs, effet sur l'hybride (QLIKE, IC).
+- **Limites** : rendements de clôture ; `vol_1j` très bruitée (gardée car le modèle peut l'ignorer).
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
