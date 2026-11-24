@@ -108,3 +108,23 @@ def test_couverture_survivant():
     ret = pd.DataFrame(0.01, index=dates, columns=["A", "B", "C"])
     compo = pd.DataFrame({"symbol": ["A", "B", "C", "D"], "debut": pd.Timestamp("2000-01-01"), "fin": pd.NaT})
     assert ex.couverture_survivant(ret, compo, dates[-1:]) == {2010: pytest.approx(0.75)}   # D a disparu de Yahoo
+
+
+# --- § 4.22 : membres historiques retrouvés ---------------------------------------------------------------
+def test_symboles_examen_ajoute_les_anciens_membres():
+    import experiences
+    compo = pd.DataFrame({"symbol": ["A", "OLD"], "debut": pd.Timestamp("2000-01-01"), "fin": [pd.NaT, pd.Timestamp("2010-01-01")]})
+    assert experiences.symboles_examen(["A", "B"], compo) == ["A", "B", "OLD"]
+    assert experiences.symboles_examen(["B"], None) == ["B"]
+
+
+def test_couverture_ecarte_un_titre_peu_cote():
+    raw, syms, compo = _cours(n=55, jours=700)
+    trous = raw["symbol"].eq("T03") & (pd.to_datetime(raw["date"]).dt.dayofweek < 2)     # coté 3 jours sur 5
+    raw = raw[~trous]
+    cov = ex.couverture_cours(raw, syms)
+    assert cov["T03"].iloc[-1] == pytest.approx(0.6, abs=0.05) and cov["T00"].iloc[-1] == pytest.approx(1.0)
+    avec, _ = ex.preparer(raw, syms, compo, couverture_min=ex.COUVERTURE_MIN, h=63)
+    sans, _ = ex.preparer(raw, syms, compo, h=63)
+    assert "T03" not in set(avec["symbol"]) and "T00" in set(avec["symbol"])
+    assert set(avec["symbol"]) <= set(sans["symbol"])

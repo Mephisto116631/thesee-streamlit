@@ -156,11 +156,27 @@ def calibration(df: pd.DataFrame, col: str) -> dict:
 # ------------------------------------------------------------------------------
 # Préparation et walk-forward
 # ------------------------------------------------------------------------------
+COUVERTURE_MIN = 0.8        # § 4.22 : part minimale de séances cotées sur les 252 précédentes (symboles réattribués)
+
+
+def couverture_cours(market_raw: pd.DataFrame, symboles) -> pd.DataFrame:
+    """Part des 252 séances précédentes où le titre a un cours (sans comblement des trous)."""
+    m = market_raw[market_raw["symbol"].isin(set(symboles))]
+    present = m.pivot_table(index="date", columns="symbol", values="close").notna()
+    return present.rolling(252, min_periods=1).mean()
+
+
 def preparer(market_raw: pd.DataFrame, symboles: list[str], composition: pd.DataFrame | None,
-             secteurs: dict | None = None, h: int = H) -> tuple[pd.DataFrame, pd.DataFrame]:
+             secteurs: dict | None = None, h: int = H, couverture_min: float | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Échantillon (date, titre) : facteurs (rangs), cible (rang `y` et niveau réalisé `brut`),
-    entrées HAR et références de niveau. Retourne (data, rendements quotidiens)."""
+    entrées HAR et références de niveau. Retourne (data, rendements quotidiens).
+    `couverture_min` (§ 4.22) : écarte les (date, titre) cotés moins souvent que cela sur les 252 séances précédentes."""
     px, X = mh.caracteristiques(market_raw, symboles)
+    if couverture_min is not None:
+        cov = couverture_cours(market_raw, symboles).reindex(pd.DatetimeIndex(X["date"].unique())).stack(future_stack=True)
+        cov.index.names = ["date", "symbol"]
+        X = X.merge(cov.rename("couverture").reset_index(), on=["date", "symbol"], how="left")
+        X = X[X["couverture"].fillna(0) >= couverture_min].drop(columns="couverture")
     Y = mr.cible_risque(px, pd.DatetimeIndex(X["date"].unique()), h, "volatilite")
     data = X.merge(Y, on=["date", "symbol"]).dropna(subset=mh.FEATURES + ["y"])
     if composition is not None:

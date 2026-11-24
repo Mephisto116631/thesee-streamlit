@@ -190,6 +190,7 @@ class Contexte:
     data: pd.DataFrame
     ret: pd.DataFrame
     t: pd.DataFrame | None = None      # walk-forward commun (IA et références), calculé si un examen en a besoin
+    symboles: list[str] | None = None  # titres actuels + anciens membres du S&P 500 (METHODE § 4.22)
 
 
 def _examen_references(ctx: Contexte, nom: str):
@@ -259,10 +260,10 @@ def _examen_hybride(ctx: Contexte, nom: str):
 
 
 def _examen_ia_contre_har(ctx: Contexte, nom: str):
-    cli, lot, raw, snap, compo, secteurs, t = ctx.cli, ctx.lot, ctx.raw, ctx.snap, ctx.compo, ctx.secteurs, ctx.t
+    cli, lot, raw, compo, secteurs, t = ctx.cli, ctx.lot, ctx.raw, ctx.compo, ctx.secteurs, ctx.t
     c = ex.ia_contre_har(t)
     tous = {"sharpe_max": None, "risque_15": 0.15}
-    res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",
+    res = bt.backtest(raw, ctx.symboles, compo, debut="2006-01-01", base="sp500",
                       variantes=["hybride", "har"], secteurs=secteurs, portefeuilles=tous, garder_poids=True)
     px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
     c["backtest"] = {f"{pf_}_{v}": bt.backtest_reel(res, px, pf_, v, revision_mois=6)
@@ -294,10 +295,10 @@ def _examen_echelle_har(ctx: Contexte, nom: str):
 
 
 def _examen_multi_horizon(ctx: Contexte, nom: str):
-    cli, lot, data, raw, snap, compo, secteurs = ctx.cli, ctx.lot, ctx.data, ctx.raw, ctx.snap, ctx.compo, ctx.secteurs
+    cli, lot, data, raw, compo, secteurs = ctx.cli, ctx.lot, ctx.data, ctx.raw, ctx.compo, ctx.secteurs
     par_h, plc = {}, {}
     for hh in ex.HORIZONS_MULTI:
-        d_h = data if hh == ex.H else ex.preparer(raw, snap["symbol"].tolist(), compo, secteurs, h=hh)[0]
+        d_h = data if hh == ex.H else ex.preparer(raw, ctx.symboles, compo, secteurs, h=hh, couverture_min=ex.COUVERTURE_MIN)[0]
         par_h[hh] = ex.walk_forward_niveau(d_h, "B", h=hh)
         plc[hh] = ex.walk_forward_niveau(d_h, "B", h=hh, melange=True)
         print(f"[LABO] multi-horizon : h = {hh} j terminé")
@@ -309,12 +310,12 @@ def _examen_multi_horizon(ctx: Contexte, nom: str):
 
 
 def _examen_harx(ctx: Contexte, nom: str):
-    cli, lot, data, raw, snap, compo, secteurs = ctx.cli, ctx.lot, ctx.data, ctx.raw, ctx.snap, ctx.compo, ctx.secteurs
+    cli, lot, data, raw, compo, secteurs = ctx.cli, ctx.lot, ctx.data, ctx.raw, ctx.compo, ctx.secteurs
     vix = _vix(DEBUT_EXAMEN)
-    beta = ex.beta_depuis_cours(raw, snap["symbol"].tolist())
+    beta = ex.beta_depuis_cours(raw, ctx.symboles)
     par_h, plc = {}, {}
     for hh in ex.HORIZONS_HARX:
-        d_h = data if hh == ex.H else ex.preparer(raw, snap["symbol"].tolist(), compo, secteurs, h=hh)[0]
+        d_h = data if hh == ex.H else ex.preparer(raw, ctx.symboles, compo, secteurs, h=hh, couverture_min=ex.COUVERTURE_MIN)[0]
         par_h[hh] = ex.walk_forward_harx(ex.ajouter_x_vix(d_h, beta, vix), h=hh)
         plc[hh] = ex.walk_forward_harx(ex.ajouter_x_vix(d_h, beta, vix, decalage=ex.DECALAGE_PLACEBO_VIX), h=hh)
         print(f"[LABO] HAR-X : h = {hh} j terminé")
@@ -334,13 +335,13 @@ def _examen_harx(ctx: Contexte, nom: str):
 
 
 def _examen_har_etendu(ctx: Contexte, nom: str):
-    cli, lot, data, raw, snap = ctx.cli, ctx.lot, ctx.data, ctx.raw, ctx.snap
+    cli, lot, data, raw = ctx.cli, ctx.lot, ctx.data, ctx.raw
     import fred
     vix = _vix(DEBUT_EXAMEN)
     macro = pd.DataFrame({k: fred._fetch_fred_serie(sid, start_date=DEBUT_EXAMEN).set_index("date")["valeur"]
                           for k, sid in mreg.SERIES_FRED.items()})
     macro.index = pd.to_datetime(macro.index)
-    tables = ex.variables_cours(raw, snap["symbol"].tolist())
+    tables = ex.variables_cours(raw, ctx.symboles)
     d, modeles = ex.modeles_etendus(ex.ajouter_etendu(data, tables, vix, macro))
     d_plc, _ = ex.modeles_etendus(ex.ajouter_etendu(data, tables, vix, macro, decalage=ex.DECALAGE_PLACEBO_VIX))
     te, tp = ex.walk_forward_lineaire(d, modeles), ex.walk_forward_lineaire(d_plc, modeles)
@@ -361,12 +362,12 @@ def _examen_har_etendu(ctx: Contexte, nom: str):
 
 
 def _examen_harx_1m(ctx: Contexte, nom: str):
-    cli, lot, raw, snap, compo, secteurs = ctx.cli, ctx.lot, ctx.raw, ctx.snap, ctx.compo, ctx.secteurs
+    cli, lot, raw, compo, secteurs = ctx.cli, ctx.lot, ctx.raw, ctx.compo, ctx.secteurs
     vix = _vix(DEBUT_EXAMEN)
     m = universe.get_sp400_tickers()
     raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
     c_mid = ex.essai_harx_1m(raw_m, m["symbol"].tolist(), vix)
-    c_sp = ex.essai_harx_1m(raw, snap["symbol"].tolist(), vix, compo, secteurs)
+    c_sp = ex.essai_harx_1m(raw, ctx.symboles, vix, compo, secteurs)
     v, cond = ex.verdict_harx_1m(c_mid)
     diag = {"midcaps": c_mid, "sp500_reproduction": c_sp, "conditions": cond,
             "decision": "confirme" if v == "confirmé" else "non_confirme",
@@ -376,12 +377,12 @@ def _examen_harx_1m(ctx: Contexte, nom: str):
 
 
 def _examen_harx_1m_v2(ctx: Contexte, nom: str):
-    cli, lot, raw, snap, compo, secteurs = ctx.cli, ctx.lot, ctx.raw, ctx.snap, ctx.compo, ctx.secteurs
+    cli, lot, raw, compo, secteurs = ctx.cli, ctx.lot, ctx.raw, ctx.compo, ctx.secteurs
     vix = _vix(DEBUT_EXAMEN)
     m = universe.get_sp400_tickers()
     raw_m, _ = charger_cours(sorted(set(m["symbol"]) | {mh.INDICE}), debut=DEBUT_EXAMEN)
     c_mid = ex.essai_harx_1m(raw_m, m["symbol"].tolist(), vix, nettoyage=True)
-    c_sp = ex.essai_harx_1m(raw, snap["symbol"].tolist(), vix, compo, secteurs, nettoyage=True,
+    c_sp = ex.essai_harx_1m(raw, ctx.symboles, vix, compo, secteurs, nettoyage=True,
                             winsor=c_mid["etape"] == 2)      # même étape que les midcaps (§ 4.17)
     v, cond = ex.verdict_harx_1m(c_mid)
     diag = {"midcaps": c_mid, "sp500_reproduction": c_sp, "conditions": cond, "etape": c_mid["etape"],
@@ -403,9 +404,9 @@ def _examen_asymetrie(ctx: Contexte, nom: str):
 
 
 def _examen_marge(ctx: Contexte, nom: str):
-    cli, lot, raw, snap, compo, secteurs = ctx.cli, ctx.lot, ctx.raw, ctx.snap, ctx.compo, ctx.secteurs
+    cli, lot, raw, compo, secteurs = ctx.cli, ctx.lot, ctx.raw, ctx.compo, ctx.secteurs
     tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
-    res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base="sp500",
+    res = bt.backtest(raw, ctx.symboles, compo, debut="2006-01-01", base="sp500",
                       variantes=["hist_3a", "hybride"], secteurs=secteurs, portefeuilles=tous,
                       garder_poids=True, garder_frontieres=True)
     px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
@@ -438,9 +439,9 @@ def _examen_marge(ctx: Contexte, nom: str):
 
 
 def _examen_backtest_reel(ctx: Contexte, nom: str):
-    cli, lot, raw, snap, compo, secteurs = ctx.cli, ctx.lot, ctx.raw, ctx.snap, ctx.compo, ctx.secteurs
+    cli, lot, raw, compo, secteurs = ctx.cli, ctx.lot, ctx.raw, ctx.compo, ctx.secteurs
     tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
-    res = bt.backtest(raw, snap["symbol"].tolist(), compo, debut="2006-01-01", base=bt.BASES,
+    res = bt.backtest(raw, ctx.symboles, compo, debut="2006-01-01", base=bt.BASES,
                       variantes=["hist_3a", "ia"], secteurs=secteurs, portefeuilles=tous, garder_poids=True)
     px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
     c = {"reel": {}, "couverture": {}}
@@ -488,19 +489,26 @@ EXAMENS = {   # nom -> (fonction, besoin du walk-forward commun `t`)
 }
 
 
+def symboles_examen(actuels, composition: pd.DataFrame | None) -> list[str]:
+    """Titres de l'univers actuel et tous ceux ayant appartenu au S&P 500 (METHODE § 4.22)."""
+    hist = set(composition["symbol"]) if composition is not None else set()
+    return sorted(set(actuels) | hist)
+
+
 def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
     """Examen approfondi de l'IA de volatilité. Règles de décision : docs/METHODE.md § 4.8.
     Chaque examen est une fonction `_examen_…(ctx, nom)` du registre EXAMENS. Retourne les examens en échec."""
     echecs = []
     snap = pd.DataFrame(cli.table("titres_snapshot").select("symbol,secteur").execute().data)
     secteurs = dict(zip(snap["symbol"], snap["secteur"]))
-    symboles = sorted(set(snap["symbol"]) | {mh.INDICE})
-    raw, _ = charger_cours(symboles, debut=DEBUT_EXAMEN)
     compo = mh.charger_composition()
-    data, ret = ex.preparer(raw, snap["symbol"].tolist(), compo, secteurs)
-    print(f"[LABO] Examen : {data['symbol'].nunique()} titres, {data['date'].nunique()} dates depuis "
-          f"{pd.Timestamp(data['date'].min()).date()}")
-    ctx = Contexte(cli=cli, lot=lot, snap=snap, secteurs=secteurs, raw=raw, compo=compo, data=data, ret=ret)
+    # § 4.22 : titres actuels ET tous les anciens membres du S&P 500 (moins de biais du survivant)
+    titres = symboles_examen(snap["symbol"], compo)
+    raw, _ = charger_cours(sorted(set(titres) | {mh.INDICE}), debut=DEBUT_EXAMEN)
+    data, ret = ex.preparer(raw, titres, compo, secteurs, couverture_min=ex.COUVERTURE_MIN)
+    print(f"[LABO] Examen : {data['symbol'].nunique()} titres ({len(titres)} demandés dont {len(titres) - snap['symbol'].nunique()} "
+          f"anciens membres), {data['date'].nunique()} dates depuis {pd.Timestamp(data['date'].min()).date()}")
+    ctx = Contexte(cli=cli, lot=lot, snap=snap, secteurs=secteurs, raw=raw, compo=compo, data=data, ret=ret, symboles=titres)
     besoin_t = [n for n in noms if n in EXAMENS and EXAMENS[n][1]]
     if besoin_t:
         try:
