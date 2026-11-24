@@ -104,7 +104,7 @@ create table if not exists sync_log (
     id           bigint generated always as identity primary key,
     started_at   timestamptz not null default now(),
     finished_at  timestamptz,
-    status       text not null default 'running',   -- running | success | error
+    status       text not null default 'running',   -- running | success | partiel | error
     n_tickers    integer default 0,
     message      text
 );
@@ -208,7 +208,7 @@ create or replace view price_history_1y as
 -- ==============================================================================
 -- SÉCURITÉ — RLS : la clé "anon" (embarquée dans l'APK, publique par nature)
 -- peut uniquement LIRE. Le cron écrit avec la clé service_role (secret GitHub),
--- qui contourne RLS. L'app Streamlit peut garder la clé service_role ou anon.
+-- qui contourne RLS.
 -- ==============================================================================
 do $$
 declare t text;

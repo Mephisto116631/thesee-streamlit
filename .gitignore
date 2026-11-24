@@ -1,6 +1,5 @@
 # Secrets — NE JAMAIS PUSHER
 .env
-.streamlit/secrets.toml
 
 # Python
 __pycache__/
@@ -10,4 +9,5 @@ venv/
 
 # Cache local éventuel
 *.duckdb
-.streamlit/cache/
+.ruff_cache/
+.pytest_cache/

@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { api, relancerCalcul } from "../api";
 import { rafraichir } from "../components";
 import { ilYA } from "../format";
+import { libelleStatut, passageTermine } from "../sync";
 import { EVT_SYNC_LANCE } from "./Progression";
 
 /** Bouton « Relancer le calcul » : synchro + ré-entraînement des modèles côté serveur. */
@@ -16,7 +17,10 @@ export function Relance() {
       const s = r.data;
       if (s && new Date(s.started_at).getTime() >= (etat.depuis ?? 0) - 120_000 && s.status !== "running") {
         clearInterval(t);
-        setEtat({ phase: s.status === "success" ? "fini" : "erreur", msg: s.status === "success" ? `Terminé (${s.message ?? ""}).` : `Échec du calcul : ${s.message ?? "voir GitHub Actions"}.` });
+        const ok = passageTermine(s.status);
+        setEtat({ phase: ok ? "fini" : "erreur",
+          msg: ok ? `${s.status === "partiel" ? "Terminé avec avertissements" : "Terminé"} (${s.message ?? ""}).`
+            : `Échec du calcul : ${s.message ?? "voir GitHub Actions"}.` });
         rafraichir();
       }
     }, 20_000);
@@ -43,6 +47,14 @@ export function Relance() {
 
 function DernierCalcul() {
   const [txt, setTxt] = useState("");
-  useEffect(() => { api.lastSync().then((r) => r.data && setTxt(`Dernier calcul ${ilYA(r.data.finished_at ?? r.data.started_at)} (${r.data.status}).`)); }, []);
+  useEffect(() => {
+    api.lastSync().then((r) => {
+      const s = r.data;
+      if (!s) return;
+      // Passage partiel : on dit ce qui a échoué (le message liste les étapes non publiées)
+      const detail = s.status === "partiel" && s.message ? ` ${s.message}.` : "";
+      setTxt(`Dernier calcul ${ilYA(s.finished_at ?? s.started_at)} (${libelleStatut(s.status)}).${detail}`);
+    });
+  }, []);
   return txt ? <p class="hint">{txt} Le serveur télécharge les cours, ré-entraîne les modèles et republie tout (3 à 8 min).</p> : null;
 }

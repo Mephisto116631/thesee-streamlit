@@ -4,17 +4,20 @@
 GitHub Actions (cron)  ──écrit──▶  Supabase  ◀──lit──  Appli Android (APK) / PWA
   calculs : prix, comptes SEC,        tables prêtes        lecture seule,
   Z-Score, modèles IA, portefeuille   à afficher           aucun calcul lourd
-                                          ▲
-                                          └──lit── App Streamlit (conservée)
 ```
+
+L'ancienne app Streamlit a été retirée (revue de novembre 2026, [`docs/REVUE_2026-11.md`](docs/REVUE_2026-11.md) § 10).
+Elle reste dans l'historique git : `git checkout b4ce74f -- app.py pages theme.py _st_shim.py .streamlit`.
 
 | Dossier / fichier | Rôle |
 |---|---|
 | `cron_sync.py` | Point d'entrée du cron : synchro incrémentale, modèles, publication |
-| `data_pipeline.py`, `fred.py`, `universe.py` | Collecte (Yahoo depuis 2005, Alpha Vantage, FRED) et ancien modèle XGBoost 1 jour (conservé, désactivé) |
+| `data_pipeline.py`, `fred.py`, `universe.py` | Collecte : Yahoo depuis 2005, Alpha Vantage, FRED (spreads de crédit, taux sans risque du jour) |
 | `publish.py` | Tables pour l'appli : `titres_snapshot`, `sector_medians`, `model_runs`, `market_overview`, `portefeuille_recommande`, `suivi_volatilite` |
 | `portefeuille.py` | Portefeuille conseillé : Markowitz sur tout le S&P 500, covariance factorielle, même optimiseur que l'appli |
 | `docs/METHODE.md` | **Journal de la méthode** : chaque choix, ses hypothèses, ses tests et leurs résultats |
+| `docs/REVUE_2026-11.md` | **Revue de code de novembre 2026** : points relevés, corrections, ce qui reste à décider |
+| `requirements-lock.txt` | Versions figées de toutes les dépendances Python (contrainte des workflows) |
 | `modele_risque.py` | **IA de volatilité à 6 mois** (seul modèle probant), bilan en conditions réelles |
 | `modele_horizon.py` | Modèles de rendement 1 mois / 6 mois / 1 an (en test, non probants) |
 | `fondamentaux_sec.py` | Comptes officiels SEC (EDGAR) : facteurs du laboratoire et valorisation de l'appli (PER, ROE…) |
@@ -23,7 +26,6 @@ GitHub Actions (cron)  ──écrit──▶  Supabase  ◀──lit──  Appl
 | `ranges.json` | **Fourchettes d'interprétation** (RSI, ROE, Z-Score…), partagées par le cron et l'appli |
 | `supabase_schema.sql` | Schéma complet + sécurité RLS (lecture seule pour la clé publique) |
 | `mobile/` | Appli mobile (Preact + Capacitor) → APK Android et PWA |
-| `app.py`, `pages/` | App Streamlit (lecture seule désormais) |
 
 ## Mise en route (une seule fois)
 
@@ -102,13 +104,16 @@ Le bouton « Relancer le calcul » (Analyse › Modèles IA, Paramètres) appell
 1. GitHub → Settings → Developer settings → Fine-grained tokens → *Generate new token* :
    accès au seul dépôt `thesee-streamlit`, permission **Actions : Read and write**.
 2. Supabase → projet Thésée → Edge Functions → Secrets : ajouter `GH_DISPATCH_TOKEN` = ce jeton.
+3. Conseillé : secret `RELANCE_EMAILS` = votre adresse (seuls ces comptes peuvent relancer).
 
-Garde-fous : refus si un calcul tourne déjà ou a démarré il y a moins de 10 minutes.
+Garde-fous : il faut être connecté (onglet Positions) ; refus si un calcul tourne déjà ou a démarré il y a moins de 10 minutes.
 
 ## Historique des versions
 
 | PR | Apport |
 |---|---|
+| (revue, suite) | Streamlit et ancien modèle « hausse demain » retirés (cron sans Streamlit, 33 dépendances de moins) ; taux sans risque du jour (FRED, METHODE § 2.1), suivi par défaut dans l'appli ; examens du laboratoire en registre ; `publier()` découpé en étapes |
+| (revue) | Revue de code ([`docs/REVUE_2026-11.md`](docs/REVUE_2026-11.md)) : passage « partiel » signalé dans l'appli au lieu d'un faux « à jour » ; plus de suppression massive de titres sur panne ; versions Python figées et enregistrées avec chaque essai ; « Relancer le calcul » réservé aux comptes connectés ; parité de l'optimiseur vérifiée côté Python ; ruff en CI |
 | #34 | « Hausse ou baisse ? » : part du risque venant des jours de baisse (portefeuille et titres) ; essai : elle ne se répète pas et ne prévoit pas le sens ; écran « Bien utiliser Thésée » |
 | #32 | Suivi en conditions réelles du risque du mois (prévisions enregistrées chaque semaine, garde-fou) ; rappels de révision sur le téléphone (APK) ; glossaire dans l'appli (Analyse › Glossaire, et chaque bouton « ? ») |
 | #31 | Interface : plus de glissement latéral ni de texte coupé (verdicts et filtres qui passent à la ligne, noms sur deux lignes, tableaux en fiches sur téléphone) |

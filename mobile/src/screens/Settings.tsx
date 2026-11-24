@@ -5,7 +5,7 @@ import { dateFr, ilYA, num, pct } from "../format";
 import { frontiere, type Univers } from "../optim";
 import { bornesDefaut, definirBornes, type Range, RANGES } from "../ranges";
 import { Relance } from "./Relance";
-import { ecrireParametres, nbModifies, PARAMETRES_DEFAUT, type Parametres, PRESET_TRADE_REPUBLIC, useParametres } from "../settings";
+import { ecrireParametres, lireTauxMarche, nbModifies, PARAMETRES_DEFAUT, type Parametres, PRESET_TRADE_REPUBLIC, useParametres } from "../settings";
 import { BUILD, definirTelechargementAuto, estNatif, mo, tailleCache, telechargementAuto, VERSION, verifierMiseAJour, viderCache } from "../update";
 import { proposerMiseAJour } from "./MiseAJourDialogue";
 import { univers as universFiable, useFiabiliteVol } from "../fiabilite";
@@ -13,6 +13,36 @@ import { ChoixSourceVol } from "./Portfolio";
 import { lireRappels, programmerRappels, rappelsAVenir, rappelsDisponibles } from "../rappels";
 
 /** Champ numérique : la valeur stockée est une fraction, affichée en % si `pctAff`. */
+/** Taux sans risque : suit par défaut celui publié par le serveur (bons du Trésor US à 3 mois) ; une saisie le fige. */
+function ChampTaux({ p }: { p: Parametres }) {
+  const marche = lireTauxMarche();
+  const auto = p.tauxSansRisqueAuto !== false;
+  const aff = Math.round(p.tauxSansRisque * 10000) / 100;
+  return (
+    <label class={`param ${auto ? "" : "modifie"}`}>
+      <span class="param-tete">
+        <span>Taux sans risque</span>
+        <span class="param-saisie">
+          <input type="number" inputMode="decimal" min={0} max={10} step={0.05} value={aff}
+            onChange={(e) => {
+              const brut = Number((e.target as HTMLInputElement).value);
+              if (!Number.isFinite(brut)) return;
+              ecrireParametres({ tauxSansRisque: Math.min(10, Math.max(0, brut)) / 100 });
+            }} />
+          %
+        </span>
+      </span>
+      <small>
+        Rendement d'un placement sans risque en dollars (bons du Trésor US à 3 mois). Sert de base à tous les rendements attendus.{" "}
+        {auto
+          ? (marche?.date ? `Suit le taux du marché, au ${dateFr(marche.date)}.` : "Suit le taux du marché dès que le serveur le publie (4,35 % en attendant).")
+          : <>Valeur fixe. <button type="button" class="link petit" onClick={() => ecrireParametres({ tauxSansRisqueAuto: true })}>
+            (suivre le taux du marché{marche ? ` : ${num(marche.taux * 100, 2)} %` : ""})</button></>}
+      </small>
+    </label>
+  );
+}
+
 function Champ({ label, aide, k, p, pctAff = true, min, max, pas, decimales = 2 }: {
   label: string; aide: string; k: keyof Parametres; p: Parametres; pctAff?: boolean;
   min: number; max: number; pas: number; decimales?: number;
@@ -109,8 +139,7 @@ export function Settings() {
       </Card>
 
       <Card title="Comment j'estime la rentabilité des titres ?" repliable ouvert={false}>
-        <Champ p={p} k="tauxSansRisque" label="Taux sans risque" min={0} max={10} pas={0.05}
-          aide="Rendement d'un placement sans risque en dollars (bons du Trésor US). Sert de base à tous les rendements attendus." />
+        <ChampTaux p={p} />
         <Champ p={p} k="primeRisque" label="Prime de risque actions" min={0} max={12} pas={0.25}
           aide="Supplément annuel attendu des actions au-dessus du taux sans risque, pour un titre qui bouge comme le marché (bêta 1). Historiquement 4 à 6 %." />
         <Champ p={p} k="poidsHistorique" label="Part de l'historique" min={0} max={100} pas={5} decimales={0}

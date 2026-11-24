@@ -1,13 +1,8 @@
 """Historique long : téléchargé pour les modèles horizon, mais rien avant 2020 n'est écrit dans Supabase."""
-import sys
 
 import pandas as pd
 
-import _st_shim
-
-sys.modules.setdefault("streamlit", _st_shim)
-
-import data_pipeline as dp  # noqa: E402
+import data_pipeline as dp
 
 
 def test_stockage_limite_et_historique_long(monkeypatch):

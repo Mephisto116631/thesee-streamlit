@@ -3,7 +3,7 @@ name: Tests Python
 # Vérifie chaque PR touchant le code Python (cron, pipeline, publication).
 on:
   pull_request:
-    paths: ["**.py", "requirements.txt", "ranges.json", ".github/workflows/tests.yml"]
+    paths: ["**.py", "requirements*.txt", "ruff.toml", "ranges.json", "mobile/src/fixtures/**", ".github/workflows/tests.yml"]
   workflow_dispatch: {}
 
 permissions:
@@ -18,9 +18,12 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
-      - run: pip install -r requirements.txt pytest
+          cache-dependency-path: "requirements*.txt"
+      - run: pip install -r requirements.txt -c requirements-lock.txt pytest==9.2.0 ruff==0.17.6
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Compilation
         run: python -m compileall -q . -x "mobile/|\.git/"
+      - name: Relecture automatique (ruff)
+        run: ruff check .
       - name: Tests
         run: python -m pytest -q tests

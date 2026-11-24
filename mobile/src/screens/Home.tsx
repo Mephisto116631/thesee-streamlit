@@ -1,4 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
+import { etatDonnees } from "../sync";
 import { api, lirePositions, type Position, surChangementSession, utilisateurCourant } from "../api";
 import { Card, Details, Info, Loading, OfflineNote, RangeBar, ReglagesButton, RefreshButton, Stat, toneOf, useData, Verifier, ZoneBadge } from "../components";
 import { dateFr, ilYA, num, pb, pct, ratioPct } from "../format";
@@ -22,7 +23,7 @@ export function Home({ go }: { go: (h: string) => void }) {
         <div>
           <h1>Thésée</h1>
           <p class="sub">
-            {s ? <>Données {s.status === "error" ? "⚠️ dernière synchro en erreur" : "à jour"} · {ilYA(s.finished_at ?? s.started_at)}</> : "—"}
+            {s ? <>Données {etatDonnees(s.status)} · {ilYA(s.finished_at ?? s.started_at)}</> : "—"}
             {o?.date && <> · clôture du {dateFr(o.date)}</>}
           </p>
         </div>

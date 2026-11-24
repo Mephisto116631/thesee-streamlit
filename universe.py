@@ -4,7 +4,6 @@
 # Récupération dynamique depuis Wikipedia (source ouverte, toujours à jour),
 # avec repli sur une liste statique si le scraping échoue (résilience réseau).
 # ==============================================================================
-import streamlit as st
 import pandas as pd
 import requests
 from io import StringIO
@@ -81,7 +80,6 @@ FALLBACK_NASDAQ100 = [
 ]
 
 
-@st.cache_data(ttl=86400, show_spinner="Récupération de la liste S&P 500...")
 def get_sp500_tickers() -> pd.DataFrame:
     """
     Retourne un DataFrame [symbol, nom, secteur] depuis un CSV maintenu sur GitHub
@@ -106,7 +104,8 @@ def get_sp500_tickers() -> pd.DataFrame:
             df["indice"] = "S&P 500"
             return df
         except Exception as e_wiki:
-            st.warning(
+            print(
+                "[UNIVERS][WARN] "
                 f"Impossible de charger la liste S&P 500 (CSV: {e_csv} / Wikipedia: {e_wiki}) "
                 "— repli sur liste statique réduite."
             )
@@ -118,7 +117,6 @@ def get_sp500_tickers() -> pd.DataFrame:
             })
 
 
-@st.cache_data(ttl=86400, show_spinner="Récupération de la liste Nasdaq-100...")
 def get_nasdaq100_tickers() -> pd.DataFrame:
     """Retourne un DataFrame [symbol, nom, secteur] depuis Wikipedia. TTL 24h."""
     try:
@@ -148,7 +146,7 @@ def get_nasdaq100_tickers() -> pd.DataFrame:
         out["indice"] = "Nasdaq-100"
         return out
     except Exception as e:
-        st.info(f"Liste Nasdaq-100 Wikipedia indisponible ({e}) — repli sur la liste statique (101 titres).")
+        print(f"[UNIVERS] Liste Nasdaq-100 Wikipedia indisponible ({e}) — repli sur la liste statique (101 titres).")
         return pd.DataFrame({
             "symbol": FALLBACK_NASDAQ100,
             "nom": FALLBACK_NASDAQ100,
@@ -175,7 +173,6 @@ def get_sp400_tickers() -> pd.DataFrame:
     raise ValueError("table des composants du S&P 400 introuvable")
 
 
-@st.cache_data(ttl=86400, show_spinner=False)
 def get_etf_tickers() -> pd.DataFrame:
     return pd.DataFrame({
         "symbol": list(ETFS_SECTORIELS.keys()),
@@ -185,7 +182,6 @@ def get_etf_tickers() -> pd.DataFrame:
     })
 
 
-@st.cache_data(ttl=86400, show_spinner="Construction de l'univers de tickers...")
 def get_univers_complet() -> pd.DataFrame:
     """
     Univers dédoublonné : S&P 500 + Nasdaq 100 + ETFs.

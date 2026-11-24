@@ -35,7 +35,7 @@ Tous les essais sont enregistrés dans la table Supabase `experiences` (onglet A
 
 | Hypothèse | Valeur | Où la régler | Pourquoi |
 |---|---|---|---|
-| Taux sans risque | 4,35 %/an | Paramètres (appli) ; `portefeuille.RF` | Bons du Trésor US, base du CAPM |
+| Taux sans risque | Taux des bons du Trésor US à 3 mois (FRED `DGS3MO`), lu à chaque passage ; 4,35 %/an s'il est indisponible (§ 2.1) | Paramètres (appli : « suivre le taux du marché » ou valeur fixe) ; `fred.taux_sans_risque()`, `portefeuille.RF` (repli) | Bons du Trésor US, base du CAPM ; une valeur figée devient fausse avec le temps |
 | Prime de risque actions | 5 %/an | Paramètres ; `portefeuille.PRIME_RISQUE` | Moyenne historique de long terme (4 à 6 %) |
 | Rendement attendu | 90 % CAPM + 10 % historique 3 ans | Paramètres (part d'historique) ; `POIDS_HISTORIQUE` | Aucun modèle ne prévoit le rendement (§ 3) : hypothèse de long terme, pas une prévision |
 | Covariance | Ledoit-Wolf sur 3 ans de cours quotidiens | `JOURS_ESTIMATION` | Plus stable qu'1 an ; Ledoit-Wolf rétrécit vers une cible pour limiter l'erreur d'estimation |
@@ -48,6 +48,28 @@ Tous les essais sont enregistrés dans la table Supabase `experiences` (onglet A
 | Marge « Je limite le risque » | On vise limite × m, m appris sur le passé (≈ 0,85 à 0,93) | Automatique (laboratoire, `model_runs.marge_risque`) | Le risque réel varie plus que prévu (§ 7) |
 | Projection à l'horizon | Rendements composés, écarts selon une loi de Student à 5 degrés (échelle σ), fourchette de 90 % | Paramètres (confiance) | La loi normale sous-estimait les mauvaises années (§ 7) |
 | Ratios SEC affichés | PER entre 2 et 1000, cours / valeur comptable entre 0,1 et 500 ; sinon « n.d. » | `fondamentaux_sec.PER_MIN…` | Plutôt « non disponible » qu'un chiffre faux (§ 4.5) |
+
+
+### 2.1 Taux sans risque lu sur le marché (règle écrite le 24/11/2026, avant le code ; revue de code, docs/REVUE_2026-11.md)
+
+**Constat.** Le taux sans risque était figé à 4,35 %/an à trois endroits (`portefeuille.RF`, `settings.ts`, `portfolio.ts`). Les taux
+courts américains changent de plusieurs points en quelques années : une valeur figée devient fausse sans que rien ne le signale.
+
+**Règle.**
+1. **Source** : taux des bons du Trésor US à 3 mois, marché secondaire (FRED, série `DGS3MO`, en % par an), dernière valeur connue.
+   C'est la mesure habituelle du « sans risque » du CAPM et de la prime de risque de long terme (5 %, mesurée au-dessus des bons).
+2. **Lecture** : à chaque passage du cron (`fred.taux_sans_risque()`). Valeur retenue seulement si elle est plausible
+   (entre −1 % et 20 %) et datée de moins de 15 jours ; sinon **4,35 %** (`portefeuille.RF`), et le passage est noté « partiel ».
+3. **Usage serveur** : le portefeuille conseillé (CAPM, frontière, meilleur ratio de Sharpe) utilise le taux du jour. Le taux et sa
+   date sont publiés avec le portefeuille (`univers_facteurs.taux_sans_risque`, `taux_sans_risque_date`).
+4. **Usage appli** : par défaut, l'appli suit le taux publié (« suivre le taux du marché ») ; saisir une valeur dans les Paramètres
+   la fige, comme avant. Sans taux publié (ancien serveur), 4,35 %.
+5. **Ce qui ne change pas** : le laboratoire et les backtests gardent 4,35 % fixe, pour que les essais passés et futurs restent
+   comparables entre eux (un essai ne doit pas changer de verdict parce que le taux du jour a bougé).
+
+**Effet attendu.** Le rendement attendu CAPM de chaque titre bouge de 0,9 × Δtaux, le même pour tous : à compromis λ donné, les poids
+optimaux ne changent pas (le décalage est le même pour tout portefeuille investi à 100 %). Seuls changent le rendement affiché, le
+ratio de Sharpe et donc le point « meilleur ratio de Sharpe » retenu sur la frontière, ainsi que les projections.
 
 ---
 

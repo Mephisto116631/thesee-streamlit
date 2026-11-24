@@ -1,7 +1,7 @@
 // Calculs de portefeuille — légers, faits sur le téléphone (1 an de cours).
 import type { PricePoint } from "./api";
 
-export const RF = 0.0435; // taux sans risque annuel (même valeur que l'app Streamlit)
+export const RF = 0.0435; // taux sans risque de repli (le serveur publie celui du jour : docs/METHODE.md § 2.1)
 
 /** Matrice de rendements quotidiens alignée sur les dates communes à tous les titres. */
 export function returnsMatrix(points: PricePoint[], symbols: string[]) {
@@ -65,26 +65,26 @@ export function capWeights(w: number[], cap: number): number[] {
 
 export const POIDS_MAX = 0.2; // même plafond que le portefeuille recommandé (portefeuille.py)
 
-export function weights(R: number[][], mode: "equal" | "markowitz"): number[] {
+export function weights(R: number[][], mode: "equal" | "markowitz", rf = RF): number[] {
   const n = R[0]?.length ?? 0;
   const eq = Array(n).fill(1 / n);
   if (mode === "equal" || n < 2) return eq;
   const cov = covariance(R).map((r) => r.map((v) => v * 252));
   const inv = inverse(cov);
   if (!inv) return eq;
-  const ex = Array.from({ length: n }, (_, j) => mean(R.map((r) => r[j])) * 252 - RF);
+  const ex = Array.from({ length: n }, (_, j) => mean(R.map((r) => r[j])) * 252 - rf);
   let w = inv.map((row) => row.reduce((acc, v, j) => acc + v * ex[j], 0)).map((v) => Math.max(0, v));
   const s = w.reduce((a, b) => a + b, 0);
   return s > 0 ? capWeights(w.map((v) => v / s), POIDS_MAX) : eq;
 }
 
-export function portfolioStats(R: number[][], w: number[]) {
+export function portfolioStats(R: number[][], w: number[], rf = RF) {
   const pr = R.map((r) => r.reduce((acc, v, j) => acc + v * w[j], 0));
   const mu = mean(pr) * 252;
   const vol = Math.sqrt(pr.reduce((a, v) => a + (v - mean(pr)) ** 2, 0) / Math.max(1, pr.length - 1)) * Math.sqrt(252);
   let peak = 1, val = 1, mdd = 0;
   const curve = pr.map((r) => { val *= 1 + r; peak = Math.max(peak, val); mdd = Math.min(mdd, val / peak - 1); return val; });
-  return { returns: pr, annReturn: mu, annVol: vol, sharpe: vol > 0 ? (mu - RF) / vol : 0, maxDrawdown: mdd, curve };
+  return { returns: pr, annReturn: mu, annVol: vol, sharpe: vol > 0 ? (mu - rf) / vol : 0, maxDrawdown: mdd, curve };
 }
 
 /** Monte-Carlo par ré-échantillonnage des rendements historiques (bootstrap). */

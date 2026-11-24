@@ -1,12 +1,10 @@
-streamlit>=1.38.0
+# Dépendances directes du cron et du laboratoire (versions figées : requirements-lock.txt)
 pandas
 numpy
 yfinance
 requests
-matplotlib
 xgboost
 scikit-learn
-shap
 supabase
 lxml
 scipy

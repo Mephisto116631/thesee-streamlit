@@ -3,6 +3,7 @@
 // pré-calculées par le cron (publish.py).
 import { createClient } from "@supabase/supabase-js";
 import type { LaboVol } from "./fiabilite";
+import { definirTauxMarche } from "./settings";
 
 const URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -19,7 +20,7 @@ export interface Snapshot {
   rsi_14: number | null; volatility: number | null; pct_vs_ma50: number | null; pct_vs_ma200: number | null;
   high_52w: number | null; low_52w: number | null;
   roe: number | null; margin: number | null; ev_ebitda: number | null; debt_eq: number | null;
-  z_score: number | null; rating_sp: string | null; proba_hausse: number | null;
+  z_score: number | null; rating_sp: string | null;
   vol_ia?: number | null;   // volatilité prévue par l'IA de risque (6 mois), publiée seulement si probante
   // Comptes officiels déposés à la SEC (mis à jour chaque semaine)
   bpa_sec?: number | null; vc_action_sec?: number | null; roe_sec?: number | null; rentabilite_brute?: number | null;
@@ -31,8 +32,6 @@ export interface SectorMedian {
   per?: number | null; cours_vc?: number | null; roe_sec?: number | null; rentabilite_brute?: number | null;
   endettement?: number | null; part_encaissee?: number | null;
 }
-export interface Facteur { feature: string; label: string; valeur: number | null; impact: number }
-export interface Signal { symbol: string; kind: string; date: string; proba_hausse: number; facteurs: Facteur[] }
 export interface Experience {
   id: number; lot: string; nom: string; horizon: string; description: string | null;
   ic: number | null; t_stat: number | null; seuil_t_global: number | null; n_essais: number | null;
@@ -40,7 +39,7 @@ export interface Experience {
   ic_base: number | null; cree_le: string;
 }
 export interface ModelRun {
-  kind: string; // "actions" | "etf" | "horizon_court" | "horizon_6m" | "horizon_1a"
+  kind: string; // "horizon_court" | "horizon_6m" | "horizon_1a" | "risque_volatilite_reel" | "marge_risque"…
   trained_at: string; accuracy: number | null; baseline: number | null;
   gain_pts: number | null; verdict: "aucun" | "bruit" | "signal";
   importance: { feature: string; label: string; importance: number }[];
@@ -62,7 +61,8 @@ export interface PortefeuilleReco {
   frontiere?: { cible: number; rendement: number; volatilite: number; sharpe: number | null; lignes: { symbol: string; poids: number }[] }[];
   titres?: Record<string, { nom: string; secteur: string | null; prix: number | null; rendement_1y: number; volatilite: number; vol_ia?: number }>;
   univers?: { symbols: string[]; mu_hist: number[]; beta: number[]; cov: number[][]; jours: number } | null;   // ancien format (≤ PR #24)
-  univers_facteurs?: { symbols: string[]; mu_hist: number[]; beta: number[]; facteurs: number[][]; idio: number[]; jours: number } | null;
+  univers_facteurs?: { symbols: string[]; mu_hist: number[]; beta: number[]; facteurs: number[][]; idio: number[]; jours: number;
+    taux_sans_risque?: number | null; taux_sans_risque_date?: string | null } | null;
 }
 export interface ScoreHorizon { symbol: string; horizon: "court" | "6m" | "1a"; score: number; date: string }
 export interface SyncLog { started_at: string; finished_at: string | null; status: string; message: string | null;
@@ -186,17 +186,14 @@ export const api = {
   portefeuilleReco: () => cached<PortefeuilleReco | null>("reco", async () => {
     const { data, error } = await sb!.from("portefeuille_recommande").select("*").eq("id", 1).maybeSingle();
     if (error) throw new Error(error.message);
+    const u = (data as PortefeuilleReco | null)?.univers_facteurs;
+    definirTauxMarche(u?.taux_sans_risque, u?.taux_sans_risque_date);   // taux du jour (docs/METHODE.md § 2.1)
     return data as PortefeuilleReco | null;
   }, null),
 
   scores: (horizon: "court" | "6m" | "1a") => cached<ScoreHorizon[]>(`scores:${horizon}`,
     () => selectAll((a, b) => sb!.from("scores_horizon").select("*").eq("horizon", horizon).order("symbol").range(a, b)), []),
 
-  signal: (symbol: string) => cached<Signal | null>(`signal:${symbol}`, async () => {
-    const { data, error } = await sb!.from("signals").select("*").eq("symbol", symbol).maybeSingle();
-    if (error) throw new Error(error.message);
-    return data as Signal | null;
-  }, null),
 
   prices: (symbols: string[]) => cached<PricePoint[]>(`prices:${[...symbols].sort().join(",")}`,
     () => selectAll((a, b) => sb!.from("price_history_1y").select("symbol,date,close")
