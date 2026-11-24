@@ -885,6 +885,48 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
 - **Limites** : rendements de clôture (pas intrajournaliers) ; secteur et taille non contrôlés (constat seulement) ; survivants des midcaps non utilisés ici.
 - **Résultats** : § 17.
 
+
+### 4.20 Fidélité laboratoire / production de la prévision de volatilité (écrit le 24/11/2026, avant le code ; correction, pas un essai)
+- **Constat de la revue de code** : la prévision publiée ne passait pas les mêmes données au modèle que le laboratoire qui l'a validé.
+  1. **Classement des titres** : au laboratoire, chaque caractéristique est un rang **parmi les membres du S&P 500 du jour**
+     (`membres_a_date`). En production, le jour de la prévision, le rang était calculé **parmi tout l'univers de l'appli** (S&P 500,
+     Nasdaq-100 hors S&P 500, ETF sectoriels). Les ETF (diversifiés, donc calmes) décalaient ainsi les rangs de tous les titres.
+  2. **Date des caractéristiques** : le modèle classait les titres avec la dernière date **échantillonnée** (une par semaine), jusqu'à 4 séances
+     avant le dernier cours, alors que les niveaux HAR étaient ceux du dernier jour.
+- **Correction** (aucune nouvelle information, aucun réglage) :
+  1. Caractéristiques calculées **au dernier jour de cours**.
+  2. **Membres du S&P 500 du jour** : rangs recalculés parmi eux seuls, comme au laboratoire. **Autres actions** (Nasdaq-100 hors S&P 500) : rang
+     = place de leur valeur parmi les membres (aucune ne déplace celui des membres). **ETF** : pas de classement par l'IA (elle n'a appris que sur
+     des actions) ; leur niveau est celui de HAR (ou la volatilité 3 mois si l'IA seule est publiée).
+  3. Rang → niveau : quantile des niveaux **des membres** (la population sur laquelle le rang est défini).
+- **Ce qui ne change pas** : le modèle, ses réglages, ses données d'entraînement, le laboratoire. Les verdicts passés restent valables : ils portaient
+  déjà sur la version « membres du jour ».
+
+### 4.21 Audit des biais de la prévision de risque (protocole écrit le 24/11/2026, AVANT tout code ; constats, aucun essai compté)
+- **Origine** : l'utilisateur veut vérifier que l'IA de risque n'est pas biaisée. Un biais de niveau **par type de titre** a une conséquence directe :
+  Markowitz **favorise** les titres dont le risque est sous-estimé. Le § 6 a déjà mesuré l'IC par secteur et par taille, et le biais médian global ;
+  il manquait la **calibration par groupe** (celle qui compte pour le portefeuille) et sa stabilité dans le temps.
+- **Données** : le walk-forward de l'examen (`walk_forward`, 4 fenêtres de test depuis 2008), mêmes titres et mêmes dates que `examen_hybride`.
+  Prévision jugée : **l'hybride publié** (ordre de l'IA, niveau HAR), et HAR seul pour comparaison.
+- **Mesures, par groupe** (secteur actuel ; quintiles de taille `liquidite`, de bêta `beta_1a`, de volatilité passée `vol_3m` ; année) :
+  1. **Rapport de variance** = moyenne(σ prévue²) / moyenne(σ réalisée²) : la calibration **en moyenne**, celle que Markowitz utilise
+     (1 = juste ; < 1 = risque sous-estimé). Aussi : biais médian de σ (constat seulement, car asymétrie attendue, § 9), part de sous-estimations,
+     QLIKE de l'hybride et de HAR.
+  2. **IC dans le groupe** (titres du groupe classés entre eux) : l'IA classe-t-elle bien **à l'intérieur** d'un secteur, ou seulement d'un secteur à l'autre ?
+  3. Le rapport de variance **par fenêtre de test** (4 fenêtres), pour la stabilité.
+- **Alertes, fixées AVANT l'audit** (ce ne sont pas des décisions) :
+  - **Sous-estimation persistante** d'un groupe : rapport de variance < **0,85** dans au moins **3 des 4 fenêtres**.
+  - **Surestimation persistante** : rapport > **1,25** dans au moins 3 des 4 fenêtres.
+  - **Classement creux** : IC dans le groupe de l'IA **inférieur** à celui de HAR dans au moins 3 des 4 fenêtres.
+  Une alerte ne change rien à l'appli : elle déclenche la **proposition** d'un essai de correction (protocole à écrire, accord de l'utilisateur).
+- **Constats complémentaires** :
+  - **Biais du survivant** : par année, part des membres du S&P 500 de la date pour lesquels Yahoo fournit un cours (les titres disparus manquent).
+  - **IC dans les secteurs** (moyenne des IC calculés secteur par secteur) contre IC global, pour l'IA et HAR.
+- **Fréquence** : chaque mois avec le re-test (`experiences.yml`), pour une surveillance continue.
+- **Limites** : secteur **actuel** des titres (pas celui de l'époque) ; titres disparus absents (mesuré par le constat ci-dessus) ; seuils d'alerte
+  choisis à l'avance mais sans test de significativité (constats).
+- **Résultats** : à venir.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
