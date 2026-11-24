@@ -945,7 +945,7 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
 - **Production** : la prévision publiée reste entraînée sur l'univers actuel (télécharger 1 200 titres trois fois par jour est trop lourd). Si les
   constats montrent un écart d'IC de l'IA > 0,02 entre les deux jeux de données, un entraînement hebdomadaire sur les membres historiques sera proposé.
 - **Limites** : faillis et rachetés absents de Yahoo (biais résiduel, mesuré) ; secteur inconnu des titres sortis (groupe « ? » dans l'audit).
-- **Résultats** : à venir.
+- **Résultats** : § 19.
 
 ---
 
@@ -1372,3 +1372,40 @@ elle ne se répète pas ; le sens à venir n'est pas prévisible ». Rien ne cha
 2. **Proposé (essai compté, accord de l'utilisateur)** : HAR **relatif au titre** (variance rapportée à celle du titre sur un an), pour corriger la
    surestimation des titres calmes (§ 18.1).
 3. **Proposé (essai compté)** : donner à l'IA les variances récentes de HAR (1 jour, 1 semaine, 1 mois) et la part baissière, pour mieux classer.
+
+---
+
+## 19. Résultats avec les membres historiques retrouvés (§ 4.22 ; lot du 24/11/2026 20:30 UTC, PR #41)
+
+### 19.1 Biais du survivant : réduit, pas supprimé
+| Année | Avant (univers actuel) | Après (+ anciens membres) |
+|---|---|---|
+| 2008 | 48 % | **61 %** |
+| 2011 | 55 % | 66 % |
+| 2014 | 60 % | 72 % |
+| 2018 | 72 % | 82 % |
+| 2022 | 83 % | 91 % |
+| 2026 | 97 % | 98 % |
+
+Prévisions jugées : 320 000 → **364 000**. Il reste 39 % de membres de 2008 absents : faillis et rachetés, que Yahoo ne fournit pas.
+
+### 19.2 Les décisions ne changent pas (règle 1 du § 4.22)
+- **IA contre HAR sur l'ordre** : IC 0,796 contre 0,767, gain +0,029, t = 5,5 > seuil 2,72 → **l'IA reste** (hybride). Avant : gain +0,034, t = 5,7.
+- **Hybride** : **publié** (il classe mieux que la volatilité 3 mois et HAR ne le bat pas au seuil corrigé).
+- **Re-test mensuel** (`risque_volatilite`, univers actuel, inchangé) : 6 mois **probant** ; 1 an non probant.
+- **Production** : l'IC de l'IA bouge de **+0,013** entre les deux jeux de données, sous le seuil de 0,02 du § 4.22. L'entraînement de production
+  reste sur l'univers actuel.
+
+### 19.3 Ce qui change : le niveau est moins bon qu'on le croyait
+- **QLIKE de l'hybride 0,413 contre 0,397 pour HAR** (Diebold-Mariano t = **+2,18** : l'hybride est **moins bon** que HAR en niveau, sans franchir
+  le seuil corrigé de 2,63). Avant : 0,331 contre 0,332 (t = −1,49). Sur les survivants, convertir l'ordre de l'IA en niveaux HAR ne coûtait rien ;
+  avec les titres sortis de l'indice, cela coûte un peu.
+- **Calibration** : rapport de variance **1,16** (avant 1,07) ; par fenêtre 0,82 ; **2,37** ; 1,14 ; 1,20.
+- **Audit** : **9 alertes**, toutes de **surestimation** (Communication Services, Consumer Staples, Industrials, Real Estate, Utilities ; bêtas et
+  volatilités passées des deux quintiles les plus bas). Toujours **aucune sous-estimation persistante**.
+- **Classement dans les secteurs** : IA 0,72 contre HAR 0,69 (inchangé).
+
+### 19.4 Lecture
+- L'apport de l'IA est **l'ordre** des titres, et il résiste à la correction du biais du survivant.
+- Le **niveau** reste le point faible : il surestime le risque des titres calmes, de plus en plus nettement quand on ajoute les titres sortis.
+  C'est l'essai « HAR relatif au titre » (§ 18.4, point 2) qui y répond. Il reste à lancer avec l'accord de l'utilisateur.
