@@ -25,8 +25,17 @@ jobs:
   web:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: mobile } }
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
     steps:
+      # Sur main : toujours le dernier commit, et non celui qui a déclenché le run. Deux fusions
+      # rapprochées peuvent démarrer dans le désordre (PR 39 et 40 : l'ancienne avait écrasé la nouvelle).
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref == 'refs/heads/main' && 'refs/heads/main' || github.sha }}
+      # Commit construit : repris tel quel par les jobs apk et pages
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm, cache-dependency-path: mobile/package-lock.json }
       - run: npm ci
@@ -52,6 +61,7 @@ jobs:
     defaults: { run: { working-directory: mobile } }
     steps:
       - uses: actions/checkout@v5
+        with: { ref: "${{ needs.web.outputs.sha }}" }
       - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm, cache-dependency-path: mobile/package-lock.json }
       - uses: actions/setup-java@v5
@@ -115,8 +125,23 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: thesee-apk, path: mobile/thesee.apk }
 
-      - name: Publication dans les Releases
+      # Garde-fou (aussi lors d'une relance d'un ancien run) : ne pas publier si l'appli a changé
+      # sur main depuis la construction ; le run de ce changement s'en charge.
+      - name: Version encore à jour ?
+        id: ajour
         if: github.ref == 'refs/heads/main'
+        working-directory: ${{ github.workspace }}
+        run: |
+          git fetch --depth=1 origin main
+          CHANGES=$(git diff --name-only HEAD FETCH_HEAD -- mobile ranges.json .github/workflows/mobile.yml)
+          if [ -z "$CHANGES" ]; then
+            echo "publier=oui" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::APK non publié : l'appli a changé sur main depuis cette construction."
+          fi
+
+      - name: Publication dans les Releases
+        if: steps.ajour.outputs.publier == 'oui'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: apk-${{ github.run_number }}
@@ -132,15 +157,32 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
+      contents: read    # garde-fou : comparaison avec main
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
+      - uses: actions/checkout@v5
+        with: { ref: "${{ needs.web.outputs.sha }}" }
       - uses: actions/download-artifact@v5
         with: { name: web-dist, path: dist }
+      # Un nom par essai : sinon une relance trouve deux artefacts « github-pages » et échoue
       - uses: actions/upload-pages-artifact@v3
-        with: { path: dist }
+        with: { name: "github-pages-${{ github.run_attempt }}", path: dist }
+      # Même garde-fou que pour l'APK
+      - name: Version encore à jour ?
+        id: ajour
+        run: |
+          git fetch --depth=1 origin main
+          CHANGES=$(git diff --name-only HEAD FETCH_HEAD -- mobile ranges.json .github/workflows/mobile.yml)
+          if [ -z "$CHANGES" ]; then
+            echo "publier=oui" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Site non publié : l'appli a changé sur main depuis cette construction."
+          fi
       - id: deploy
+        if: steps.ajour.outputs.publier == 'oui'
         uses: actions/deploy-pages@v4
+        with: { artifact_name: "github-pages-${{ github.run_attempt }}" }
