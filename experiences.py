@@ -100,6 +100,8 @@ EXPERIENCES_EXAMEN = {
     "examen_audit_biais": "Audit des biais (§ 4.21) : calibration et classement par secteur, taille, bêta, volatilité, année ; alertes fixées à l'avance ; biais du survivant",
     "examen_har_relatif": "HAR relatif au titre (variance rapportée au risque habituel du titre) contre HAR : QLIKE, crises, stabilité, biais, placebo (§ 4.23)",
     "examen_ia_informee": "IA plus informée (+ volatilités 1 jour, 1 semaine, 1 mois, part baissière) contre l'IA actuelle sur l'ordre des titres, placebo (§ 4.24)",
+    "examen_har_protege": "HAR relatif protégé en crise (le plus élevé du relatif et de HAR quand v22 > 2 × risque habituel) contre HAR (§ 4.25)",
+    "examen_ia_climat": "IA + climat de marché (log VIX, VIX / sa moyenne 1 an) contre l'IA actuelle sur l'ordre des titres, placebo VIX décalé d'un an (§ 4.26)",
 }
 DEBUT_EXAMEN = "1998-01-01"
 
@@ -504,6 +506,43 @@ def _examen_ia_informee(ctx: Contexte, nom: str):
              n_essais=ex.N_CANDIDATS_INFORMEE)
 
 
+def _examen_har_protege(ctx: Contexte, nom: str):
+    """Essai du § 4.25 (17e de la famille « références »)."""
+    d = ex.ajouter_risque_habituel(ctx.data, ctx.ret)
+    tr = ex.proteger(ex.walk_forward_har_relatif(d))
+    tp = ex.proteger(ex.walk_forward_har_relatif(d, placebo=True))
+    c = ex.comparer_har_relatif(tr, tp, col="lvl_prot", n_essais=ex.N_ESSAIS_HAR_PROTEGE)
+    c["debut_test"] = str(pd.Timestamp(tr["date"].min()).date())
+    c["part_choc"] = float(tr["choc"].mean())
+    t = ctx.t.merge(tr[["date", "symbol", "lvl_prot"]], on=["date", "symbol"], how="inner")
+    t["lvl_hyb_prot"] = ex._rang_vers_niveau(t, "pred", "lvl_prot")
+    c["hybride_protege"] = {"qlike": float(ex._pertes_par_date(t, "lvl_hyb_prot").mean()),
+                            "qlike_hybride": float(ex._pertes_par_date(t, "lvl_hybride").mean()),
+                            "rapport_variance": ex._rapport_variance(t, "lvl_hyb_prot")}
+    c["decision"] = "har_protege" if c["adopte"] else "har"
+    _inserer(ctx.cli, ctx.lot, nom, ex.verdict_har_protege(c), c, ic=c["dm"].get("ecart"), t=c["dm"].get("t"),
+             n_essais=ex.N_ESSAIS_HAR_PROTEGE)
+
+
+def _examen_ia_climat(ctx: Contexte, nom: str):
+    """Essai du § 4.26 (7e de la famille « classement »)."""
+    vix = _vix(DEBUT_EXAMEN)
+    feats = mh.FEATURES + ex.FEATURES_CLIMAT
+    dplus = ex.ajouter_climat(ctx.data, vix)
+    dplc = ex.ajouter_climat(ctx.data, vix, decalage=ex.DECALAGE_PLACEBO_VIX)
+    t_plus = ex.walk_forward(dplus, ctx.ret, feats=feats, references=False)
+    t_plc = ex.walk_forward(dplc, ctx.ret, feats=feats, references=False)
+    c = ex.comparer_informee(ctx.t, t_plus, t_plc, n_candidats=ex.N_CANDIDATS_CLIMAT)
+    c["debut_test"] = str(pd.Timestamp(t_plus["date"].min()).date())
+    config = t_plus["config"].mode().iloc[0]
+    m = mh._modele(config).fit(dplus[feats], dplus["y"])
+    c["importance"] = sorted([{"feature": f, "importance": float(v)} for f, v in zip(feats, mh._importances(m, config))],
+                             key=lambda x: -x["importance"])
+    c["decision"] = "climat" if c["adopte"] else "actuelle"
+    _inserer(ctx.cli, ctx.lot, nom, ex.verdict_informee(c), c, ic=c["gain"], t=c["t"], seuil=c["seuil"],
+             n_essais=ex.N_CANDIDATS_CLIMAT)
+
+
 EXAMENS = {   # nom -> (fonction, besoin du walk-forward commun `t`)
     "examen_references": (_examen_references, True),
     "examen_calibration": (_examen_calibration, True),
@@ -525,6 +564,8 @@ EXAMENS = {   # nom -> (fonction, besoin du walk-forward commun `t`)
     "examen_audit_biais": (_examen_audit_biais, True),
     "examen_har_relatif": (_examen_har_relatif, True),
     "examen_ia_informee": (_examen_ia_informee, True),
+    "examen_har_protege": (_examen_har_protege, True),
+    "examen_ia_climat": (_examen_ia_climat, True),
     "examen_backtest_reel": (_examen_backtest_reel, False),
 }
 
