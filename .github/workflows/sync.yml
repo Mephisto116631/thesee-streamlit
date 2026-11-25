@@ -3,12 +3,10 @@ name: Sync Thésée — Supabase
 # Déclenchement automatique + possibilité de lancer manuellement depuis l'onglet Actions
 on:
   schedule:
-    # Les heures GitHub Actions sont en UTC (et souvent retardées de quelques
-    # minutes à quelques heures en période de charge). Marché US : 9h30-16h00 ET.
-    # Heure d'été US (mars-nov) : ET = UTC-4 ; heure d'hiver : ET = UTC-5.
-    - cron: "0 14 * * 1-5"   # ~10:00 ET (peu après l'ouverture)
-    - cron: "0 17 * * 1-5"   # ~13:00 ET (mi-journée)
-    - cron: "30 21 * * 1-5"  # ~16:30 ET hiver / 17:30 ET été (après la clôture)
+    # Les 3 passages du jour (10:00, 13:00 et 16:30 à New York) sont lancés à l'heure par
+    # Supabase (workflow_dispatch, supabase_schema.sql V16). Ici, un seul passage de secours :
+    # les tâches planifiées de GitHub démarraient 7 à 9 heures en retard.
+    - cron: "30 21 * * 1-5"  # secours quotidien, après la clôture
   workflow_dispatch:          # bouton "Run workflow" manuel dans l'onglet Actions
     inputs:
       forcer_sec:
