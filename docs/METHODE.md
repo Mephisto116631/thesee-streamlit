@@ -1509,3 +1509,44 @@ Prévisions jugées : 320 000 → **364 000**. Il reste 39 % de membres de 2008 
 - **Pistes**, chacune serait un **nouvel essai compté** et suggérée **après** avoir vu ces résultats, donc à juger avec d'autant plus de prudence :
   1. un HAR relatif **protégé en crise** (le plus grand du relatif et de HAR quand le risque récent dépasse nettement le risque habituel) ;
   2. un « marché du jour » dans l'ordre des titres (VIX × bêta), déjà utile au niveau à 1 mois (§ 16).
+
+---
+
+## 21. Résultats des essais « HAR relatif protégé en crise » et « IA + climat de marché » (§§ 4.25-4.26 ; lot du 25/11/2026 21:00 UTC, PR #45)
+
+### 21.1 HAR relatif protégé en crise : **non adopté** (règles 1, 2 et 3 non réunies)
+| Règle | Mesure | Résultat |
+|---|---|---|
+| 1. Niveau | QLIKE 0,363 contre 0,399 pour HAR, t = −0,44, p 0,33 (il fallait < 0,0029) | **échoue** |
+| 2. Crises | 2008 : 1,04 ; **2020 : 1,63** (relatif seul : 1,72) ; 2022 : 0,74 | **échoue** : la protection n'aide presque pas |
+| 3. Stabilité | meilleur dans 1 fenêtre sur 4 | **échoue** |
+| 4. Biais | alertes de surestimation 9 → 5, aucune sous-estimation | réussit |
+| 5. Placebo | t = +1,79 | réussit |
+
+- **Lecture** : la protection s'active pour 9 % des prévisions, quand le titre est **déjà** agité. Mais le défaut du relatif en 2020 vient des chocs
+  **pas encore arrivés** : une prévision datée de février 2020, sur un titre calme, ne voit aucun choc et reste basse. Aucune règle fondée sur le
+  passé du titre ne peut l'anticiper.
+- **Ce que cela apprend sur HAR** : sa surestimation des titres calmes (§ 18) joue le rôle d'une **assurance** contre les chocs imprévus. La corriger
+  améliore la calibration en temps normal, et le paie en crise. Ce n'est pas un défaut à supprimer, c'est un compromis.
+
+### 21.2 IA + climat de marché : **non adoptée** (règles 1, 2 et 3 non réunies)
+| Règle | Mesure | Résultat |
+|---|---|---|
+| 1. Preuve | écart d'IC +0,0034, t = 2,37 < seuil 2,85 | échoue |
+| 2. Taille | 0,0034 < 0,005 ; positif dans 4 fenêtres, mais presque nul dans les deux dernières | échoue |
+| 3. Placebo | VIX d'**un an plus tôt** : écart +0,0021, **t = 3,66** | **échoue** : un faux VIX « aide » presque autant |
+
+- **Lecture** : un VIX décalé d'un an n'a aucune information sur le risque à venir, et il « aide » pourtant. Une variable identique pour tous les
+  titres d'une date sert donc surtout au modèle de **repère de période** : il apprend « comment classer à telle époque », pas « comment classer
+  quand le marché est nerveux ». Le placebo, fixé à l'avance, a détecté cet artefact. Importance des deux variables : 0,7 % et 0,5 %.
+- **Décision** : l'IA actuelle reste.
+
+### 21.3 Bilan des quatre essais d'amélioration (§§ 20-21)
+- Le modèle publié **ne change pas** : ordre des titres par l'IA, niveau par HAR.
+- Familles : « références » 17 essais ; « classement » 7 essais.
+- Ce qui reste vrai et utile :
+  1. l'IA classe mieux que HAR, y compris dans les secteurs et avec les anciens membres (§ 19) ;
+  2. la surestimation des titres calmes par HAR est **prudente** et sert d'assurance contre les chocs (§ 21.1) ;
+  3. les volatilités récentes apportent un gain **réel mais petit** au classement (§ 20.2).
+- **Pas de nouvel essai proposé** : les pistes restantes seraient de plus en plus ajustées sur les résultats déjà vus (risque de sur-apprentissage
+  du protocole lui-même). La surveillance continue (re-test et audit mensuels) prend le relais.
