@@ -1392,12 +1392,13 @@ def _alertes_niveau(a: dict) -> dict:
     return {"sur": sum(x == "surestimation persistante" for x in al), "sous": sum(x == "sous-estimation persistante" for x in al)}
 
 
-def comparer_har_relatif(tr: pd.DataFrame, tp: pd.DataFrame, h: int = H) -> dict:
-    """Règles 1 à 5 du § 4.23 (d = QLIKE relatif − QLIKE HAR ; < 0 : relatif meilleur)."""
-    a, b = _pertes_par_date(tr, "lvl_rel"), _pertes_par_date(tr, "lvl_har")
+def comparer_har_relatif(tr: pd.DataFrame, tp: pd.DataFrame, h: int = H, col: str = "lvl_rel",
+                         n_essais: int = N_ESSAIS_HAR_RELATIF) -> dict:
+    """Règles 1 à 5 du § 4.23 (d = QLIKE de `col` − QLIKE HAR ; < 0 : `col` meilleur). Sert aussi au § 4.25."""
+    a, b = _pertes_par_date(tr, col), _pertes_par_date(tr, "lvl_har")
     d = (a - b.reindex(a.index)).dropna()
     dm = inf.rapport_dm(d.values, h / mh.PAS_ECHANTILLON)
-    alpha = 0.05 / N_ESSAIS_HAR_RELATIF
+    alpha = 0.05 / n_essais
     crises = {}
     for nom, (d0, d1) in CRISES.items():
         i = (a.index >= pd.Timestamp(d0)) & (a.index <= pd.Timestamp(d1))
@@ -1406,15 +1407,15 @@ def comparer_har_relatif(tr: pd.DataFrame, tp: pd.DataFrame, h: int = H) -> dict
     cles = [c for c in crises if c.startswith(CRISES_HAR_RELATIF)]
     par_fenetre = {}
     for f, g in tr.groupby("fenetre"):
-        pr, ph = _pertes_par_date(g, "lvl_rel"), _pertes_par_date(g, "lvl_har")
+        pr, ph = _pertes_par_date(g, col), _pertes_par_date(g, "lvl_har")
         par_fenetre[int(f)] = {"qlike_rel": float(pr.mean()), "qlike_har": float(ph.mean()),
-                               "rapport_variance_rel": _rapport_variance(g, "lvl_rel"),
+                               "rapport_variance_rel": _rapport_variance(g, col),
                                "rapport_variance_har": _rapport_variance(g, "lvl_har"), "coef": g["coef_rel"].iloc[0]}
     n_mieux = sum(v["qlike_rel"] < v["qlike_har"] for v in par_fenetre.values())
-    audit_rel = audit_biais(tr.assign(pred=tr["lvl_rel"]), col="lvl_rel", ref="lvl_har")
+    audit_rel = audit_biais(tr.assign(pred=tr[col]), col=col, ref="lvl_har")
     audit_har = audit_biais(tr.assign(pred=tr["lvl_har"]), col="lvl_har", ref="lvl_har")
     n_rel, n_har = _alertes_niveau(audit_rel), _alertes_niveau(audit_har)
-    ap, bp = _pertes_par_date(tp, "lvl_rel"), _pertes_par_date(tp, "lvl_har")
+    ap, bp = _pertes_par_date(tp, col), _pertes_par_date(tp, "lvl_har")
     plc = inf.rapport_dm((ap - bp.reindex(ap.index)).dropna().values, h / mh.PAS_ECHANTILLON)
     regles = {
         "1_niveau": bool(dm.get("ecart", 0) < 0 and dm.get("p_unilateral_A_meilleur", 1) < alpha),
@@ -1427,9 +1428,9 @@ def comparer_har_relatif(tr: pd.DataFrame, tp: pd.DataFrame, h: int = H) -> dict
             "par_fenetre": par_fenetre, "fenetres_meilleures": n_mieux, "alertes_rel": n_rel, "alertes_har": n_har,
             "liste_alertes_rel": audit_rel["alertes"], "liste_alertes_har": audit_har["alertes"],
             "rapport_variance_rel": audit_rel["global"]["rapport_variance"], "rapport_variance_har": audit_har["global"]["rapport_variance"],
-            "calibration_rel": calibration(tr, "lvl_rel"), "calibration_har": calibration(tr, "lvl_har"),
+            "calibration_rel": calibration(tr, col), "calibration_har": calibration(tr, "lvl_har"),
             "placebo": plc, "regles": regles, "adopte": bool(all(regles.values())),
-            "n_essais_total": N_ESSAIS_HAR_RELATIF, "t_max_attendu": inf.t_max_attendu(N_ESSAIS_HAR_RELATIF)}
+            "n_essais_total": n_essais, "t_max_attendu": inf.t_max_attendu(n_essais)}
 
 
 def verdict_har_relatif(c: dict) -> str:
@@ -1473,15 +1474,16 @@ def _melanger_informee(graine: int = 0):
     return f
 
 
-def comparer_informee(t_base: pd.DataFrame, t_plus: pd.DataFrame, t_plc: pd.DataFrame, h: int = H) -> dict:
-    """Règles 1 à 3 du § 4.24 : IC(IA+) − IC(IA) par date."""
+def comparer_informee(t_base: pd.DataFrame, t_plus: pd.DataFrame, t_plc: pd.DataFrame, h: int = H,
+                      n_candidats: int = N_CANDIDATS_INFORMEE) -> dict:
+    """Règles 1 à 3 du § 4.24 : IC(IA+) − IC(IA) par date. Sert aussi au § 4.26."""
     def ecart(tb, tp):
         ib = mh._ic_par_date(tb.assign(rel=tb["brut"]), "pred")
         ip = mh._ic_par_date(tp.assign(rel=tp["brut"]), "pred")
         return (ip - ib.reindex(ip.index)).dropna()
     g = ecart(t_base, t_plus)
     n_eff = max(1.0, len(g) * mh.PAS_ECHANTILLON / h)
-    seuil = mh.seuil_t(n_eff, n_candidats=N_CANDIDATS_INFORMEE)
+    seuil = mh.seuil_t(n_eff, n_candidats=n_candidats)
     t_g = float(g.mean() / g.std() * np.sqrt(n_eff)) if g.std() > 0 else 0.0
     fen = dict(zip(t_plus["date"], t_plus["fenetre"]))
     par_fenetre = {int(k): float(v.mean()) for k, v in g.groupby(g.index.map(fen))}
@@ -1502,3 +1504,45 @@ def verdict_informee(c: dict) -> str:
     if c["adopte"]:
         return "adopté (règles 1 à 3 réunies)"
     return "non adopté : " + ", ".join(k for k, ok in c["regles"].items() if not ok)
+
+
+# ------------------------------------------------------------------------------
+# Essai « HAR relatif protégé en crise » (protocole : docs/METHODE.md § 4.25, écrit avant l'essai)
+# ------------------------------------------------------------------------------
+N_ESSAIS_HAR_PROTEGE = 17                 # 17e essai de la famille « références »
+SEUIL_CHOC = 2.0                          # choc : variance du dernier mois > 2 × risque habituel
+
+
+def proteger(t: pd.DataFrame) -> pd.DataFrame:
+    """Ajoute `lvl_prot` : HAR relatif, ou le plus élevé du relatif et de HAR quand le titre est en choc ; et `choc`."""
+    t = t.copy()
+    t["choc"] = t["v22"] > SEUIL_CHOC * t["L"]
+    t["lvl_prot"] = np.where(t["choc"], np.maximum(t["lvl_rel"], t["lvl_har"]), t["lvl_rel"])
+    return t
+
+
+def verdict_har_protege(c: dict) -> str:
+    return verdict_har_relatif(c)
+
+
+# ------------------------------------------------------------------------------
+# Essai « IA + climat de marché » (protocole : docs/METHODE.md § 4.26, écrit avant l'essai)
+# ------------------------------------------------------------------------------
+N_CANDIDATS_CLIMAT = 7                    # 7e essai de la famille « classement »
+FEATURES_CLIMAT = ["x_ln_vix", "x_vix_rel"]
+
+
+def ajouter_climat(data: pd.DataFrame, vix: pd.Series, decalage: int = 0) -> pd.DataFrame:
+    """Contexte du jour, identique pour tous les titres de la date : log du VIX et VIX / sa moyenne des 252 séances.
+    `decalage` (placebo) : le vrai VIX, `decalage` séances trop tôt."""
+    v = vix.sort_index().astype(float)
+    climat = pd.DataFrame({"x_ln_vix": np.log(v), "x_vix_rel": v / v.rolling(252, min_periods=126).mean()})
+    if decalage:
+        climat = climat.shift(decalage)
+    dates = pd.DatetimeIndex(sorted(data["date"].unique()))
+    climat = climat.reindex(climat.index.union(dates)).ffill().reindex(dates)
+    climat.index.name = "date"
+    out = data.drop(columns=FEATURES_CLIMAT, errors="ignore").merge(climat.reset_index(), on="date", how="left")
+    for c in FEATURES_CLIMAT:
+        out[c] = out[c].fillna(out[c].median())
+    return out

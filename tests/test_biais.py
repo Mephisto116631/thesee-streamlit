@@ -207,3 +207,24 @@ def test_comparer_informee_regles():
     assert c["adopte"] and ex.verdict_informee(c).startswith("adopté")
     c2 = ex.comparer_informee(t.assign(pred=t["base"]), t.assign(pred=t["plc"]), t.assign(pred=t["plc"]), h=126)
     assert not c2["adopte"]
+
+
+# --- §§ 4.25-4.26 : « HAR relatif protégé en crise » et « IA + climat de marché » -----------------------------
+def test_proteger_prend_le_plus_eleve_seulement_en_choc():
+    t = pd.DataFrame({"L": [1.0, 1.0, 1.0], "v22": [1.5, 2.5, 3.0],
+                      "lvl_rel": [0.20, 0.20, 0.40], "lvl_har": [0.30, 0.30, 0.30]})
+    p = ex.proteger(t)
+    assert list(p["choc"]) == [False, True, True]
+    assert list(p["lvl_prot"]) == pytest.approx([0.20, 0.30, 0.40])     # calme : relatif ; choc : le plus élevé
+
+
+def test_climat_du_jour_et_placebo_decale():
+    dates = pd.bdate_range("2015-01-01", periods=600)
+    vix = pd.Series(np.linspace(10, 40, 600), index=dates)
+    data = pd.DataFrame({"date": np.repeat(dates[300::50], 3), "symbol": ["A", "B", "C"] * 6})
+    d = ex.ajouter_climat(data, vix)
+    assert d.groupby("date")["x_ln_vix"].nunique().eq(1).all()                 # même valeur pour tous les titres d'une date
+    assert d.loc[d["date"] == dates[300], "x_ln_vix"].iloc[0] == pytest.approx(np.log(vix.iloc[300]))
+    p = ex.ajouter_climat(data, vix, decalage=252)
+    assert p.loc[p["date"] == dates[300], "x_ln_vix"].iloc[0] == pytest.approx(np.log(vix.iloc[300 - 252]))
+    assert len(d) == len(data) and d[ex.FEATURES_CLIMAT].notna().all().all()
