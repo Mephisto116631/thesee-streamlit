@@ -981,6 +981,32 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
 - **Constats** : importance des nouvelles caractéristiques, IC par fenêtre, IC dans les secteurs, effet sur l'hybride (QLIKE, IC).
 - **Limites** : rendements de clôture ; `vol_1j` très bruitée (gardée car le modèle peut l'ignorer).
 
+
+### 4.25 Essai « HAR relatif protégé en crise » (protocole écrit le 25/11/2026, AVANT tout code ; accord de l'utilisateur du 25/11/2026)
+- **Origine** : § 20.1. Le HAR relatif corrige la surestimation des titres calmes, mais réagit trop lentement aux chocs (Covid : QLIKE × 1,72).
+  **Attention** : cette variante est proposée **après** avoir vu ce résultat. Elle est donc jugée avec la même sévérité, et son seuil compte l'essai.
+- **Méthode** : niveau = HAR relatif, **sauf en cas de choc** sur le titre, où l'on prend le **plus élevé** du HAR relatif et de HAR.
+  **Choc** : variance du dernier mois (`v22`) > **2 ×** le risque habituel du titre (`L`, 252 séances), soit une volatilité récente > 1,41 × l'habituelle.
+  Le seuil de 2 est fixé ici, sans réglage. Tout le reste est identique au § 4.23 (mêmes données, fenêtres, coefficients estimés sur le passé).
+- **Règles de décision, fixées AVANT l'essai** : les **5 règles du § 4.23**, avec un seuil de niveau corrigé pour **17** essais
+  (p unilatéral < 0,05 / 17). Le placebo mélange `L` entre titres, puis applique la même protection.
+- **Si les 5 règles tiennent** : il remplace HAR comme niveau publié, par une PR dédiée. Sinon, rien ne change.
+- **Constats** : part des prévisions en mode « choc », QLIKE par crise, alertes de l'audit, hybride construit sur ce niveau.
+
+### 4.26 Essai « IA + climat de marché » (protocole écrit le 25/11/2026, AVANT tout code ; accord de l'utilisateur du 25/11/2026)
+- **Origine** : HAR-X (§ 16) a montré que le VIX aide à prévoir le **niveau** du risque à 1 mois. On teste s'il aide aussi l'**ordre** des titres à 6 mois.
+- **Pourquoi pas VIX × bêta²** : à une date donnée le VIX est le même pour tous les titres, donc le rang de VIX × bêta² est celui du bêta, déjà connu
+  de l'IA. On donne plutôt le **contexte du jour**, identique pour tous les titres de la date : `x_ln_vix` (log du VIX) et `x_vix_rel` (VIX / sa
+  moyenne des 252 séances). Le modèle peut alors apprendre que l'ordre des risques ne dépend pas des mêmes signaux en marché calme et en marché nerveux.
+  Un modèle linéaire ne peut pas s'en servir (un même décalage pour tous les titres ne change pas l'ordre) ; XGBoost peut.
+- **Mesure** : à chaque date, IC (IA + climat) − IC (IA actuelle), comme au § 4.24.
+- **Règles de décision, fixées AVANT l'essai** (7e essai de la famille « classement » : `seuil_t(n_effectif, 7)`) :
+  1. **Preuve** : t de l'écart moyen ≥ seuil corrigé.
+  2. **Taille** : écart moyen ≥ **0,005**, positif dans au moins **3 des 4** fenêtres.
+  3. **Placebo** : le **vrai VIX, un an trop tôt** (252 séances), comme au § 4.14 ; l'écart doit rester non significatif (|t| < 2).
+- **Si les 3 règles tiennent** : la production et le re-test mensuel passent à ces caractéristiques, par une PR dédiée. Sinon, rien ne change.
+- **Constats** : importance des deux variables, réglages choisis, IC par fenêtre.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
