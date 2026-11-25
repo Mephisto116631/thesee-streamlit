@@ -396,3 +396,59 @@ do $$ begin
         create policy "lecture publique" on suivi_risque_mois for select to anon, authenticated using (true);
     end if;
 end $$;
+
+-- V16 — Calculs automatiques à l'heure. Les tâches planifiées de GitHub démarraient 7 à 9 heures en retard :
+-- la base appelle la fonction Edge « calcul-programme », qui lance sync.yml (déployer cette fonction AVANT).
+create extension if not exists pg_cron;
+create extension if not exists pg_net;
+create schema if not exists prive;                       -- non exposé par l'API
+revoke all on schema prive from public, anon, authenticated;
+
+-- Secret aléatoire partagé entre la tâche et la fonction : créé ici, jamais affiché ni copié
+do $$ begin
+    if not exists (select 1 from vault.secrets where name = 'jeton_calcul_programme') then
+        perform vault.create_secret(encode(extensions.gen_random_bytes(32), 'hex'), 'jeton_calcul_programme',
+                                    'En-tête x-jeton-calcul de la fonction calcul-programme');
+    end if;
+end $$;
+
+-- Appelée par la fonction Edge (clé service_role seulement)
+create or replace function public.verifier_jeton_calcul(jeton text) returns boolean
+language sql stable security definer set search_path = '' as $$
+    select coalesce((
+        select extensions.digest(coalesce(jeton, ''), 'sha256') = extensions.digest(decrypted_secret, 'sha256')
+        from vault.decrypted_secrets where name = 'jeton_calcul_programme'), false)
+$$;
+revoke all on function public.verifier_jeton_calcul(text) from public, anon, authenticated;
+grant execute on function public.verifier_jeton_calcul(text) to service_role;
+
+-- Passage prévu à cet instant (heure de New York, donc sans décalage été / hiver), sinon null.
+-- Arrondi à la demi-heure : un léger retard de la tâche ne fait pas sauter le passage.
+create or replace function prive.creneau_calcul(instant timestamptz) returns text
+language sql stable set search_path = '' as $$
+    select case when extract(isodow from ny) between 1 and 5 then
+        case to_char(ny, 'HH24:MI') when '10:00' then 'ouverture' when '13:00' then 'mi-seance'
+                                    when '16:30' then 'cloture' end end
+    from (select date_bin('30 minutes', instant, timestamptz '2000-01-01 00:00:00+00')
+                 at time zone 'America/New_York' as ny) t
+$$;
+
+create or replace function prive.lancer_calcul_programme() returns void
+language plpgsql set search_path = '' as $$
+declare creneau text := prive.creneau_calcul(now());
+begin
+    if creneau is null then return; end if;
+    perform net.http_post(
+        url := 'https://ommkiaoqnavcxvxsoiwg.supabase.co/functions/v1/calcul-programme',
+        headers := jsonb_build_object('Content-Type', 'application/json', 'x-jeton-calcul',
+            (select decrypted_secret from vault.decrypted_secrets where name = 'jeton_calcul_programme')),
+        body := jsonb_build_object('creneau', creneau),
+        timeout_milliseconds := 15000);
+end $$;
+revoke all on function prive.creneau_calcul(timestamptz) from public, anon, authenticated;
+revoke all on function prive.lancer_calcul_programme() from public, anon, authenticated;
+
+-- Toutes les demi-heures de 14 h à 21 h 30 UTC (couvre été et hiver) ; la fonction ne garde que les 3 passages.
+-- Arrêter : select cron.unschedule('calcul-programme');
+-- Suivre  : select * from net._http_response order by created desc;   (réponses gardées 6 heures)
+select cron.schedule('calcul-programme', '0,30 14-21 * * 1-5', 'select prive.lancer_calcul_programme()');

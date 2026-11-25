@@ -65,7 +65,7 @@ npm test
 
 | Quoi | Quand | Workflow |
 |---|---|---|
-| Cours, indicateurs, portefeuille, volatilité IA | 3 fois par jour ouvré (ouverture, mi-séance, clôture US) | `sync.yml` |
+| Cours, indicateurs, portefeuille, volatilité IA | 3 fois par jour ouvré : 10 h, 13 h et 16 h 30 à New York (lancés par Supabase), plus un passage de secours GitHub | `sync.yml` |
 | Comptes officiels SEC (PER, ROE…) | 1 fois par semaine (option « Recharger les comptes SEC » au lancement manuel) | `sync.yml` |
 | Prévision IA enregistrée pour le suivi réel | 1 fois par semaine | `sync.yml` |
 | Re-test de l'IA de volatilité et de l'hybride IA + HAR | le 2 de chaque mois, et sur chaque PR qui touche aux modèles | `experiences.yml` |
@@ -121,6 +121,18 @@ Le bouton « Relancer le calcul » (Analyse › Modèles IA, Paramètres) appell
 3. Conseillé : secret `RELANCE_EMAILS` = votre adresse (seuls ces comptes peuvent relancer).
 
 Garde-fous : il faut être connecté (onglet Positions) ; refus si un calcul tourne déjà ou a démarré il y a moins de 10 minutes.
+
+### Calculs automatiques à l'heure
+
+Une tâche planifiée Supabase (`pg_cron`, `supabase_schema.sql` V16) appelle la fonction `calcul-programme`
+(`supabase/functions/calcul-programme/`), qui lance `sync.yml` avec le même `GH_DISPATCH_TOKEN`. Mise en place, dans cet ordre :
+
+1. Déployer la fonction `calcul-programme` **sans vérification JWT** : elle vérifie elle-même un secret aléatoire,
+   créé et gardé dans Supabase Vault (rien à copier).
+2. Supabase → SQL Editor : exécuter la section V16 de `supabase_schema.sql`.
+
+Quand `GH_DISPATCH_TOKEN` expire, le bouton et les 3 passages s'arrêtent ; le passage de secours GitHub continue.
+Arrêter la tâche : `select cron.unschedule('calcul-programme');`
 
 ## Historique des versions
 
