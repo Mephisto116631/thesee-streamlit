@@ -1747,3 +1747,32 @@ Prévisions jugées : 320 000 → **364 000**. Il reste 39 % de membres de 2008 
   couverture ne détecte pas, et le nettoyage du § 4.17 (cours < 5 $, sauts > 50 %) n'est pas appliqué au backtest.
 - **Décision** : la nouvelle marge reste en place, car elle va dans le sens **prudent** (moins de risque visé). La vérification est
   l'étape 5 du plan (§ 23.4) : risque prévu contre risque réalisé du portefeuille, **avec et sans** nettoyage des données des anciens membres.
+
+---
+
+## 25. Résultats de la vérification de la marge (§ 4.30 ; lot du 26/11/2026 21:00 UTC, PR #48)
+
+### 25.1 Les trois calculs (révision tous les 6 mois, dividendes compris)
+| | Marge IA + HAR, limite 15 % | Semestres tenus | Marge historique 3 ans, 15 % | Volatilité réelle « limite 15 % » | Volatilité réelle « meilleur ratio » |
+|---|---|---|---|---|---|
+| (a) Actuel (+ anciens membres) | **0,70** | 43 % | 0,81 | 26,6 % | 34,3 % |
+| (b) Survivants seuls | **0,90** | 51 % | 0,88 | 19,0 % | 26,0 % |
+| (c) Sans les pics aberrants | **0,66** | 46 % | 0,81 | 24,3 % | 32,3 % |
+
+- **Pics aberrants** : 256 sur 19 titres, dont 255 chez d'anciens membres (exemple : `COMS`, plusieurs sauts de +100 à +375 % effacés
+  en quelques jours entre 2010 et 2014, typique d'un symbole repris par une petite société). Les retirer baisse un peu le risque réalisé
+  (26,6 % → 24,3 %), mais **pas la marge** : écart −0,03.
+
+### 25.2 Décision (règle du § 4.30)
+- La marge nettoyée ne dépasse pas l'actuelle de plus de 0,05 : **la marge publiée de 0,70 reste**. Le nettoyage n'est pas adopté.
+
+### 25.3 Lecture
+- **L'écart vient bien des anciens membres** : sur les seuls survivants, on retrouve la marge d'avant (0,90). Les titres qui ont ensuite quitté
+  l'indice ont été, pendant qu'ils en faisaient partie, plus risqués que prévu. C'est le biais du survivant qui, jusque-là, rendait la promesse
+  « Je limite le risque » trop optimiste.
+- **Les erreurs de cours flagrantes n'expliquent pas l'écart** : les pics retirés sont réels mais peu nombreux et pèsent peu.
+- **Limite** : un symbole réattribué dont la série est continue (sans pic) ne peut pas être détecté par cette règle. Une part de l'écart
+  pourrait encore venir de telles séries ; c'est l'incertitude restante, dans le sens prudent.
+- **Pour l'utilisateur** : avec la mesure IA + HAR et une limite de 15 %, l'appli vise environ 10,5 % ; avec l'historique 3 ans, environ 12,2 %.
+  Même ainsi, la limite n'a été tenue que dans 43 % (IA + HAR) à 68 % (historique) des semestres du backtest : **la limite est un objectif,
+  pas une garantie**, et l'historique 3 ans tient mieux la limite que l'IA + HAR à 15 %.
