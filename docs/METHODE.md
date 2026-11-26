@@ -1032,6 +1032,22 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
 - **Ce qui peut changer dans l'appli** : seulement en cas de fuite suspectée (C), ou si un verdict change (A). La correction F s'applique dans tous les cas.
 - **Résultats** : § 22.
 
+
+### 4.28 Rentabilités dividendes compris (protocole écrit le 26/11/2026, AVANT tout code ; correction de données, pas un essai)
+- **Constat (§ 23)** : toutes les rentabilités venaient du cours de clôture Yahoo, ajusté des divisions mais **pas des dividendes**
+  (`auto_adjust=False`). Une action qui verse 3 à 4 % par an paraissait sous-performer d'autant : la cible des modèles de rendement était biaisée
+  contre les secteurs à dividende, et les rendements du portefeuille (part historique de `mu`, backtests) étaient sous-estimés.
+- **Correction** : on garde aussi le cours **ajusté des dividendes** (`Adj Close`) et on l'utilise pour toutes les **rentabilités** :
+  1. cibles des modèles de rendement (`modele_horizon.cible`, CNN) ;
+  2. rendements du portefeuille : `portefeuille._matrice_rendements` (donc `mu_hist`, covariance et `stats_portefeuille`) ;
+  3. rendements réalisés des backtests (`backtest_risque` : `backtest`, `backtest_reel`, marge).
+- **Ce qui ne change pas** : les **volatilités** et les caractéristiques des modèles restent calculées sur le cours de clôture. Un dividende pèse peu
+  sur la volatilité, et changer les caractéristiques ferait un nouveau modèle. Le cours affiché dans l'appli reste le cours coté.
+- **Stockage** : le cron télécharge tout l'historique à chaque passage et calcule en mémoire. Le cours ajusté n'est **pas** écrit dans Supabase :
+  pas de migration de la base. Repli sur le cours de clôture si Yahoo ne le fournit pas.
+- **Ensuite** : relancer `audit_rendement`, `audit_ensemble`, `examen_ia_contre_har`, `examen_marge` et `examen_audit_biais`, puis comparer avant et
+  après (§ 24). Les verdicts sont recalculés avec les règles existantes.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
@@ -1623,3 +1639,41 @@ Prévisions jugées : 320 000 → **364 000**. Il reste 39 % de membres de 2008 
   façon prouvable, ce qui rejoint la littérature (le rendement est très difficile à prévoir, le risque beaucoup moins).
 - L'appli est cohérente avec ces résultats : rendement attendu par le CAPM (une hypothèse réglable), classements de rendement présentés comme
   hypothèses, régime absent.
+
+---
+
+## 23. Critique d'ensemble des modèles et plan d'amélioration (26/11/2026)
+
+### 23.1 Ce qui est établi
+- **Prouvé** : l'IA de risque, pour **l'ordre** des titres (IC 0,80 contre 0,77 pour HAR, avec les anciens membres et dans les secteurs ; § 19).
+- **Non prouvé** : le niveau de risque (laissé à HAR, prudent), le rendement (modèle publié, ensemble, CNN) et le régime de marché (§ 22).
+
+### 23.2 Défauts communs
+1. **Dividendes absents des rentabilités** : le défaut le plus concret. Correction au § 4.28.
+2. **Biais du survivant résiduel** : 39 % des membres de 2008 absents (faillis, rachetés). Il est mesuré chaque mois, mais seule une source payante
+   de titres disparus le corrigerait.
+3. **Puissance faible** : 13 à 27 périodes indépendantes pour des cibles à 6 mois et 1 an. Un vrai IC de 3 à 5 % est presque indétectable.
+   C'est la raison de fond des verdicts « non probant » du rendement, plus qu'un défaut des modèles.
+4. **Secteur actuel appliqué au passé** ; secteur inconnu des anciens membres.
+5. **Risque d'essais à rebours** : 17 essais de niveau, 7 de classement, dont plusieurs proposés après avoir vu les résultats (§§ 20-21).
+   Le seuil corrigé protège, mais ajouter encore des variantes deviendrait du sur-ajustement du protocole lui-même.
+
+### 23.3 Modèle par modèle
+| Modèle | Ce qui va | Ce qui ne va pas |
+|---|---|---|
+| IA de risque (ordre) | Gain prouvé et robuste ; aucun groupe sous-estimé | Gain modeste (+0,03) ; `vol_3m` porte 61 % de l'importance ; le re-test mensuel portait sur l'univers actuel seulement |
+| Niveau HAR | Prudent : sa surestimation des titres calmes protège des chocs | Rapport de variance 1,16, très variable dans le temps ; titres calmes un peu sous-pondérés |
+| Rendement publié | Aucune fuite ; affiché comme hypothèse | IC divisé par 1,7 avec les anciens membres ; cible sans dividendes ; réentraîné 3 fois par jour pour rien (scores non affichés) |
+| Ensemble | Le plus robuste (IC 4,0 % et 6,8 %), positif pour toutes les tailles | t = 2,5 et 2,8, sous les seuils ; comptes SEC des anciens membres souvent absents |
+| CNN | — | IC négatif depuis le début ; coûte PyTorch dans deux workflows |
+| Régime | Aucune fuite | Au niveau du hasard, moins bon que la fréquence historique ; une dizaine d'épisodes indépendants seulement |
+
+### 23.4 Plan (dans l'ordre, une PR par étape, documentée ici)
+1. **Rentabilités dividendes compris** (§ 4.28) : correction de données.
+2. **Re-test mensuel de l'IA de risque sur les anciens membres aussi**, comme l'examen : correction.
+3. **Rangement** : modèles de rendement réentraînés une fois par semaine ; CNN et régime retirés de la liste par défaut du laboratoire
+   et PyTorch des workflows (code gardé).
+4. **Un seul essai de confirmation de l'ensemble** sur le S&P MidCap 400 (protocole à écrire, essai compté, accord de l'utilisateur).
+   S'il confirme, il devient le classement de rendement publié ; sinon la recherche sur le rendement est close et le CAPM reste seul.
+5. **Constat au niveau du portefeuille** : volatilité prévue contre volatilité réalisée du portefeuille conseillé, semestre par semestre.
+- **Non proposé** : de nouvelles variantes de niveau ou de classement (point 5 du § 23.2).
