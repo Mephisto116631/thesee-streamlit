@@ -68,6 +68,11 @@ EXPERIENCES_REGIME = {
 # Algorithme 4 : CNN 1D sur les courbes (famille « rendement », même seuil corrigé)
 EXPERIENCES_CNN = {"cnn": "CNN sur les courbes de cours (forme de la dernière année), alpha sectoriel"}
 HORIZONS_TEST = ["6m", "1a"]
+# Essai de confirmation (METHODE § 4.31) : famille « rendement », un seul passage, jamais dans la liste par défaut
+EXPERIENCES_CONFIRMATION = {
+    "confirmation_ensemble_midcap": "Ensemble XGBoost + linéaire appliqué tel quel au S&P MidCap 400 (titres jamais membres du S&P 500), 6 mois",
+}
+HORIZON_CONFIRMATION = "6m"
 # Audit des quatre autres modèles (docs/METHODE.md § 4.27) : constats, aucun nouvel essai compté
 EXPERIENCES_AUDIT = {
     "audit_rendement": "Modèle de rendement publié (1 mois, 6 mois, 1 an) : anciens membres, placebo, biais par groupe (§ 4.27)",
@@ -671,7 +676,7 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
 
 def n_essais_rendement(tous) -> int:
     """Essais de la famille « rendement » : variantes de EXPERIENCES et CNN × horizons (règle B du § 4.27)."""
-    return len({e for e in tous if e[0] in EXPERIENCES or e[0] in EXPERIENCES_CNN})
+    return len({e for e in tous if e[0] in EXPERIENCES or e[0] in EXPERIENCES_CNN or e[0] in EXPERIENCES_CONFIRMATION})
 
 
 def n_essais_rendement_ancien(tous) -> int:
@@ -775,6 +780,45 @@ def lancer_audit(cli, lot: str, noms: list[str], deja: list[dict]) -> list[str]:
     return echecs
 
 
+def lancer_confirmation(cli, lot: str, deja: list[dict]) -> list[str]:
+    """Confirmation de l'ensemble sur le S&P MidCap 400 (METHODE § 4.31). Un seul passage : refusé si l'essai existe déjà.
+    Si une donnée manque (liste du S&P 400, comptes SEC), rien n'est écrit : l'essai n'a pas eu lieu."""
+    nom, h = "confirmation_ensemble_midcap", HORIZON_CONFIRMATION
+    if any(r["nom"] == nom for r in deja):
+        print(f"[LABO] {nom} : déjà lancé une fois, relance refusée (§ 4.31)")
+        return []
+    try:
+        compo = mh.charger_composition()
+        m = universe.get_sp400_tickers()
+        titres = am.titres_inedits(m["symbol"], compo)
+        secteurs = dict(zip(m["symbol"], m["secteur"]))
+        raw, splits = charger_cours(sorted(set(titres) | {mh.INDICE}))
+        titres = sorted(set(titres) & set(raw["symbol"]))
+        faits = fsec.telecharger(titres)
+        print(f"[LABO] {nom} : {len(m)} midcaps, {len(titres)} jamais membres du S&P 500, "
+              f"comptes SEC de {faits['symbol'].nunique()} entreprises")
+        args = dict(composition=None, secteurs=secteurs, cible_mode="alpha_secteur", faits_sec=faits, splits=splits,
+                    forcer_config="ensemble", couverture_min=ex.COUVERTURE_MIN)
+        ligne, _ = mh.entrainer_horizon(raw, titres, h, garder_tests=True, **args)
+        evp = mh.entrainer_horizon(raw, titres, h, placebo=True, **args)[0]["diagnostics"]
+    except Exception as e:
+        print(f"[LABO][ERREUR] {nom} : {type(e).__name__} : {e} (rien n'est écrit, l'essai n'a pas eu lieu)")
+        return [nom]
+    n = n_essais_rendement({(r["nom"], r["horizon"]) for r in deja} | {(nom, h)})
+    diag = ligne["diagnostics"]
+    b = am.bilan_rendement(diag, evp, None, n, n)
+    v, cond = am.verdict_confirmation(b)
+    b.update({"conditions": cond, "decision": v, "n_midcaps": int(len(m)), "n_titres_inedits": len(titres),
+              "couverture_fondamentaux": diag.get("couverture_fondamentaux"),
+              "reference_sp500": _dernier(cli, "audit_ensemble", h),
+              "limite": "membres actuels du S&P 400 seulement (pas d'historique de composition) : biais du survivant"})
+    _ecrire(cli, {"lot": lot, "nom": nom, "horizon": h, "description": EXPERIENCES_CONFIRMATION[nom], "ic": b["ic"],
+                  "t_stat": b["t"], "seuil_t_global": b["seuil"], "n_essais": n, "verdict": v, "diagnostics": b})
+    print(f"[LABO] {nom} : IC {b['ic'] or 0:+.3f}, t {b['t'] or 0:.2f} (seuil {b['seuil']:.2f}, {n} essais), "
+          f"placebo t {(b.get('placebo') or {}).get('t')} -> {v} ; conditions {cond}")
+    return []
+
+
 def main(noms: list[str]):
     t0 = time.time()
     cli = db.get_client()
@@ -815,6 +859,9 @@ def main(noms: list[str]):
             print(f"[LABO] {nom} : AUC {ev.get('auc', 0):.3f}, gain log-loss {ev.get('gain_logloss', 0):+.4f}, "
                   f"t {ev.get('t_stat', 0):.2f} (seuil {seuil:.2f}) -> {v} ; aujourd'hui {ev['aujourdhui']['proba']:.1%}")
     noms = [n for n in noms if n not in EXPERIENCES_REGIME]
+    if any(n in EXPERIENCES_CONFIRMATION for n in noms):
+        echecs += lancer_confirmation(cli, lot, deja)
+        noms = [n for n in noms if n not in EXPERIENCES_CONFIRMATION]
     audits = [n for n in noms if n in EXPERIENCES_AUDIT]
     if audits:
         echecs += lancer_audit(cli, lot, audits, deja)
@@ -984,9 +1031,11 @@ EN_SOMMEIL = set(EXPERIENCES_CNN) | set(EXPERIENCES_REGIME) | {"audit_cnn", "aud
 def choisir_experiences(choix: str) -> list[str]:
     """Essais à lancer : liste explicite, ou tous les essais connus hors modèles en sommeil (CNN, régime)."""
     connues = (list(EXPERIENCES) + list(EXPERIENCES_RISQUE) + list(EXPERIENCES_PORTEFEUILLE)
-               + list(EXPERIENCES_REGIME) + list(EXPERIENCES_CNN) + list(EXPERIENCES_EXAMEN) + list(EXPERIENCES_AUDIT))
+               + list(EXPERIENCES_REGIME) + list(EXPERIENCES_CNN) + list(EXPERIENCES_EXAMEN) + list(EXPERIENCES_AUDIT)
+               + list(EXPERIENCES_CONFIRMATION))
     choix = (choix or "").strip()
-    noms = [n for n in connues if n not in EN_SOMMEIL] if choix in ("", "toutes") else [n.strip() for n in choix.split(",")]
+    hors_defaut = EN_SOMMEIL | set(EXPERIENCES_CONFIRMATION)      # § 4.31 : la confirmation se lance en la nommant
+    noms = [n for n in connues if n not in hors_defaut] if choix in ("", "toutes") else [n.strip() for n in choix.split(",")]
     inconnues = [n for n in noms if n not in connues]
     if inconnues:
         raise ValueError(f"Expériences inconnues : {inconnues} (connues : {connues})")

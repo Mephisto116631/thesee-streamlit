@@ -143,3 +143,27 @@ def verdict_audit_regime(b: dict) -> str:
     if b.get("verdict_change"):
         morceaux.append(f"verdict changé (avant : {b['avant']['verdict']})")
     return " ; ".join(morceaux)
+
+
+# ------------------------------------------------------------------------------
+# Confirmation de l'ensemble sur le S&P MidCap 400 (docs/METHODE.md § 4.31) : un essai compté
+# ------------------------------------------------------------------------------
+def titres_inedits(candidats, composition: pd.DataFrame | None) -> list[str]:
+    """Titres qui ne sont ni ne furent membres du S&P 500 : jamais utilisés pour juger l'ensemble."""
+    deja_vus = set(composition["symbol"]) if composition is not None else set()
+    return sorted(set(candidats) - deja_vus - {mh.INDICE})
+
+
+def verdict_confirmation(b: dict) -> tuple[str, dict]:
+    """Règle du § 4.31 : IC > 3 %, périodes suffisantes et t > seuil corrigé (b["verdict"] == "probant"),
+    placebo |t| < 2 (sinon fuite suspectée : essai invalide). Retourne (verdict, conditions)."""
+    placebo = b.get("placebo")
+    cond = {
+        "ic_au_dessus_de_3pc": bool(b.get("ic") is not None and b["ic"] > 0.03),
+        "periodes_suffisantes": bool((b.get("n_effectif") or 0) >= mh.MIN_PERIODES_SIGNAL),
+        "t_au_dessus_du_seuil": bool(b.get("t") is not None and b["t"] > b["seuil"]),
+        "placebo_nul": bool(placebo is not None and not placebo["fuite_suspectee"]),
+    }
+    if placebo is None or placebo["fuite_suspectee"]:
+        return "invalide (placebo)", cond
+    return ("confirmé" if all(cond.values()) else "non confirmé"), cond
