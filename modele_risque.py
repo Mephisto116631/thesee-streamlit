@@ -129,32 +129,9 @@ def entrainer_risque(market_raw: pd.DataFrame, symboles: list[str], nom: str, ge
     return ev
 
 
-def membres_du_jour(composition: pd.DataFrame | None, date, symboles) -> pd.Index:
-    """Membres du S&P 500 à `date` parmi `symboles` (tous si la composition manque)."""
-    symboles = pd.Index(symboles)
-    if composition is None:
-        return symboles
-    d = pd.Timestamp(date)
-    c = composition[(composition["debut"] <= d) & (composition["fin"].isna() | (d < composition["fin"]))]
-    return symboles.intersection(pd.Index(c["symbol"].unique()))
-
-
-def rangs_parmi_membres(auj: pd.DataFrame, membres: pd.Index, feats: list[str]) -> pd.DataFrame:
-    """Caractéristiques du jour exprimées comme au laboratoire (METHODE § 4.20) :
-    - membres : rang recalculé parmi les seuls membres ;
-    - autres titres : place de leur valeur parmi les membres (part des membres de valeur ≤), sans déplacer les membres.
-    `auj` : rangs du jour (n'importe quelle population), index = symboles. Un rang est monotone en la valeur brute :
-    reclasser les rangs revient à reclasser les valeurs."""
-    out = auj.copy()
-    m = auj.index.intersection(membres)
-    autres = auj.index.difference(membres)
-    for f in feats:
-        ref = np.sort(auj.loc[m, f].dropna().values)
-        out.loc[m, f] = auj.loc[m, f].rank(pct=True)
-        if len(autres) and len(ref):
-            v = auj.loc[autres, f]
-            out.loc[autres, f] = np.where(v.notna(), np.searchsorted(ref, v.values, side="right") / len(ref), np.nan)
-    return out
+# Rangs « comme au laboratoire » (METHODE § 4.20) : définis dans modele_horizon, partagés par les deux modèles
+membres_du_jour = mh.membres_du_jour
+rangs_parmi_membres = mh.rangs_parmi_membres
 
 
 def predire_volatilite(market_raw: pd.DataFrame, symboles: list[str], composition: pd.DataFrame | None = None,

@@ -25,6 +25,7 @@ import backtest_risque as bt
 import modele_regime as mreg
 import modele_cnn as mcnn
 import examen_risque as ex
+import audit_modeles as am
 import universe
 from publish import _clean
 
@@ -67,6 +68,13 @@ EXPERIENCES_REGIME = {
 # Algorithme 4 : CNN 1D sur les courbes (famille « rendement », même seuil corrigé)
 EXPERIENCES_CNN = {"cnn": "CNN sur les courbes de cours (forme de la dernière année), alpha sectoriel"}
 HORIZONS_TEST = ["6m", "1a"]
+# Audit des quatre autres modèles (docs/METHODE.md § 4.27) : constats, aucun nouvel essai compté
+EXPERIENCES_AUDIT = {
+    "audit_rendement": "Modèle de rendement publié (1 mois, 6 mois, 1 an) : anciens membres, placebo, biais par groupe (§ 4.27)",
+    "audit_ensemble": "Ensemble XGBoost + linéaire (6 mois, 1 an) : anciens membres, placebo, biais par groupe (§ 4.27)",
+    "audit_cnn": "CNN sur les courbes (6 mois) : anciens membres, placebo, biais par groupe (§ 4.27)",
+    "audit_regime": "Régime de marché (logistique, XGBoost) : placebo à 12 mois, calibration, AUC sans 2008 (§ 4.27)",
+}
 # Examen approfondi de l'IA de volatilité (docs/METHODE.md § 4.8), historique depuis 1998 pour inclure 2008.
 # Les règles de décision ont été fixées AVANT de lancer ces essais.
 EXPERIENCES_EXAMEN = {
@@ -610,6 +618,112 @@ def lancer_examen(cli, lot: str, noms: list[str]) -> list[str]:
     return echecs
 
 
+def n_essais_rendement(tous) -> int:
+    """Essais de la famille « rendement » : variantes de EXPERIENCES et CNN × horizons (règle B du § 4.27)."""
+    return len({e for e in tous if e[0] in EXPERIENCES or e[0] in EXPERIENCES_CNN})
+
+
+def n_essais_rendement_ancien(tous) -> int:
+    """Ancien comptage (avant le § 4.27) : tout sauf risque, régime et backtests, donc examens et audits compris."""
+    return len({e for e in tous if e[0] not in EXPERIENCES_RISQUE and e[0] not in EXPERIENCES_REGIME
+                and not e[0].startswith(("backtest", "audit_"))})
+
+
+def _dernier(cli, nom: str, horizon: str | None = None) -> dict | None:
+    q = cli.table("experiences").select("verdict,ic,t_stat,seuil_t_global,cree_le").eq("nom", nom)
+    if horizon:
+        q = q.eq("horizon", horizon)
+    r = q.order("id", desc=True).limit(1).execute().data
+    return r[0] if r else None
+
+
+def lancer_audit(cli, lot: str, noms: list[str], deja: list[dict]) -> list[str]:
+    """Audit du § 4.27 : rendement publié, ensemble, CNN (anciens membres, placebo, groupes) et régime (placebo, calibration)."""
+    echecs = []
+    tous = {(r["nom"], r["horizon"]) for r in deja}
+    n_nouveau, n_ancien = n_essais_rendement(tous), n_essais_rendement_ancien(tous)
+    print(f"[LABO] Audit : famille rendement {n_nouveau} essais (ancien comptage : {n_ancien})")
+
+    if "audit_regime" in noms:
+        n_regime = len({r["nom"] for r in deja if r["nom"] in EXPERIENCES_REGIME})
+        try:
+            d = mreg.telecharger()
+            m = mreg.mensuel(mreg.caracteristiques(d), mreg.cible(d))
+            for modele in ("logistique", "xgboost"):
+                ev = mreg.evaluer(m, modele, garder_tests=True)
+                evp = mreg.evaluer(am.decaler_regime(m), modele)
+                b = am.bilan_regime(ev, evp, _dernier(cli, f"regime_{modele}"), n_regime)
+                b["modele"] = modele
+                _ecrire(cli, {"lot": lot, "nom": f"audit_regime_{modele}", "horizon": "6m",
+                              "description": EXPERIENCES_AUDIT["audit_regime"], "ic": b["auc"], "t_stat": b["t"],
+                              "seuil_t_global": b["seuil"], "n_essais": 0, "verdict": am.verdict_audit_regime(b),
+                              "diagnostics": b})
+                print(f"[LABO] audit régime {modele} : AUC {b['auc']:.3f}, t {b['t']:.2f} -> {am.verdict_audit_regime(b)}")
+        except Exception as e:
+            print(f"[LABO][ERREUR] audit_regime : {type(e).__name__} : {e}")
+            echecs.append("audit_regime")
+
+    rendement = [n for n in noms if n in ("audit_rendement", "audit_ensemble", "audit_cnn")]
+    if not rendement:
+        return echecs
+    snap = pd.DataFrame(cli.table("titres_snapshot").select("symbol,secteur").execute().data)
+    secteurs = dict(zip(snap["symbol"], snap["secteur"]))
+    compo = mh.charger_composition()
+    titres = symboles_examen(snap["symbol"], compo)              # § 4.22 : anciens membres compris
+    raw, splits = charger_cours(sorted(set(titres) | {mh.INDICE}))
+    cov = ex.COUVERTURE_MIN
+
+    def ecrire(nom, h, b, verdict):
+        _ecrire(cli, {"lot": lot, "nom": nom, "horizon": h, "description": EXPERIENCES_AUDIT[nom], "ic": b.get("ic"),
+                      "t_stat": b.get("t"), "seuil_t_global": b.get("seuil"), "n_essais": 0, "verdict": verdict,
+                      "diagnostics": b})
+        print(f"[LABO] {nom} {h} : IC {b.get('ic') or 0:+.3f} t {b.get('t') or 0:.2f} (seuil {b.get('seuil') or 0:.2f}) -> {verdict}")
+
+    if "audit_rendement" in rendement:
+        for h in ("court", "6m", "1a"):
+            try:
+                ligne, _ = mh.entrainer_horizon(raw, titres, h, compo, secteurs, "relatif", garder_tests=True, couverture_min=cov)
+                evp = None
+                if h == "6m":
+                    evp = mh.entrainer_horizon(raw, titres, h, compo, secteurs, "relatif", placebo=True, couverture_min=cov)[0]["diagnostics"]
+                avant = _dernier(cli, "reference", h) if h != "court" else None
+                b = am.bilan_rendement(ligne["diagnostics"], evp, avant, n_ancien, n_nouveau)
+                b["source_publiee"] = ligne["diagnostics"].get("source")
+                ecrire("audit_rendement", h, b, am.verdict_audit_rendement(b))
+            except Exception as e:
+                print(f"[LABO][ERREUR] audit_rendement {h} : {type(e).__name__} : {e}")
+                echecs.append(f"audit_rendement {h}")
+
+    if "audit_ensemble" in rendement:
+        faits = None
+        try:
+            faits = fsec.telecharger([s for s in titres if s != mh.INDICE])
+        except Exception as e:
+            print(f"[LABO][WARN] SEC indisponible pour l'ensemble : {e}")
+        for h in HORIZONS_TEST:
+            try:
+                args = dict(composition=compo, secteurs=secteurs, cible_mode="alpha_secteur", faits_sec=faits, splits=splits,
+                            forcer_config="ensemble", couverture_min=cov)
+                ligne, _ = mh.entrainer_horizon(raw, titres, h, garder_tests=True, **args)
+                evp = mh.entrainer_horizon(raw, titres, h, placebo=True, **args)[0]["diagnostics"] if h == "6m" else None
+                b = am.bilan_rendement(ligne["diagnostics"], evp, _dernier(cli, "ensemble", h), n_ancien, n_nouveau)
+                ecrire("audit_ensemble", h, b, am.verdict_audit_rendement(b))
+            except Exception as e:
+                print(f"[LABO][ERREUR] audit_ensemble {h} : {type(e).__name__} : {e}")
+                echecs.append(f"audit_ensemble {h}")
+
+    if "audit_cnn" in rendement:
+        try:
+            ligne = mcnn.entrainer_cnn(raw, titres, "6m", compo, secteurs, garder_tests=True, couverture_min=cov)
+            evp = mcnn.entrainer_cnn(raw, titres, "6m", compo, secteurs, placebo=True, couverture_min=cov)["diagnostics"]
+            b = am.bilan_rendement(ligne["diagnostics"], evp, _dernier(cli, "cnn", "6m"), n_ancien, n_nouveau)
+            ecrire("audit_cnn", "6m", b, am.verdict_audit_rendement(b))
+        except Exception as e:
+            print(f"[LABO][ERREUR] audit_cnn : {type(e).__name__} : {e}")
+            echecs.append("audit_cnn")
+    return echecs
+
+
 def main(noms: list[str]):
     t0 = time.time()
     cli = db.get_client()
@@ -650,6 +764,10 @@ def main(noms: list[str]):
             print(f"[LABO] {nom} : AUC {ev.get('auc', 0):.3f}, gain log-loss {ev.get('gain_logloss', 0):+.4f}, "
                   f"t {ev.get('t_stat', 0):.2f} (seuil {seuil:.2f}) -> {v} ; aujourd'hui {ev['aujourdhui']['proba']:.1%}")
     noms = [n for n in noms if n not in EXPERIENCES_REGIME]
+    audits = [n for n in noms if n in EXPERIENCES_AUDIT]
+    if audits:
+        echecs += lancer_audit(cli, lot, audits, deja)
+        noms = [n for n in noms if n not in EXPERIENCES_AUDIT]
     examen = [n for n in noms if n in EXPERIENCES_EXAMEN]
     if examen:
         echecs += lancer_examen(cli, lot, examen)
@@ -675,8 +793,8 @@ def main(noms: list[str]):
     secteurs = dict(zip(snap["symbol"], snap["secteur"]))
 
     tous = {(r["nom"], r["horizon"]) for r in deja} | {(n, h) for n in noms for h in HORIZONS_TEST}
-    n_essais = len({e for e in tous if e[0] not in EXPERIENCES_RISQUE and e[0] not in EXPERIENCES_REGIME
-                    and not e[0].startswith("backtest")})
+    # Famille « rendement » : seuls ses propres essais (METHODE § 4.27 B ; avant, les examens de l'IA de risque étaient comptés aussi)
+    n_essais = n_essais_rendement(tous)
     n_essais_risque = len({e for e in tous if e[0] in EXPERIENCES_RISQUE})
     for nom in [n for n in noms if n in EXPERIENCES_CNN]:
         for h in HORIZONS_TEST:
@@ -807,7 +925,7 @@ def main(noms: list[str]):
 if __name__ == "__main__":
     choix = os.environ.get("EXPERIENCES", "").strip()
     connues = (list(EXPERIENCES) + list(EXPERIENCES_RISQUE) + list(EXPERIENCES_PORTEFEUILLE)
-               + list(EXPERIENCES_REGIME) + list(EXPERIENCES_CNN) + list(EXPERIENCES_EXAMEN))
+               + list(EXPERIENCES_REGIME) + list(EXPERIENCES_CNN) + list(EXPERIENCES_EXAMEN) + list(EXPERIENCES_AUDIT))
     noms = connues if choix in ("", "toutes") else [n.strip() for n in choix.split(",")]
     inconnues = [n for n in noms if n not in connues]
     if inconnues:
