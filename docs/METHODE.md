@@ -1690,3 +1690,41 @@ Prévisions jugées : 320 000 → **364 000**. Il reste 39 % de membres de 2008 
    S'il confirme, il devient le classement de rendement publié ; sinon la recherche sur le rendement est close et le CAPM reste seul.
 5. **Constat au niveau du portefeuille** : volatilité prévue contre volatilité réalisée du portefeuille conseillé, semestre par semestre.
 - **Non proposé** : de nouvelles variantes de niveau ou de classement (point 5 du § 23.2).
+
+---
+
+## 24. Résultats avec les rentabilités dividendes compris et le re-test aligné (§§ 4.28-4.29 ; lot du 26/11/2026 19:07 UTC)
+
+### 24.1 IA de risque : renforcée
+- **Re-test mensuel aligné** (`risque_volatilite`, univers actuel **et** anciens membres) : 6 mois **probant**, gain d'IC +0,041,
+  t = 7,3 > seuil 2,97 (avant, sur les seuls survivants : +0,044 et t = 6,6). À **1 an**, il devient aussi **probant** (t = 3,6 > 3,3) ; avant, il
+  ne l'était pas (t = 3,0). La publication ne porte que sur 6 mois : rien ne change dans l'appli.
+- **Examen** : l'IA reste meilleure que HAR sur l'ordre (gain +0,029, t = 5,5 > 2,72) ; hybride publié.
+  En niveau, l'hybride reste un peu moins bon que HAR (DM t = +2,41, sous le seuil corrigé 2,63), comme au § 19.3.
+- **Audit des biais** : inchangé (rapport de variance 1,15, 9 alertes de surestimation, aucune sous-estimation).
+
+### 24.2 Modèles de rendement : encore plus faibles avec les dividendes
+| Modèle | Horizon | IC sans dividendes (§ 22) | IC avec dividendes | t / seuil | Verdict |
+|---|---|---|---|---|---|
+| Rendement publié | 1 mois | 1,1 % | 0,9 % | 0,96 / 3,00 | non probant |
+| Rendement publié | 6 mois | 2,2 % | **1,4 %** | 0,69 / 3,25 | non probant ; **signal concentré sur les petites** (alerte D) |
+| Rendement publié | 1 an | 4,4 % | **3,0 %** | 0,99 / 3,67 | non probant |
+| Ensemble | 6 mois | 4,0 % | 4,3 % | 2,47 / 3,25 | non probant |
+| Ensemble | 1 an | 6,8 % | 6,6 % | 2,50 / 3,67 | non probant |
+
+- **Lecture** : une partie du « signal » du modèle publié venait de ce qu'il évitait les titres à fort dividende, comptés à tort comme
+  sous-performants. Ce qui reste est faible et, à 6 mois, porté surtout par les petites capitalisations. L'**ensemble**, lui, ne bouge pas :
+  c'est bien le seul candidat pour l'essai de confirmation (étape 4).
+- Placebos nuls (pas de fuite). L'appli n'affiche pas ces scores : aucun changement visible.
+
+### 24.3 Marge de « Je limite le risque » : nettement abaissée (automatique, déjà en service)
+- `examen_marge` réapprend la marge à chaque passage et l'écrit dans `model_runs` (`marge_risque`), que l'appli lit. Avec les anciens membres
+  (§ 4.22, première exécution de cet examen depuis) et les dividendes :
+  - marge à 15 % : **0,89 → 0,70** (l'appli vise désormais 70 % de la limite choisie, au lieu de 89 %) ;
+  - part des semestres où la limite est tenue avec la marge : 57 % → **43 %** ; verdict « insuffisante » ;
+  - volatilité réelle du portefeuille « limite 15 % » du backtest : 19 % → **27 %** ; portefeuille « meilleur ratio » : 26 % → 34 %.
+- **Lecture** : ajouter les titres sortis de l'indice rend le passé plus risqué, ce qui est attendu (certains ont chuté avant de sortir).
+  **Mais l'ampleur doit être vérifiée** : les anciens symboles peuvent avoir des cours erronés (sauts, symboles réattribués) que le garde-fou de
+  couverture ne détecte pas, et le nettoyage du § 4.17 (cours < 5 $, sauts > 50 %) n'est pas appliqué au backtest.
+- **Décision** : la nouvelle marge reste en place, car elle va dans le sens **prudent** (moins de risque visé). La vérification est
+  l'étape 5 du plan (§ 23.4) : risque prévu contre risque réalisé du portefeuille, **avec et sans** nettoyage des données des anciens membres.
