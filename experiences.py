@@ -106,6 +106,7 @@ EXPERIENCES_EXAMEN = {
     "examen_asymetrie": "Part baissière du risque : persiste-t-elle (22 et 126 j) et prévoit-elle le sens du rendement ? Holm, placebo",
     "examen_marge": "Marge de sécurité apprise sur le passé ; rythmes de révision mensuel, semestriel, annuel avec frais ; fourchette avec l'hybride",
     "examen_audit_biais": "Audit des biais (§ 4.21) : calibration et classement par secteur, taille, bêta, volatilité, année ; alertes fixées à l'avance ; biais du survivant",
+    "examen_marge_verif": "Vérification de la marge (§ 4.30) : actuelle, sur les seuls survivants, sans les pics aberrants",
     "examen_har_relatif": "HAR relatif au titre (variance rapportée au risque habituel du titre) contre HAR : QLIKE, crises, stabilité, biais, placebo (§ 4.23)",
     "examen_ia_informee": "IA plus informée (+ volatilités 1 jour, 1 semaine, 1 mois, part baissière) contre l'IA actuelle sur l'ordre des titres, placebo (§ 4.24)",
     "examen_har_protege": "HAR relatif protégé en crise (le plus élevé du relatif et de HAR quand v22 > 2 × risque habituel) contre HAR (§ 4.25)",
@@ -416,10 +417,10 @@ def _examen_asymetrie(ctx: Contexte, nom: str):
     _inserer(cli, lot, nom, v, c, ic=a.get("ecart"), t=a.get("t"), seuil=2.0, n_essais=ex.N_ESSAIS_ASYM)
 
 
-def _examen_marge(ctx: Contexte, nom: str):
-    cli, lot, raw, compo, secteurs = ctx.cli, ctx.lot, ctx.raw, ctx.compo, ctx.secteurs
+def calculer_marges(raw: pd.DataFrame, symboles, compo, secteurs) -> tuple[dict, bool]:
+    """Marges de « Je limite le risque » apprises sur le backtest (§ 7.4) : (diagnostics, règle 3 tenue)."""
     tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
-    res = bt.backtest(raw, ctx.symboles, compo, debut="2006-01-01", base="sp500",
+    res = bt.backtest(raw, symboles, compo, debut="2006-01-01", base="sp500",
                       variantes=["hist_3a", "hybride"], secteurs=secteurs, portefeuilles=tous,
                       garder_poids=True, garder_frontieres=True)
     px = mh.cours_ajustes(raw)   # rentabilités réalisées, dividendes compris (§ 4.28)
@@ -438,7 +439,14 @@ def _examen_marge(ctx: Contexte, nom: str):
     c["couverture"]["hybride_student5"] = bt.couverture_fourchette(res, px, "sharpe_max", "hybride", z=2.015)
     c["debut"] = str(pd.Timestamp(res["date"].min()).date())
     parts = [m["part_respectee_avec_marge"] for m in c["marges"].values() if m["part_respectee_avec_marge"] is not None]
-    ok = bool(parts) and min(parts) >= 0.70                 # règle 3 : au moins 70 % des semestres
+    c["_parts"] = parts
+    return c, bool(parts) and min(parts) >= 0.70                 # règle 3 : au moins 70 % des semestres
+
+
+def _examen_marge(ctx: Contexte, nom: str):
+    cli, lot = ctx.cli, ctx.lot
+    c, ok = calculer_marges(ctx.raw, ctx.symboles, ctx.compo, ctx.secteurs)
+    parts = c.pop("_parts")
     m15 = c["marges"]["15"]
     # Publication de la marge pour l'appli (lue dans model_runs, kind « marge_risque »)
     cli.table("model_runs").upsert(_clean({
@@ -449,6 +457,47 @@ def _examen_marge(ctx: Contexte, nom: str):
     }), on_conflict="kind").execute()
     v = (f"limite tenue {min(parts):.0%} des semestres au moins" if parts else "non calculable")
     _inserer(cli, lot, nom, v, c, ic=m15["marge_actuelle"])
+
+
+ECART_MARGE_NETTOYEE = 0.05     # § 4.30 : au-delà, les erreurs de cours pèsent sur la marge
+
+
+def resume_marge(c: dict) -> dict:
+    """Résumé d'un calcul de marge pour la comparaison du § 4.30."""
+    mps = c.get("marges_par_source", {})
+    out = {src: {lim: {"marge": (mps.get(src, {}).get(lim) or {}).get("marge_actuelle"),
+                       "part": (mps.get(src, {}).get(lim) or {}).get("part_respectee_avec_marge")} for lim in ("10", "15", "20")}
+           for src in ("hist_3a", "hybride")}
+    for nom_pf in ("risque_15", "sharpe_max"):
+        r = c.get("rythmes", {}).get(f"{nom_pf}_6m") or {}
+        out[nom_pf] = {"volatilite": r.get("volatilite"), "rendement_net": r.get("rendement_net")}
+    return out
+
+
+def decision_marge(actuel: dict, nettoye: dict) -> dict:
+    """Règle du § 4.30 sur la marge IA + HAR à 15 %."""
+    a, n = actuel["hybride"]["15"]["marge"], nettoye["hybride"]["15"]["marge"]
+    ecart = (n - a) if a is not None and n is not None else None
+    return {"marge_actuelle": a, "marge_nettoyee": n, "ecart": ecart,
+            "nettoyage_adopte": bool(ecart is not None and ecart > ECART_MARGE_NETTOYEE)}
+
+
+def _examen_marge_verif(ctx: Contexte, nom: str):
+    """Vérification du § 4.30 : marge actuelle, sur les seuls survivants, et sans les pics aberrants. N'écrit pas la marge publiée."""
+    actuels = sorted(set(ctx.snap["symbol"]) | {mh.INDICE})
+    calculs = {}
+    calculs["actuel"] = resume_marge(calculer_marges(ctx.raw, ctx.symboles, ctx.compo, ctx.secteurs)[0])
+    raw_s = ctx.raw[ctx.raw["symbol"].isin(actuels)]
+    calculs["survivants"] = resume_marge(calculer_marges(raw_s, [s for s in actuels if s != mh.INDICE], ctx.compo, ctx.secteurs)[0])
+    raw_n, pics = ex.nettoyer_pics(ctx.raw)
+    calculs["nettoye"] = resume_marge(calculer_marges(raw_n, ctx.symboles, ctx.compo, ctx.secteurs)[0])
+    d = decision_marge(calculs["actuel"], calculs["nettoye"])
+    anciens = set(ctx.symboles) - set(actuels)
+    c = {**calculs, "decision": d, "n_pics": len(pics), "n_titres_pics": len({p["symbol"] for p in pics}),
+         "pics_anciens_membres": sum(p["symbol"] in anciens for p in pics), "pics": pics[:60]}
+    v = ("nettoyage adopté : les erreurs de cours pesaient" if d["nettoyage_adopte"]
+         else "baisse réelle : la marge publiée reste")
+    _inserer(ctx.cli, ctx.lot, nom, v, c, ic=d["ecart"], n_essais=0)
 
 
 def _examen_backtest_reel(ctx: Contexte, nom: str):
@@ -570,6 +619,7 @@ EXAMENS = {   # nom -> (fonction, besoin du walk-forward commun `t`)
     "examen_harx_1m_v2": (_examen_harx_1m_v2, False),
     "examen_asymetrie": (_examen_asymetrie, False),
     "examen_marge": (_examen_marge, False),
+    "examen_marge_verif": (_examen_marge_verif, False),
     "examen_audit_biais": (_examen_audit_biais, True),
     "examen_har_relatif": (_examen_har_relatif, True),
     "examen_ia_informee": (_examen_ia_informee, True),

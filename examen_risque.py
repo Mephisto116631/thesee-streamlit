@@ -1546,3 +1546,49 @@ def ajouter_climat(data: pd.DataFrame, vix: pd.Series, decalage: int = 0) -> pd.
     for c in FEATURES_CLIMAT:
         out[c] = out[c].fillna(out[c].median())
     return out
+
+
+# ------------------------------------------------------------------------------
+# Vérification de la marge (docs/METHODE.md § 4.30) : pics aberrants dans les cours
+# ------------------------------------------------------------------------------
+SEUIL_PIC = 0.50            # rendement quotidien de plus de 50 % en valeur absolue…
+RETOUR_PIC = 0.80           # … effacé à 80 % au moins…
+FENETRE_PIC = 5             # … dans les 5 séances suivantes : signature d'une erreur de cours
+
+
+def trouver_pics(px: pd.Series, seuil: float = SEUIL_PIC, retour: float = RETOUR_PIC, fenetre: int = FENETRE_PIC) -> list[tuple[int, int]]:
+    """Pics aberrants d'une série de cours : liste de (indice du pic, indice où il est effacé). Un vrai krach durable n'en est pas un."""
+    v = px.dropna()
+    lv = np.log(v.values.astype(float))
+    pics, i = [], 1
+    while i < len(lv):
+        saut = lv[i] - lv[i - 1]
+        if abs(np.exp(saut) - 1) > seuil:                                  # rendement du jour au-delà de ±50 %
+            fin = None
+            for j in range(i + 1, min(len(lv), i + 1 + fenetre)):
+                if abs(lv[j] - lv[i - 1]) <= (1 - retour) * abs(saut):      # le cours est revenu près d'avant le pic
+                    fin = j
+                    break
+            if fin is not None:
+                pics.append((px.index.get_loc(v.index[i]), px.index.get_loc(v.index[fin - 1])))
+                i = fin
+                continue
+        i += 1
+    return pics
+
+
+def nettoyer_pics(market_raw: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
+    """Retire les séances des pics aberrants (§ 4.30), titre par titre. Retourne (cours nettoyés, liste des pics)."""
+    retirer, rapport = [], []
+    for sym, g in market_raw.sort_values("date").groupby("symbol"):
+        s = g.set_index("date")["close"]
+        for a, b in trouver_pics(s):
+            jours = s.index[a:b + 1]
+            retirer += [(sym, d) for d in jours]
+            rapport.append({"symbol": sym, "debut": str(pd.Timestamp(jours[0]).date()), "seances": len(jours),
+                            "saut": float(s.iloc[a] / s.iloc[a - 1] - 1)})
+    if not retirer:
+        return market_raw, rapport
+    cle = pd.MultiIndex.from_tuples(retirer, names=["symbol", "date"])
+    garde = ~pd.MultiIndex.from_frame(market_raw[["symbol", "date"]]).isin(cle)
+    return market_raw[garde].reset_index(drop=True), rapport
