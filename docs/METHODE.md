@@ -1061,6 +1061,25 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
   workflows. Le code et les tests sont gardés. Pour les relancer, il faut les nommer explicitement ; PyTorch s'installe alors seulement pour le CNN.
   Raison : § 22.4 et § 22.5 (aucun signal, coût de calcul).
 
+
+### 4.30 Vérification de la marge de « Je limite le risque » (protocole écrit le 26/11/2026, AVANT tout code ; constat, aucun essai)
+- **Origine (§ 24.3)** : avec les anciens membres, la marge apprise passe de 0,89 à 0,70 (mesure IA + HAR, limite 15 %), et la volatilité réelle du
+  portefeuille « limite 15 % » du backtest de 19 % à 27 %. Il faut savoir si cela vient de **vrais krachs** de titres sortis de l'indice, ou de
+  **cours erronés** sur d'anciens symboles.
+- **Trois calculs de la marge**, identiques à `examen_marge` (mêmes portefeuilles, révision 6 mois, dividendes compris) :
+  - (a) **actuel** : univers actuel + anciens membres ;
+  - (b) **survivants** : univers actuel seulement (isole l'effet des anciens membres) ;
+  - (c) **nettoyé** : comme (a), sans les **pics aberrants**.
+- **Pic aberrant** (signature d'une erreur de cours, fixée ici) : un rendement quotidien de plus de **50 %** en valeur absolue, **effacé à 80 %
+  au moins dans les 5 séances suivantes**. Les séances du pic sont retirées. Un vrai krach (faillite, chute durable) ne revient pas aussi vite :
+  il reste dans les données.
+- **Règle de décision, fixée AVANT le calcul** : si la marge nettoyée (c) dépasse la marge actuelle (a) de **plus de 0,05** (mesure IA + HAR,
+  limite 15 %), les erreurs de cours pèsent : le nettoyage devient la règle de `examen_marge` (et des backtests), par une PR, et la marge
+  publiée est recalculée. Sinon, la baisse est réelle et la marge de 0,70 reste.
+- **Constats** : marges et part des semestres tenus par source et par limite ; volatilité et rendement réels des portefeuilles « limite 15 % »
+  et « meilleur ratio » ; nombre de pics trouvés et titres concernés. Ce calcul n'écrit **pas** la marge publiée.
+- **Résultats** : § 25.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
