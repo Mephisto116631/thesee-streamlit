@@ -94,3 +94,39 @@ def test_audit_regime_vrai_signal_et_placebo():
     assert not b["placebo"]["fuite_suspectee"]                       # un VIX d'il y a un an n'annonce rien ici
     assert len(b["calibration"]["fiabilite"]) == 5
     assert b["verdict_change"] == (b["verdict"] != "non probant")
+
+
+# --- Confirmation de l'ensemble sur le S&P MidCap 400 (§ 4.31) ----------------------------------------------
+def test_titres_inedits_exclut_tout_ancien_membre_du_sp500():
+    compo = pd.DataFrame({"symbol": ["AAA", "BBB"], "debut": pd.to_datetime(["2000-01-01", "2005-01-01"]),
+                          "fin": pd.to_datetime([None, "2010-01-01"])})
+    assert am.titres_inedits(["AAA", "BBB", "CCC", mh.INDICE, "DDD"], compo) == ["CCC", "DDD"]
+    assert am.titres_inedits(["CCC"], None) == ["CCC"]
+
+
+def _bilan(ic=0.05, t=4.0, seuil=3.3, n_eff=20, tp=0.3):
+    return {"ic": ic, "t": t, "seuil": seuil, "n_effectif": n_eff,
+            "placebo": None if tp is None else {"t": tp, "fuite_suspectee": abs(tp) >= am.SEUIL_PLACEBO}}
+
+
+def test_verdict_confirmation():
+    assert am.verdict_confirmation(_bilan())[0] == "confirmé"
+    assert am.verdict_confirmation(_bilan(t=3.0))[0] == "non confirmé"            # sous le seuil corrigé
+    assert am.verdict_confirmation(_bilan(ic=0.025))[0] == "non confirmé"         # IC trop faible
+    assert am.verdict_confirmation(_bilan(n_eff=5))[0] == "non confirmé"          # trop peu de périodes
+    assert am.verdict_confirmation(_bilan(tp=2.4))[0] == "invalide (placebo)"
+    assert am.verdict_confirmation(_bilan(tp=None))[0] == "invalide (placebo)"
+
+
+def test_confirmation_comptee_une_fois_et_hors_liste_par_defaut():
+    tous = {(n, h) for n in experiences.EXPERIENCES for h in experiences.HORIZONS_TEST} | {("cnn", "6m"), ("cnn", "1a")}
+    avant = experiences.n_essais_rendement(tous)
+    assert experiences.n_essais_rendement(tous | {("confirmation_ensemble_midcap", "6m")}) == avant + 1
+    assert "confirmation_ensemble_midcap" not in experiences.choisir_experiences("toutes")
+    assert experiences.choisir_experiences("confirmation_ensemble_midcap") == ["confirmation_ensemble_midcap"]
+
+
+def test_confirmation_refusee_si_deja_lancee(capsys):
+    deja = [{"nom": "confirmation_ensemble_midcap", "horizon": "6m"}]
+    assert experiences.lancer_confirmation(None, "lot", deja) == []
+    assert "relance refusée" in capsys.readouterr().out
