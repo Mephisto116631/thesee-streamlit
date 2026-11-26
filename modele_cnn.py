@@ -107,8 +107,10 @@ def entrainer_cnn(market_raw: pd.DataFrame, symboles: list[str], nom: str,
         X = mh.filtrer_couverture(X, market_raw, symboles, couverture_min)
     dates = np.sort(X["date"].unique())[::PAS_DATES]
     X = X[X["date"].isin(dates)]
-    serie_m = market_raw[market_raw["symbol"] == mh.INDICE].set_index("date")["close"].sort_index()
-    Y = mh.cible(px, pd.DatetimeIndex(dates), h, cible_mode, serie_m if not serie_m.empty else None, secteurs)
+    tr = mh.cours_ajustes(market_raw, set(symboles) | {mh.INDICE}).reindex(px.index).ffill(limit=5)   # § 4.28
+    serie_m = tr[mh.INDICE] if mh.INDICE in tr else pd.Series(dtype=float)
+    Y = mh.cible(tr.reindex(columns=px.columns), pd.DatetimeIndex(dates), h, cible_mode,
+                 serie_m if not serie_m.empty else None, secteurs)
     data = X.merge(Y, on=["date", "symbol"]).dropna(subset=mh.FEATURES + ["y"])
     if composition is not None:
         filtre = mh.membres_a_date(data, composition, cible_mode == "alpha_secteur")

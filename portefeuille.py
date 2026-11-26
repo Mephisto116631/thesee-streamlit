@@ -24,6 +24,8 @@
 import numpy as np
 import pandas as pd
 
+import modele_horizon as mh
+
 RF = 0.0435             # taux sans risque de repli et du laboratoire (le cron lit le taux du jour : METHODE § 2.1)
 N_CANDIDATS = 40        # ancienne présélection par momentum (gardée pour le backtest comparatif)
 N_FACTEURS = 20         # composantes principales de la covariance publiée
@@ -41,9 +43,7 @@ N_FRONTIERE = 12
 
 
 def _matrice_rendements(market_raw: pd.DataFrame, symboles: list[str], jours: int = JOURS) -> pd.DataFrame:
-    px = (market_raw[market_raw["symbol"].isin(symboles)]
-          .pivot_table(index="date", columns="symbol", values="close")
-          .sort_index())
+    px = mh.cours_ajustes(market_raw, symboles)          # rentabilités dividendes compris (METHODE § 4.28)
     px = px.iloc[-(jours + 1):]
     px = px.dropna(axis=1, thresh=int(len(px) * 0.95)).ffill().dropna()
     return px.pct_change().dropna()
@@ -315,7 +315,7 @@ def portefeuille_recommande(market_raw: pd.DataFrame, snapshot: pd.DataFrame, rf
     R = _matrice_rendements(market_raw, cands, JOURS_ESTIMATION)
     marche = None
     if INDICE_MARCHE in set(market_raw["symbol"]):
-        px_m = market_raw[market_raw["symbol"] == INDICE_MARCHE].set_index("date")["close"].sort_index()
+        px_m = mh.cours_ajustes(market_raw, [INDICE_MARCHE])[INDICE_MARCHE]
         marche = px_m.pct_change().reindex(R.index)
     if R.shape[1] < 5 or len(R) < JOURS // 2:
         return None

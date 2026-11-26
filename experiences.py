@@ -141,7 +141,8 @@ def charger_cours(symboles: list[str], debut: str | None = None) -> tuple[pd.Dat
             if "stock splits" in d:
                 sp = d[d["stock splits"].fillna(0) > 0][["symbol", "date", "stock splits"]]
                 divisions.append(sp.rename(columns={"stock splits": "ratio"}))
-            frames.append(d.dropna(subset=["close"])[["symbol", "date", "open", "high", "low", "close", "volume"]])
+            d["adj_close"] = d["adj close"] if "adj close" in d else d["close"]   # dividendes compris (§ 4.28)
+            frames.append(d.dropna(subset=["close"])[["symbol", "date", "open", "high", "low", "close", "adj_close", "volume"]])
         except Exception as e:
             print(f"[LABO][WARN] Yahoo, lot {lot[:3]}... : {e}")
     raw = pd.concat(frames, ignore_index=True)
@@ -277,7 +278,7 @@ def _examen_ia_contre_har(ctx: Contexte, nom: str):
     tous = {"sharpe_max": None, "risque_15": 0.15}
     res = bt.backtest(raw, ctx.symboles, compo, debut="2006-01-01", base="sp500",
                       variantes=["hybride", "har"], secteurs=secteurs, portefeuilles=tous, garder_poids=True)
-    px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
+    px = mh.cours_ajustes(raw)   # rentabilités réalisées, dividendes compris (§ 4.28)
     c["backtest"] = {f"{pf_}_{v}": bt.backtest_reel(res, px, pf_, v, revision_mois=6)
                      for pf_ in tous for v in ["hybride", "har"]}
     v = "l'IA reste (hybride)" if c["ia_reste"] else "HAR seul"
@@ -421,7 +422,7 @@ def _examen_marge(ctx: Contexte, nom: str):
     res = bt.backtest(raw, ctx.symboles, compo, debut="2006-01-01", base="sp500",
                       variantes=["hist_3a", "hybride"], secteurs=secteurs, portefeuilles=tous,
                       garder_poids=True, garder_frontieres=True)
-    px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
+    px = mh.cours_ajustes(raw)   # rentabilités réalisées, dividendes compris (§ 4.28)
     c = {"marges": {}, "rythmes": {}, "couverture": {}, "marges_par_source": {}}
     for lim in [0.10, 0.12, 0.15, 0.18]:
         c["marges"][f"{int(lim * 100)}"] = bt.marge_walk_forward(res, px, lim, "hybride", revision_mois=6)
@@ -455,7 +456,7 @@ def _examen_backtest_reel(ctx: Contexte, nom: str):
     tous = {**bt.PORTEFEUILLES, **bt.PORTEFEUILLES_RISQUE}
     res = bt.backtest(raw, ctx.symboles, compo, debut="2006-01-01", base=bt.BASES,
                       variantes=["hist_3a", "ia"], secteurs=secteurs, portefeuilles=tous, garder_poids=True)
-    px = raw.pivot_table(index="date", columns="symbol", values="close").sort_index()
+    px = mh.cours_ajustes(raw)   # rentabilités réalisées, dividendes compris (§ 4.28)
     c = {"reel": {}, "couverture": {}}
     for nom_pf in tous:
         for var in ["hist_3a", "ia"]:

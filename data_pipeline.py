@@ -41,12 +41,14 @@ def _telecharger_yahoo(tickers: list[str], start: str = HISTORIQUE_DEBUT) -> pd.
         data = data.reset_index()
         data["symbol"] = tickers[0]
     data.columns = [str(c).lower() for c in data.columns]
-    data = data[["symbol", "date", "open", "high", "low", "close", "volume"]]
+    # Cours ajusté des dividendes : gardé en mémoire pour les rentabilités (METHODE § 4.28), jamais écrit dans Supabase
+    data["adj_close"] = data["adj close"] if "adj close" in data else data["close"]
+    data = data[["symbol", "date", "open", "high", "low", "close", "adj_close", "volume"]]
     data = data.dropna(subset=["close"])
 
     # Supabase: la colonne 'volume' est de type bigint -> aucune virgule tolérée.
     data["volume"] = pd.to_numeric(data["volume"], errors="coerce").fillna(0).astype("int64")
-    for col in ["open", "high", "low", "close"]:
+    for col in ["open", "high", "low", "close", "adj_close"]:
         data[col] = pd.to_numeric(data[col], errors="coerce")
     data["date"] = pd.to_datetime(data["date"]).dt.date
     return data
@@ -83,7 +85,7 @@ def _sync_incremental(tickers: list[str], table: str) -> pd.DataFrame:
             lambda s: dernieres[s] - pd.Timedelta(days=MARGE_JOURS) if s in dernieres else pd.Timestamp(HISTORIQUE_DEBUT).date()
         )
         a_ecrire = df[(df["date"] >= seuil) & (df["date"] >= pd.Timestamp(HISTORIQUE_DEBUT).date())]
-        db.upsert_market_data(a_ecrire, table=table)
+        db.upsert_market_data(a_ecrire.drop(columns=["adj_close"], errors="ignore"), table=table)
         n_ecrites += len(a_ecrire)
         _info(f"{table} : {min(i + batch_size, len(tickers))}/{len(tickers)} tickers — {len(a_ecrire)} lignes écrites")
         if table == "market_data":  # 5 % -> 30 % de la barre de progression
