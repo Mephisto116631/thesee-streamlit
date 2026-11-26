@@ -781,8 +781,12 @@ def main(noms: list[str]):
 
     snap = pd.DataFrame(cli.table("titres_snapshot").select("symbol,secteur").execute().data)
     symboles = sorted(set(snap["symbol"]) | {mh.INDICE})
-    print(f"[LABO] {len(symboles)} titres, essais : {', '.join(noms)} × {', '.join(HORIZONS_TEST)}")
-    raw, splits = charger_cours(symboles)
+    compo = mh.charger_composition()
+    # § 4.29 : la famille « risque » (dont le re-test mensuel) inclut aussi les anciens membres, comme l'examen (§ 4.22)
+    titres_risque = symboles_examen(snap["symbol"], compo) if any(n in EXPERIENCES_RISQUE for n in noms) else None
+    a_charger = sorted(set(symboles) | set(titres_risque or []))
+    print(f"[LABO] {len(a_charger)} titres, essais : {', '.join(noms)} × {', '.join(HORIZONS_TEST)}")
+    raw, splits = charger_cours(a_charger)
     faits_sec = None
     if any((n in EXPERIENCES and len(EXPERIENCES[n]) > 3 and EXPERIENCES[n][3])
            or (n in EXPERIENCES_RISQUE and len(EXPERIENCES_RISQUE[n]) > 2 and EXPERIENCES_RISQUE[n][2]) for n in noms):
@@ -790,7 +794,6 @@ def main(noms: list[str]):
         faits_sec = fsec.telecharger([s for s in symboles if s != mh.INDICE])
         print(f"[LABO] SEC : {len(faits_sec)} chiffres publiés, {faits_sec['symbol'].nunique()} entreprises, "
               f"{time.time() - t1:.0f} s")
-    compo = mh.charger_composition()
     secteurs = dict(zip(snap["symbol"], snap["secteur"]))
 
     tous = {(r["nom"], r["horizon"]) for r in deja} | {(n, h) for n in noms for h in HORIZONS_TEST}
@@ -871,8 +874,10 @@ def main(noms: list[str]):
         sec_r = bool(opt_r and opt_r[0])
         for h in HORIZONS_TEST:
             try:
-                d = mr.entrainer_risque(raw, snap["symbol"].tolist(), h, genre, compo,
-                                        faits_sec if sec_r else None, splits if sec_r else None)
+                d = mr.entrainer_risque(raw, titres_risque, h, genre, compo,
+                                        faits_sec if sec_r else None, splits if sec_r else None,
+                                        couverture_min=ex.COUVERTURE_MIN)
+                d["anciens_membres"] = True
             except Exception as e:
                 print(f"[LABO][ERREUR] {nom} {h} : {type(e).__name__} : {e}")
                 echecs.append(f"{nom} {h}")
@@ -923,12 +928,24 @@ def main(noms: list[str]):
         sys.exit(f"Variantes en échec : {', '.join(echecs)}")
 
 
-if __name__ == "__main__":
-    choix = os.environ.get("EXPERIENCES", "").strip()
+EN_SOMMEIL = set(EXPERIENCES_CNN) | set(EXPERIENCES_REGIME) | {"audit_cnn", "audit_regime"}   # METHODE § 4.29
+
+
+def choisir_experiences(choix: str) -> list[str]:
+    """Essais à lancer : liste explicite, ou tous les essais connus hors modèles en sommeil (CNN, régime)."""
     connues = (list(EXPERIENCES) + list(EXPERIENCES_RISQUE) + list(EXPERIENCES_PORTEFEUILLE)
                + list(EXPERIENCES_REGIME) + list(EXPERIENCES_CNN) + list(EXPERIENCES_EXAMEN) + list(EXPERIENCES_AUDIT))
-    noms = connues if choix in ("", "toutes") else [n.strip() for n in choix.split(",")]
+    choix = (choix or "").strip()
+    noms = [n for n in connues if n not in EN_SOMMEIL] if choix in ("", "toutes") else [n.strip() for n in choix.split(",")]
     inconnues = [n for n in noms if n not in connues]
     if inconnues:
-        sys.exit(f"Expériences inconnues : {inconnues} (connues : {connues})")
-    main(noms)
+        raise ValueError(f"Expériences inconnues : {inconnues} (connues : {connues})")
+    return noms
+
+
+if __name__ == "__main__":
+    try:
+        choisis = choisir_experiences(os.environ.get("EXPERIENCES", ""))
+    except ValueError as e:
+        sys.exit(str(e))
+    main(choisis)

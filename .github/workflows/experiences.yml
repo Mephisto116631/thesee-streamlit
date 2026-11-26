@@ -33,8 +33,9 @@ jobs:
           cache: "pip"
           cache-dependency-path: "requirements*.txt"
       - run: pip install -r requirements.txt -c requirements-lock.txt
-      # PyTorch (version processeur, plus légère) : seulement pour le CNN du laboratoire
-      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      # PyTorch (version processeur) : seulement si le CNN est demandé explicitement (en sommeil, METHODE § 4.29)
+      - if: contains(inputs.experiences, 'cnn')
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Essais
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
