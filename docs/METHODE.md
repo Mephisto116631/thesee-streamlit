@@ -1809,3 +1809,55 @@ Prévisions jugées : 320 000 → **364 000**. Il reste 39 % de membres de 2008 
 - **Pour l'utilisateur** : avec la mesure IA + HAR et une limite de 15 %, l'appli vise environ 10,5 % ; avec l'historique 3 ans, environ 12,2 %.
   Même ainsi, la limite n'a été tenue que dans 43 % (IA + HAR) à 68 % (historique) des semestres du backtest : **la limite est un objectif,
   pas une garantie**, et l'historique 3 ans tient mieux la limite que l'IA + HAR à 15 %.
+
+---
+
+## 26. Résultat de la confirmation de l'ensemble sur le S&P MidCap 400 (§ 4.31 ; lot du 26/11/2026 22:14 UTC, run n° 75, PR #49)
+
+### 26.1 Chiffres (un essai compté, le 17e de la famille rendement)
+| | S&P MidCap 400 (330 titres jamais membres du S&P 500) | Rappel : S&P 500 avec anciens membres (§ 24.2) |
+|---|---|---|
+| IC moyen à 6 mois | **12,2 %** | 4,3 % |
+| t / seuil corrigé | **7,65 / 3,28** (27 périodes indépendantes) | 2,47 / 3,25 |
+| Placebo (cible mélangée) | IC 0,2 %, t = 0,16 : aucune fuite | nul |
+| Écart entre quintiles extrêmes | 22 points sur 6 mois | — |
+| Stabilité | IC de 11 à 13 % sur chacune des 4 fenêtres de 2012 à 2026 ; positif chaque année | — |
+
+- Les 4 conditions de la règle sont remplies : **verdict de la règle, « confirmé »**.
+- Comptes SEC disponibles pour 39 à 65 % des titres-dates selon le ratio. Environ 257 titres par date. Tests de 2012 à 2026.
+
+### 26.2 Lecture critique : ce résultat est contaminé par le biais du survivant
+Un IC presque **trois fois** celui du S&P 500, avec la même recette, est invraisemblable pour un signal de rendement. Les contrôles disent pourquoi.
+- **Rendement réalisé (alpha sectoriel à 6 mois) par quintile** :
+
+  | Quintile | Rendement réalisé |
+  |---|---|
+  | Titres les **moins échangés** (les plus petits à l'époque) | **+20 %** |
+  | Les 4 autres quintiles de liquidité | entre −2 % et +3 % |
+  | Volatilité passée la plus forte | +21 % |
+  | Bêta le plus fort | +17 % |
+  | Plus forte hausse sur 1 mois | +20 % |
+
+  Aucun marché réel ne paie +20 % en 6 mois, en moyenne et chaque année, pour détenir les petits titres volatils.
+- **Le mécanisme** : on ne connaît que les membres **actuels** du S&P 400. Un titre qui était petit et volatil en 2012 et qui fait partie
+  aujourd'hui des midcaps a **forcément** monté. Ceux qui ont chuté (faillites, retour parmi les petites capitalisations) ont disparu de la liste.
+  Choisir les titres d'après leur appartenance d'aujourd'hui revient à regarder l'avenir. Le modèle apprend « petit et volatil → hausse »,
+  ce qui n'est vrai que parmi les survivants.
+- **Preuve dans les groupes** : à taille comparable (à l'intérieur de chaque quintile de taille), l'IC tombe à **3 à 7 %**, l'ordre de grandeur
+  du S&P 500. L'essentiel des 12 % vient donc du pari sur la taille, exactement celui que le biais du survivant fausse.
+- **Erreur du protocole** : le § 4.31 annonçait un biais « dans un sens inconnu ». C'était faux. Pour un modèle qui utilise la taille et la
+  volatilité, le sens est connu : il **gonfle** le résultat. Le § 19 l'avait déjà montré sur le S&P 500 : sur les seuls survivants, l'IC était
+  1,7 fois plus haut. L'erreur est consignée ici plutôt que corrigée après coup.
+- **Le placebo ne protège pas de ce biais** : il détecte une fuite dans le calcul, pas une sélection de l'échantillon sur l'avenir.
+
+### 26.3 Décision
+- **Selon la règle écrite, l'essai est « confirmé ».** Mais la conséquence prévue (publier l'ensemble comme classement de rendement) reposerait
+  sur une preuve que les données elles-mêmes montrent biaisée. **L'ensemble n'est pas publié** sur cette base : rien ne change dans l'appli.
+  Le CAPM reste le rendement utilisé par le portefeuille, et le modèle publié reste affiché comme une hypothèse.
+- **Ce qu'on peut retenir** : à taille comparable, l'ensemble garde un IC de 3 à 7 % sur des titres nouveaux. Ce n'est pas contradictoire avec
+  le S&P 500 (4,3 %), mais ce n'est pas une preuve : ce constat est fait après coup, et le biais du survivant joue aussi à l'intérieur de
+  chaque quintile.
+- **Essai consommé** : il ne sera pas relancé (garde-fou du code). Une confirmation propre demanderait la composition **historique** du S&P 400
+  (source payante) ou une variante neutre à la taille, qui serait un nouvel essai compté (18e).
+- **Recommandation** : clore la recherche sur le rendement, comme prévu en cas d'échec, faute de données capables de trancher.
+  **Décision laissée à l'utilisateur** : clore, ou payer une source de composition historique.
