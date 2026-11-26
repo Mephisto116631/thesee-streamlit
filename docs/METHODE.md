@@ -1007,6 +1007,31 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
 - **Si les 3 règles tiennent** : la production et le re-test mensuel passent à ces caractéristiques, par une PR dédiée. Sinon, rien ne change.
 - **Constats** : importance des deux variables, réglages choisis, IC par fenêtre.
 
+
+### 4.27 Audit des quatre autres modèles (protocole écrit le 26/11/2026, AVANT tout code ; demande de l'utilisateur ; constats et corrections, aucun nouvel essai)
+- **Modèles concernés** : (1) le **modèle de rendement publié** (classement des titres à 1 mois, 6 mois et 1 an, `scores_horizon`) ;
+  (2) l'**ensemble** XGBoost + linéaire (algorithme 3) ; (3) le **CNN** sur la forme des courbes (algorithme 4) ; (4) le **régime de marché**
+  (probabilité d'une baisse du S&P 500 de plus de 10 % en 6 mois, algorithme 2, logistique et XGBoost). Mêmes contrôles que l'IA de risque (§§ 4.20-4.22).
+- **A. Biais du survivant (§ 4.22)** : les modèles (1) à (3) sont réévalués sur l'univers actuel **et les anciens membres** du S&P 500, avec le même
+  garde-fou de couverture. Horizons : (1) 1 mois, 6 mois, 1 an ; (2) 6 mois et 1 an ; (3) 6 mois seulement (coût de calcul).
+  Le verdict est recalculé avec **les mêmes règles** qu'avant (`verdict_labo` : IC > 3 %, ≥ 8 périodes, t > seuil corrigé) et comparé au dernier verdict.
+  Le régime (4) porte sur le seul S&P 500 : pas de biais du survivant.
+- **B. Comptage des essais** : la famille « rendement » comptait aussi les examens de l'IA de risque (`examen_*`), ce qui relevait son seuil.
+  **Correction** : désormais seuls les essais de rendement (`EXPERIENCES`, CNN) × horizons sont comptés. L'audit rapporte le verdict avec **les deux**
+  comptages ; la correction s'applique aux essais futurs.
+- **C. Placebo (fuite)** : (1) à 6 mois, (2) et (3) à 6 mois : cible **mélangée entre titres** à chaque date ; l'IC doit être non significatif (|t| < 2).
+  (4) : les indicateurs décalés de **12 mois** ; le gain de log-loss doit être non significatif (t < 2). Sinon : **fuite suspectée**, le modèle est
+  retiré de l'appli jusqu'à explication.
+- **D. Biais par groupe** ((1) à (3)) : IC par secteur, quintile de taille, de bêta, de volatilité passée et par année. **Alerte « signal concentré »**
+  si l'IC du quintile des plus petites capitalisations dépasse **2 fois** l'IC global alors que celui des plus grandes est ≤ 0 (les petites sont les
+  plus touchées par le biais du survivant résiduel).
+- **E. Calibration du régime** (4) : score de Brier contre celui du taux de base ; fréquence observée par quintile de probabilité prévue ; AUC **sans
+  2008-2009** (alerte si < 0,55 : le résultat reposerait sur une seule crise).
+- **F. Fidélité laboratoire / production** (1) : même correction qu'au § 4.20 pour les scores publiés (caractéristiques au dernier jour de cours,
+  rangs parmi les membres du jour, autres titres placés parmi eux).
+- **Ce qui peut changer dans l'appli** : seulement en cas de fuite suspectée (C), ou si un verdict change (A). La correction F s'applique dans tous les cas.
+- **Résultats** : § 22.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
