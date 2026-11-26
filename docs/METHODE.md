@@ -1048,6 +1048,19 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
 - **Ensuite** : relancer `audit_rendement`, `audit_ensemble`, `examen_ia_contre_har`, `examen_marge` et `examen_audit_biais`, puis comparer avant et
   après (§ 24). Les verdicts sont recalculés avec les règles existantes.
 
+
+### 4.29 Re-test mensuel aligné et allègement des calculs (écrit le 26/11/2026, avant le code ; corrections et rangement, aucun essai)
+- **Re-test mensuel de l'IA de risque (§ 23.4, étape 2)** : `risque_volatilite` décide si la prévision est publiée (`publish.source_volatilite`).
+  Il tournait sur l'univers **actuel** seulement, alors que l'examen inclut les anciens membres (§ 4.22). Désormais, la famille « risque » du
+  laboratoire utilise l'univers actuel **et** les anciens membres, avec le garde-fou de couverture (80 %). Mêmes règles de verdict qu'avant.
+  Les autres familles gardent leurs données.
+- **Modèles de rendement en production (étape 3)** : ils étaient réentraînés à chaque passage du cron (3 fois par jour, 3 horizons), alors que
+  l'appli n'en affiche que la carte (hypothèse non probante, § 22). Ils sont désormais réentraînés **une fois par semaine**, comme les comptes SEC.
+  Le lancement manuel « Recharger les comptes SEC » force aussi ce réentraînement.
+- **CNN et régime de marché (étape 3)** : ils ne sont plus lancés par défaut (`EXPERIENCES=toutes`) et PyTorch n'est plus installé dans les
+  workflows. Le code et les tests sont gardés. Pour les relancer, il faut les nommer explicitement ; PyTorch s'installe alors seulement pour le CNN.
+  Raison : § 22.4 et § 22.5 (aucun signal, coût de calcul).
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
