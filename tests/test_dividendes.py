@@ -77,3 +77,28 @@ def test_modeles_de_rendement_hebdomadaires(monkeypatch):
     monkeypatch.setattr(publish.db, "get_client", lambda: Client(pd.Timedelta(days=2)))
     monkeypatch.setenv("SEC_FORCER", "1")
     assert not publish.modeles_rendement_a_jour()                            # lancement forcé : réentraînement
+
+
+# --- § 4.30 : pics aberrants et règle de la marge ---------------------------------------------------------
+def test_pics_aberrants_mais_pas_les_vrais_krachs():
+    import examen_risque as ex
+    dates = pd.bdate_range("2015-01-01", periods=30)
+    pic = pd.Series([10.0] * 10 + [25.0] + [10.1] * 19, index=dates)                  # +150 % effacé le lendemain
+    krach = pd.Series([10.0] * 10 + [3.0] * 20, index=dates)                           # −70 % durable : vrai krach
+    creux = pd.Series([10.0] * 10 + [4.0, 4.2] + [9.9] * 18, index=dates)             # −60 % effacé en 2 séances
+    assert ex.trouver_pics(pic) == [(10, 10)]
+    assert ex.trouver_pics(krach) == []
+    assert ex.trouver_pics(creux) == [(10, 11)]
+    raw = pd.concat([pd.DataFrame({"symbol": s, "date": dates, "close": v.values})
+                     for s, v in {"PIC": pic, "KRACH": krach}.items()])
+    propre, rapport = ex.nettoyer_pics(raw)
+    assert len(propre) == len(raw) - 1 and [r["symbol"] for r in rapport] == ["PIC"]
+    assert rapport[0]["saut"] == pytest.approx(1.5)
+
+
+def test_regle_de_la_marge():
+    import experiences
+    base = {"hybride": {"15": {"marge": 0.70}}}
+    assert experiences.decision_marge(base, {"hybride": {"15": {"marge": 0.80}}})["nettoyage_adopte"]
+    assert not experiences.decision_marge(base, {"hybride": {"15": {"marge": 0.74}}})["nettoyage_adopte"]
+    assert not experiences.decision_marge(base, {"hybride": {"15": {"marge": None}}})["nettoyage_adopte"]
