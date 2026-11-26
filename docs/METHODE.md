@@ -1080,6 +1080,39 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
   et « meilleur ratio » ; nombre de pics trouvés et titres concernés. Ce calcul n'écrit **pas** la marge publiée.
 - **Résultats** : § 25.
 
+
+### 4.31 Confirmation de l'ensemble sur le S&P MidCap 400 (protocole écrit le 26/11/2026, AVANT tout code ; **un essai compté**, le 17e)
+- **Pourquoi** : l'ensemble XGBoost + linéaire est le seul modèle de rendement qui approche du seuil (§ 24.2 : 6 mois, IC 4,3 %, t = 2,47 contre
+  3,25). Ajouter des variantes serait du sur-ajustement (§ 23.2, point 5). La seule façon honnête de gagner en puissance est d'appliquer la
+  **même recette** à des titres **jamais utilisés**, comme pour HAR-X (§ 4.16-4.17).
+- **Univers** : membres actuels du S&P MidCap 400 (`universe.get_sp400_tickers`), **sans** aucun titre qui est ou a été membre du S&P 500
+  (fichier de composition) : ces titres n'ont jamais servi à juger l'ensemble. Secteurs : ceux de la liste du S&P 400 (même nomenclature GICS).
+- **Modèle, appliqué tel quel** : configuration `ensemble` forcée (pas de sélection), cible alpha sectoriel, caractéristiques de cours et comptes SEC,
+  mêmes réglages, même validation glissante avec embargo, rentabilités **dividendes compris** (§ 4.28), garde-fou de couverture 80 % (§ 4.22).
+  Le modèle est réentraîné sur les midcaps (c'est la recette qui est testée, pas les poids appris sur le S&P 500). Indice de référence inchangé.
+- **Un seul horizon, un seul essai** : **6 mois**. C'est l'horizon qui offre le plus de périodes indépendantes (un an n'en a que la moitié).
+  L'essai compte dans la famille « rendement » : **17 essais**, seuil t corrigé `seuil_t(n_effectif, 17)`.
+- **Règle de décision, fixée AVANT le calcul** : **confirmé** si, à la fois :
+  1. IC moyen > 3 % ;
+  2. au moins `MIN_PERIODES_SIGNAL` périodes indépendantes ;
+  3. t > seuil corrigé pour 17 essais ;
+  4. placebo (cible mélangée entre titres à chaque date) avec |t| < 2. Sinon, une fuite est suspectée et l'essai est invalide.
+
+  Sinon : **non confirmé**.
+- **Limite connue** : il n'existe pas d'historique gratuit de la composition du S&P 400. Seuls ses membres **actuels** sont testés, donc biais du
+  survivant, dans un sens inconnu pour un classement : les titres sortis par le bas (faillites) manquent, ceux montés dans le S&P 500 aussi.
+  Il est signalé dans le résultat ; la règle de décision ne change pas.
+- **Constats (non décisifs)** : IC par groupe (taille, secteur, bêta, volatilité, année), alerte de concentration sur les petites (§ 4.27 D),
+  couverture des comptes SEC, IC et t de l'ensemble au S&P 500 rappelés pour comparaison.
+- **Un seul passage** : l'essai est lancé une fois, en le nommant (`confirmation_ensemble_midcap`), jamais par la liste par défaut. Si une ligne
+  existe déjà dans `experiences`, le laboratoire refuse de le relancer. Si les comptes SEC ou la liste du S&P 400 sont indisponibles, rien n'est
+  écrit : l'essai n'a pas eu lieu, et il peut être relancé.
+- **Conséquences** :
+  - **confirmé** : l'ensemble devient le classement de rendement publié, présenté avec sa preuve (PR séparée, à documenter) ;
+  - **non confirmé** : la recherche sur le rendement est **close**. Aucune nouvelle variante ; le modèle publié reste une hypothèse affichée comme
+    telle, et le CAPM reste le seul rendement utilisé par le portefeuille.
+- **Résultats** : § 26.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
