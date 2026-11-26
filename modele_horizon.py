@@ -326,8 +326,9 @@ def ic_par_regime(t: pd.DataFrame) -> dict:
 
 
 def evaluer(data: pd.DataFrame, h: int, feats: list[str] | None = None, forcer_config: str | None = None,
-            pas_jours: int = PAS_ECHANTILLON) -> dict:
-    """Walk-forward avec embargo de h jours entre entraînement et test."""
+            pas_jours: int = PAS_ECHANTILLON, garder_tests: bool = False) -> dict:
+    """Walk-forward avec embargo de h jours entre entraînement et test.
+    `garder_tests` : ajoute les prévisions de test (`_tests`, DataFrame) pour les audits (à retirer avant d'enregistrer)."""
     feats = feats or FEATURES
     dates = np.sort(data["date"].unique())
     if len(dates) < 60:
@@ -365,7 +366,8 @@ def evaluer(data: pd.DataFrame, h: int, feats: list[str] | None = None, forcer_c
     t["quintile"] = t.groupby("date")["pred"].transform(lambda s: pd.qcut(s.rank(method="first"), 5, labels=False))
     q = t.groupby("quintile")["rel"].mean()
     haut_bat_mediane = t[t["quintile"] == 4].groupby("date")["rel"].mean()
-    return {
+    sortie = {} if not garder_tests else {"_tests": t}
+    return sortie | {
         "horizon_jours": h,
         "ic_moyen": float(ic.mean()), "ic_ecart_type": float(ic.std()), "t_stat": t_stat,
         "ic_momentum": float(ic_mom.mean()) if len(ic_mom) else None,
@@ -436,6 +438,54 @@ def membres_a_date(data: pd.DataFrame, composition: pd.DataFrame, par_secteur: b
     return _relatif(m, par_secteur).reset_index(drop=True)
 
 
+def membres_du_jour(composition: pd.DataFrame | None, date, symboles) -> pd.Index:
+    """Membres du S&P 500 à `date` parmi `symboles` (tous si la composition manque)."""
+    symboles = pd.Index(symboles)
+    if composition is None:
+        return symboles
+    d = pd.Timestamp(date)
+    c = composition[(composition["debut"] <= d) & (composition["fin"].isna() | (d < composition["fin"]))]
+    return symboles.intersection(pd.Index(c["symbol"].unique()))
+
+
+def rangs_parmi_membres(auj: pd.DataFrame, membres: pd.Index, feats: list[str]) -> pd.DataFrame:
+    """Caractéristiques du jour exprimées comme au laboratoire (METHODE § 4.20) :
+    - membres : rang recalculé parmi les seuls membres ;
+    - autres titres : place de leur valeur parmi les membres (part des membres de valeur ≤), sans déplacer les membres.
+    `auj` : rangs du jour (n'importe quelle population), index = symboles. Un rang est monotone en la valeur brute :
+    reclasser les rangs revient à reclasser les valeurs."""
+    out = auj.copy()
+    m = auj.index.intersection(membres)
+    autres = auj.index.difference(membres)
+    for f in feats:
+        ref = np.sort(auj.loc[m, f].dropna().values)
+        out.loc[m, f] = auj.loc[m, f].rank(pct=True)
+        if len(autres) and len(ref):
+            v = auj.loc[autres, f]
+            out.loc[autres, f] = np.where(v.notna(), np.searchsorted(ref, v.values, side="right") / len(ref), np.nan)
+    return out
+
+
+def filtrer_couverture(X: pd.DataFrame, market_raw: pd.DataFrame, symboles, couverture_min: float) -> pd.DataFrame:
+    """Garde-fou du § 4.22 : écarte les (date, titre) cotés moins de `couverture_min` des 252 séances précédentes."""
+    present = market_raw[market_raw["symbol"].isin(set(symboles))].pivot_table(
+        index="date", columns="symbol", values="close").notna().rolling(252, min_periods=1).mean()
+    cov = present.reindex(pd.DatetimeIndex(X["date"].unique())).stack(future_stack=True).rename("couverture")
+    cov.index.names = ["date", "symbol"]
+    X = X.merge(cov.reset_index(), on=["date", "symbol"], how="left")
+    return X[X["couverture"].fillna(0) >= couverture_min].drop(columns="couverture")
+
+
+def melanger_cible(data: pd.DataFrame, graine: int = 0) -> pd.DataFrame:
+    """Placebo (METHODE § 4.27 C) : cible (`y`, `rel`, `brut`) mélangée entre titres à chaque date."""
+    rng = np.random.default_rng(graine)
+    data = data.copy()
+    cols = [c for c in ("y", "rel", "brut") if c in data]
+    for idx in data.groupby("date").groups.values():
+        data.loc[idx, cols] = data.loc[idx, cols].values[rng.permutation(len(idx))]
+    return data
+
+
 def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
                       composition: pd.DataFrame | None = None,
                       secteurs: dict[str, str] | None = None,
@@ -443,14 +493,20 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
                       exclure: list[str] | None = None,
                       faits_sec: pd.DataFrame | None = None,
                       splits: pd.DataFrame | None = None,
-                      forcer_config: str | None = None) -> tuple[dict, pd.DataFrame]:
+                      forcer_config: str | None = None,
+                      placebo: bool = False, garder_tests: bool = False,
+                      couverture_min: float | None = None) -> tuple[dict, pd.DataFrame]:
     """Évalue puis entraîne le modèle final ; retourne (ligne model_runs, scores du jour).
-    `composition` (charger_composition()) : évaluation sur les seuls membres de l'indice à chaque date."""
+    `composition` (charger_composition()) : évaluation sur les seuls membres de l'indice à chaque date.
+    Audits (METHODE § 4.27) : `placebo` mélange la cible entre titres à chaque date ; `garder_tests` garde les prévisions de
+    test ; `couverture_min` écarte les (date, titre) trop peu cotés (symboles réattribués, § 4.22)."""
     h = HORIZONS[nom]
     feats = [f for f in FEATURES if f not in (exclure or [])]   # laboratoire : facteurs retirés
-    px, X = caracteristiques(market_raw, symboles, secteurs)
+    px, X = caracteristiques(market_raw, symboles, secteurs, derniere_date=True)
     if X.empty:
         return {}, pd.DataFrame()
+    if couverture_min is not None:
+        X = filtrer_couverture(X, market_raw, symboles, couverture_min)
     couverture = None
     if faits_sec is not None:
         # Fondamentaux SEC publiés avant chaque date, classés du jour (0,5 si inconnus)
@@ -472,7 +528,9 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
         filtre = membres_a_date(data, composition, cible_mode == "alpha_secteur", feats)
         if not filtre.empty:
             data, point_in_time = filtre, True
-    ev = evaluer(data, h, feats, forcer_config)
+    if placebo:
+        data = melanger_cible(data)
+    ev = evaluer(data, h, feats, forcer_config, garder_tests=garder_tests)
     if ev:
         ev["cible"] = cible_mode
         ev["facteurs_exclus"] = list(exclure or [])
@@ -498,8 +556,15 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
         candidats = {"modele": ev.get("ic_moyen"), "momentum": ev.get("ic_momentum"),
                      "multifacteurs": ev.get("ic_multifacteurs")}
         source = max(candidats, key=lambda k: candidats[k] if candidats[k] is not None else -9)
+    # Classement du jour comme au laboratoire (METHODE §§ 4.20 et 4.27 F) : dernier jour de cours, rangs parmi les
+    # membres du S&P 500 du jour ; les autres titres sont placés parmi eux sans les déplacer.
     derniere = X["date"].max()
-    aujourd_hui = X[X["date"] == derniere].dropna(subset=FEATURES).copy()
+    aujourd_hui = X[X["date"] == derniere].set_index("symbol")
+    membres = membres_du_jour(composition, derniere, aujourd_hui.index)
+    if len(membres) < MIN_MEMBRES:
+        membres = aujourd_hui.index
+    aujourd_hui = rangs_parmi_membres(aujourd_hui, membres, [f for f in feats if f in aujourd_hui]) \
+        .dropna(subset=FEATURES).reset_index()
     if source == "modele":
         aujourd_hui["pred"] = m.predict(aujourd_hui[feats])
     elif source == "multifacteurs":

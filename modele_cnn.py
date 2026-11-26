@@ -95,12 +95,16 @@ def construire_courbes(market_raw: pd.DataFrame, symboles: list[str], data: pd.D
 
 def entrainer_cnn(market_raw: pd.DataFrame, symboles: list[str], nom: str,
                   composition: pd.DataFrame | None = None, secteurs: dict[str, str] | None = None,
-                  cible_mode: str = "alpha_secteur") -> dict:
-    """Évalue le CNN avec le même protocole que les autres essais ; renvoie une ligne façon model_runs."""
+                  cible_mode: str = "alpha_secteur", placebo: bool = False, garder_tests: bool = False,
+                  couverture_min: float | None = None) -> dict:
+    """Évalue le CNN avec le même protocole que les autres essais ; renvoie une ligne façon model_runs.
+    Audits (METHODE § 4.27) : `placebo` mélange la cible entre titres ; `garder_tests` garde les prévisions de test."""
     h = mh.HORIZONS[nom]
     px, X = mh.caracteristiques(market_raw, symboles, secteurs)
     if X.empty:
         return {}
+    if couverture_min is not None:
+        X = mh.filtrer_couverture(X, market_raw, symboles, couverture_min)
     dates = np.sort(X["date"].unique())[::PAS_DATES]
     X = X[X["date"].isin(dates)]
     serie_m = market_raw[market_raw["symbol"] == mh.INDICE].set_index("date")["close"].sort_index()
@@ -111,9 +115,11 @@ def entrainer_cnn(market_raw: pd.DataFrame, symboles: list[str], nom: str,
         if not filtre.empty:
             data = filtre
     data = data.reset_index(drop=True)
+    if placebo:
+        data = mh.melanger_cible(data)
     REGISTRE["courbes"] = construire_courbes(market_raw, symboles, data)
     data["cle"] = np.arange(len(data))
-    ev = mh.evaluer(data, h, ["cle"], forcer_config="cnn", pas_jours=mh.PAS_ECHANTILLON * PAS_DATES)
+    ev = mh.evaluer(data, h, ["cle"], forcer_config="cnn", pas_jours=mh.PAS_ECHANTILLON * PAS_DATES, garder_tests=garder_tests)
     if not ev:
         return {}
     ev["cible"] = cible_mode

@@ -101,8 +101,9 @@ def _logloss(y: np.ndarray, p: np.ndarray) -> np.ndarray:
     return -(y * np.log(p) + (1 - y) * np.log(1 - p))
 
 
-def evaluer(m: pd.DataFrame, nom: str) -> dict:
-    """Walk-forward mensuel, fenêtre croissante, test par blocs de 12 mois, embargo de 6 mois."""
+def evaluer(m: pd.DataFrame, nom: str, garder_tests: bool = False) -> dict:
+    """Walk-forward mensuel, fenêtre croissante, test par blocs de 12 mois, embargo de 6 mois.
+    `garder_tests` : ajoute les prévisions de test (`_tests`) pour l'audit du § 4.27 (à retirer avant d'enregistrer)."""
     m = m.dropna(subset=["y"])
     if len(m) < MOIS_INITIAUX + 24:
         return {}
@@ -127,7 +128,7 @@ def evaluer(m: pd.DataFrame, nom: str) -> dict:
     for dec, g in t.groupby((t.index.year // 10) * 10):
         decennies[str(dec)] = {"auc": _auc(g["y"].values.astype(int), g["p"].values), "n": int(len(g)),
                                "baisses": int(g["y"].sum())}
-    return {
+    return ({"_tests": t} if garder_tests else {}) | {
         "auc": _auc(y, t["p"].values), "gain_logloss": float(gain.mean()), "t_stat": t_stat,
         "n_mois_test": int(len(t)), "n_effectif": float(n_eff), "taux_base": float(y.mean()),
         "debut_test": str(t.index.min().date()), "decennies": decennies,

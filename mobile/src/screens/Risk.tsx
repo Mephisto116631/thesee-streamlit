@@ -367,6 +367,9 @@ const NOMS_LABO: Record<string, string> = {
   risque_perte_max_comptes: "IA de risque : perte maximale + comptes", risque_volatilite_comptes: "IA de risque : volatilité + comptes",
   ensemble: "Ensemble XGBoost + linéaire (cours + comptes)", cnn: "CNN sur la forme des courbes",
   regime_logistique: "Baisse du marché > 10 % en 6 mois (logistique)", regime_xgboost: "Baisse du marché > 10 % en 6 mois (XGBoost)",
+  audit_rendement: "Audit : modèle de rendement publié", audit_ensemble: "Audit : ensemble XGBoost + linéaire",
+  audit_cnn: "Audit : CNN sur les courbes", audit_regime_logistique: "Audit : régime de marché (logistique)",
+  audit_regime_xgboost: "Audit : régime de marché (XGBoost)", examen_audit_biais: "Audit des biais de l'IA de risque",
 };
 
 /** Laboratoire : variantes du modèle essayées sans toucher aux scores publiés (experiences.py). */
@@ -388,7 +391,7 @@ function Laboratoire() {
           <div class="chiffres">
             {e.nom.startsWith("backtest")
               ? <span>Risque réel <b class={signClass(-(e.ic ?? 0))}>{e.ic != null && e.ic > 0 ? "+" : ""}{pct(e.ic, 1, false)}</b> vs méthode actuelle</span>
-              : e.nom.startsWith("regime")
+              : e.nom.startsWith("regime") || e.nom.startsWith("audit_regime")
                 ? <span>AUC <b>{corr(e.ic, 0)}</b> (50 % = hasard)</span>
                 : <span>IC <b class={signClass(e.ic)}>{corr(e.ic)}</b>{e.ic_base != null && <> (réf. {corr(e.ic_base)})</>}</span>}
             {e.regimes?.hausse && <span>marché en hausse {corr(e.regimes.hausse.ic)} · en baisse {corr(e.regimes?.baisse?.ic)}</span>}
