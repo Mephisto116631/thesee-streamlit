@@ -91,6 +91,19 @@ def _rsi(px: pd.DataFrame, n: int = 14) -> pd.DataFrame:
     return 100 - 100 / (1 + up / down.replace(0, np.nan))
 
 
+def cours_ajustes(market_raw: pd.DataFrame, symboles=None) -> pd.DataFrame:
+    """Cours ajustés des DIVIDENDES (et des divisions), tableau large date × titre : base de toutes les rentabilités
+    (METHODE § 4.28). Repli sur le cours de clôture pour un titre sans cours ajusté (ou si la colonne manque)."""
+    m = market_raw if symboles is None else market_raw[market_raw["symbol"].isin(set(symboles))]
+    proche = m.pivot_table(index="date", columns="symbol", values="close").sort_index()
+    if "adj_close" not in m or not m["adj_close"].notna().any():
+        return proche
+    ajuste = m.pivot_table(index="date", columns="symbol", values="adj_close").sort_index().reindex_like(proche)
+    sans = [c for c in proche.columns if ajuste[c].isna().all()]
+    ajuste[sans] = proche[sans]
+    return ajuste
+
+
 def caracteristiques(market_raw: pd.DataFrame, symboles: list[str],
                      secteurs: dict[str, str] | None = None, derniere_date: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Retourne (tableau large des cours, caractéristiques empilées par date et titre).
@@ -519,8 +532,10 @@ def entrainer_horizon(market_raw: pd.DataFrame, symboles: list[str], nom: str,
         X = X.merge(fd, on=["date", "symbol"], how="left")
         X[fsec.FEATURES_FD] = X[fsec.FEATURES_FD].fillna(0.5)
         feats += [f for f in fsec.FEATURES_FD if f not in (exclure or [])]
-    serie_m = market_raw[market_raw["symbol"] == INDICE].set_index("date")["close"].sort_index()
-    Y = cible(px, pd.DatetimeIndex(X["date"].unique()), h, cible_mode,
+    # Rentabilités futures dividendes compris (§ 4.28) ; les caractéristiques restent sur le cours de clôture
+    tr = cours_ajustes(market_raw, set(symboles) | {INDICE}).reindex(px.index).ffill(limit=5)
+    serie_m = tr[INDICE] if INDICE in tr else pd.Series(dtype=float)
+    Y = cible(tr.reindex(columns=px.columns), pd.DatetimeIndex(X["date"].unique()), h, cible_mode,
               serie_m if not serie_m.empty else None, secteurs)
     data = X.merge(Y, on=["date", "symbol"]).dropna(subset=FEATURES + ["y"])
     point_in_time = False

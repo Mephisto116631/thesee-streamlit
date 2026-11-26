@@ -430,8 +430,28 @@ def publier_tables_de_base(snap: pd.DataFrame, med: pd.DataFrame, overview: dict
     db.upsert_rows("market_overview", [overview], on_conflict="id")
 
 
+JOURS_ENTRE_MODELES_RENDEMENT = 6      # METHODE § 4.29 : une fois par semaine (hypothèse non probante, § 22)
+
+
+def modeles_rendement_a_jour() -> bool:
+    """Vrai si les modèles de rendement ont été entraînés il y a moins de 6 jours (et pas de lancement forcé)."""
+    import os
+    if os.environ.get("SEC_FORCER") == "1":
+        return False
+    d = db.get_client().table("model_runs").select("trained_at").eq("kind", "horizon_6m").limit(1).execute().data
+    return bool(d and d[0].get("trained_at") and pd.Timestamp.now(tz="UTC") - pd.Timestamp(d[0]["trained_at"])
+                < pd.Timedelta(days=JOURS_ENTRE_MODELES_RENDEMENT))
+
+
 def publier_modeles_horizon(raw_horizon: pd.DataFrame, snap: pd.DataFrame, composition) -> int:
-    """Modèles « horizon » (1 mois, 6 mois, 1 an) : classement relatif des titres. Retourne le nombre de scores."""
+    """Modèles « horizon » (1 mois, 6 mois, 1 an) : classement relatif des titres, réentraînés une fois par semaine.
+    Retourne le nombre de scores (0 si les modèles sont encore à jour)."""
+    try:
+        if modeles_rendement_a_jour():
+            print("[PUBLISH] Modèles de rendement à jour (moins de 6 jours) : pas de réentraînement")
+            return 0
+    except Exception as e:
+        print(f"[PUBLISH] Date des modèles de rendement illisible ({e}) : réentraînement")
     n_scores = 0
     for k, nom in enumerate(modele_horizon.HORIZONS):
         db.progression(65 + 10 * k, f"Modèle IA {LIBELLES_HORIZON.get(nom, nom)}")

@@ -89,13 +89,16 @@ def evaluer_risque(data: pd.DataFrame, h: int, feats: list[str] | None = None) -
 
 def entrainer_risque(market_raw: pd.DataFrame, symboles: list[str], nom: str, genre: str,
                      composition: pd.DataFrame | None = None, faits_sec: pd.DataFrame | None = None,
-                     splits: pd.DataFrame | None = None) -> dict:
+                     splits: pd.DataFrame | None = None, couverture_min: float | None = None) -> dict:
     """Évalue l'IA de risque. Avec `faits_sec` : ajoute les comptes publiés des entreprises
-    (endettement, rentabilité, accruals, émissions…) aux facteurs de cours."""
+    (endettement, rentabilité, accruals, émissions…) aux facteurs de cours.
+    `couverture_min` : garde-fou des symboles réattribués quand les anciens membres sont inclus (METHODE §§ 4.22, 4.29)."""
     h = mh.HORIZONS[nom]
     px, X = mh.caracteristiques(market_raw, symboles)
     if X.empty:
         return {}
+    if couverture_min is not None:
+        X = mh.filtrer_couverture(X, market_raw, symboles, couverture_min)
     feats = list(mh.FEATURES)
     couverture = None
     if faits_sec is not None:

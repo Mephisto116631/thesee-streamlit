@@ -8,7 +8,7 @@ import data_pipeline as dp
 def test_stockage_limite_et_historique_long(monkeypatch):
     def faux_yahoo(tickers, start=dp.HISTORIQUE_DEBUT):
         dates = pd.bdate_range(start, "2026-11-17", freq="20B").date
-        return pd.DataFrame([{"symbol": t, "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1}
+        return pd.DataFrame([{"symbol": t, "date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "adj_close": 0.9, "volume": 1}
                              for t in tickers for d in dates])
 
     ecrit = []
@@ -25,3 +25,4 @@ def test_stockage_limite_et_historique_long(monkeypatch):
     assert tout[tout["symbol"] == "AAA"]["date"].min() >= pd.Timestamp("2026-11-05").date()  # incrémental
     assert court["date"].min() >= pd.Timestamp(dp.HISTORIQUE_DEBUT)                 # le reste du calcul inchangé
     assert long["date"].min() < pd.Timestamp("2006-01-01")                           # modèles : depuis 2005
+    assert "adj_close" not in tout.columns and "adj_close" in long.columns           # § 4.28 : en mémoire seulement

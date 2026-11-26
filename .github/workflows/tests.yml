@@ -20,7 +20,6 @@ jobs:
           cache: "pip"
           cache-dependency-path: "requirements*.txt"
       - run: pip install -r requirements.txt -c requirements-lock.txt pytest==9.2.0 ruff==0.17.6
-      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Compilation
         run: python -m compileall -q . -x "mobile/|\.git/"
       - name: Relecture automatique (ruff)

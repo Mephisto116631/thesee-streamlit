@@ -106,8 +106,10 @@ def backtest(market_raw: pd.DataFrame, symboles: list[str], composition: pd.Data
            else pd.DataFrame(columns=["date", "symbol", "lvl_har"]))
     frontieres = {}
 
-    ret = px_tout.pct_change()
-    marche = market_raw[market_raw["symbol"] == mh.INDICE].set_index("date")["close"].sort_index().pct_change()
+    # Rentabilités réalisées dividendes compris (METHODE § 4.28) ; le risque (HAR, IA) reste sur le cours de clôture
+    tr = mh.cours_ajustes(market_raw, set(symboles) | {mh.INDICE}).reindex(px_tout.index).ffill(limit=5)
+    ret = tr.reindex(columns=px_tout.columns).pct_change()
+    marche = tr[mh.INDICE].pct_change() if mh.INDICE in tr else pd.Series(dtype=float)
     lignes = []
     for d in dates_rebal:
         membres = data.loc[data["date"] == d, "symbol"].tolist() if composition is not None else list(px_tout.columns)
