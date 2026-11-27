@@ -335,7 +335,10 @@ export function cssVar(name: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-export function ChartBox({ config, height = 220, label }: { config: () => any; height?: number; label: string }) {
+export function ChartBox({ config, height = 220, label, interactif = false }: {
+  config: () => any; height?: number; label: string;
+  interactif?: boolean;   // le doigt glisse sur le graphique sans faire défiler la page
+}) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     if (!ref.current) return;
@@ -355,5 +358,7 @@ export function ChartBox({ config, height = 220, label }: { config: () => any; h
     const chart = new Chart(ref.current, cfg);
     return () => chart.destroy();
   }, [config]);
-  return <div class="chart" style={{ height }}><canvas ref={ref} role="img" aria-label={label} /></div>;
+  return <div class="chart" style={{ height }}>
+    <canvas ref={ref} role="img" aria-label={label} style={interactif ? { touchAction: "none" } : undefined} />
+  </div>;
 }

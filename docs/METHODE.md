@@ -1861,3 +1861,33 @@ Un IC presque **trois fois** celui du S&P 500, avec la même recette, est invrai
   (source payante) ou une variante neutre à la taille, qui serait un nouvel essai compté (18e).
 - **Recommandation** : clore la recherche sur le rendement, comme prévu en cas d'échec, faute de données capables de trancher.
   **Décision laissée à l'utilisateur** : clore, ou payer une source de composition historique.
+
+---
+
+## 27. Holm au lieu de Bonferroni : conséquences mesurées, pas adopté (27/11/2026)
+- **Question de l'utilisateur** : le seuil corrigé monte à chaque essai, donc l'ordre des essais compte-t-il ?
+  - **En pratique, non** : le re-test mensuel rejuge chaque variante d'une famille avec le nombre d'essais du moment, et l'appli lit le dernier
+    verdict.
+  - **Mais deux cas dépendent de l'ordre** :
+    - les essais lancés une seule fois (examens, § 4.31) gardent le seuil de leur date ;
+    - un échec ancien compte pour toujours.
+- **Holm** : on classe les essais du plus fort au plus faible. Le 1er est comparé à 5 %/n, le 2e à 5 %/(n−1), et ainsi de suite, en s'arrêtant au
+  premier échec. Le risque global reste de 5 %, l'ordre de passage ne compte plus, et la règle est un peu moins sévère.
+- **Conséquences calculées sur les derniers résultats** (seuils de Student, mêmes périodes indépendantes) :
+  - **rendement (17 essais)** : aucun changement. Seule la confirmation sur les midcaps passe, et elle passait déjà (§ 26). Le 2e plus fort
+    (alpha sectoriel 6 mois, t = 2,74) reste sous son seuil de Holm (3,26), donc tout s'arrête là ;
+  - **risque (8 essais)** : un seul changement. « IA de volatilité avec les comptes SEC, 1 an » passerait de justesse (t = 3,06 contre 3,04 ;
+    Bonferroni : 3,29). Cette variante n'est pas publiée, donc **aucun changement visible dans l'appli** ;
+  - la perte maximale (t = 2,40 et 2,26) reste sous ses seuils de Holm (2,68 et 2,56).
+- **Décision** : pas adopté pour l'instant. Décision laissée à l'utilisateur, l'enjeu pratique étant nul aujourd'hui.
+
+## 28. Monte Carlo interactif : la probabilité en chaque point (27/11/2026 ; affichage, aucun essai)
+- **Demande** : afficher une **probabilité** plutôt qu'un rendement, en passant le doigt sur la courbe du Monte Carlo.
+- **Pourquoi c'est légitime** : la dispersion des trajectoires vient du **risque**, qui se prévoit (IA de volatilité ou historique 3 ans). Le
+  centre vient de l'hypothèse de rentabilité (CAPM), affichée comme hypothèse. Une probabilité de rendement titre par titre (« ce titre battra-t-il
+  le marché ? ») ne serait pas plus prouvée que les classements testés (§§ 22-26) : elle n'est pas proposée.
+- **Calcul** : pour chaque jour simulé, on garde les 101 centiles (0 à 100 %) des 1 000 trajectoires. Au point touché (date, montant), la part des
+  trajectoires au-dessus est interpolée entre centiles. En dehors des trajectoires simulées, l'appli affiche « < 1 % » ou « > 99 % ».
+- **Affichage** : pointillés sur la date et le montant visés, puis « Dans 15 mois, plus de 10 592 € (+6 % par rapport à la mise) : 52 % des
+  trajectoires ». Le doigt glisse sur le graphique sans faire défiler la page.
+- **Tests** : centiles croissants ; 50 % à la médiane ; 0 et 1 aux extrêmes ; cohérence avec la « probabilité de finir en perte ».

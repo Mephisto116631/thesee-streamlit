@@ -87,7 +87,9 @@ export function portfolioStats(R: number[][], w: number[], rf = RF) {
   return { returns: pr, annReturn: mu, annVol: vol, sharpe: vol > 0 ? (mu - rf) / vol : 0, maxDrawdown: mdd, curve };
 }
 
-/** Monte-Carlo par ré-échantillonnage des rendements historiques (bootstrap). */
+/** Monte-Carlo par ré-échantillonnage des rendements historiques (bootstrap).
+ * `grille[d]` : valeurs du portefeuille au jour d aux centiles 0, 1, …, 100 % (min et max compris) ;
+ * sert à lire une probabilité en n'importe quel point du graphique (`probaAuDessus`). */
 export function monteCarlo(pr: number[], capital: number, days = 252, sims = 1000, seed = 42) {
   let s = seed;
   const rand = () => ((s = (s * 1664525 + 1013904223) % 4294967296) / 4294967296);
@@ -98,12 +100,27 @@ export function monteCarlo(pr: number[], capital: number, days = 252, sims = 100
     for (let d = 0; d < days; d++) { v *= 1 + pr[Math.floor(rand() * pr.length)]; p[d] = v; }
     paths.push(p);
   }
-  const q = (arr: number[], x: number) => { const a = [...arr].sort((m, n) => m - n); return a[Math.min(a.length - 1, Math.floor(x * a.length))]; };
-  const p5: number[] = [], p50: number[] = [], p95: number[] = [];
+  const q = (a: Float64Array, x: number) => a[Math.min(a.length - 1, Math.floor(x * a.length))];
+  const p5: number[] = [], p50: number[] = [], p95: number[] = [], grille: number[][] = [];
+  const col = new Float64Array(sims);
   for (let d = 0; d < days; d++) {
-    const col = paths.map((p) => p[d]);
+    for (let k = 0; k < sims; k++) col[k] = paths[k][d];
+    col.sort();                                   // un seul tri par jour
     p5.push(q(col, 0.05)); p50.push(q(col, 0.5)); p95.push(q(col, 0.95));
+    grille.push(Array.from({ length: 101 }, (_, c) => col[Math.round((c / 100) * (sims - 1))]));
   }
   const finals = paths.map((p) => p[days - 1]);
-  return { p5, p50, p95, probPerte: finals.filter((v) => v < capital).length / sims, final5: p5[days - 1], final50: p50[days - 1], final95: p95[days - 1] };
+  return { p5, p50, p95, grille, probPerte: finals.filter((v) => v < capital).length / sims, final5: p5[days - 1], final50: p50[days - 1], final95: p95[days - 1] };
+}
+
+/** Part des trajectoires simulées au-dessus de `valeur` au jour `jour` (interpolation entre centiles). */
+export function probaAuDessus(grille: number[][], jour: number, valeur: number): number {
+  const g = grille[Math.max(0, Math.min(grille.length - 1, Math.round(jour)))];
+  if (!g?.length) return NaN;
+  if (valeur <= g[0]) return 1;
+  if (valeur >= g[g.length - 1]) return 0;
+  let i = 0;
+  while (i < g.length - 2 && g[i + 1] < valeur) i++;
+  const f = g[i + 1] > g[i] ? (valeur - g[i]) / (g[i + 1] - g[i]) : 0;
+  return 1 - (i + f) / (g.length - 1);
 }
