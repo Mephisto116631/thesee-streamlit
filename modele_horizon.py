@@ -412,6 +412,30 @@ def seuil_t(n_effectif: float | None, n_candidats: int = N_CANDIDATS) -> float:
     return float(student.ppf(1 - 0.025 / n_candidats, ddl))
 
 
+def seuils_holm(essais: dict, n_total: int | None = None, exclus=()) -> dict:
+    """Correction de Holm (METHODE § 4.32). `essais` : {clé: (t, n_effectif)}, dernier résultat de chaque essai de la famille.
+    Classés par p-value unilatérale croissante ; le k-ième (k = 1, 2, …) doit dépasser seuil_t(n_effectif, n − k + 1) ; au premier
+    échec, tous les suivants sont non significatifs. Un essai sans t ou dans `exclus` compte dans n mais n'est jamais significatif.
+    Retourne {clé: {rang, seuil, significatif, seuil_bonferroni, n_essais}}."""
+    from scipy.stats import t as student
+    n = max(int(n_total or 0), len(essais), 1)
+
+    def p(cle):
+        t, ne = essais[cle]
+        if cle in exclus or t is None or ne is None or not np.isfinite(t):
+            return 1.0
+        return float(student.sf(t, max(1.0, float(ne) - 1.0)))
+
+    out, encore = {}, True
+    for k, cle in enumerate(sorted(essais, key=lambda c: (p(c), str(c)))):
+        t, ne = essais[cle]
+        s = seuil_t(ne, n_candidats=n - k)
+        ok = bool(encore and p(cle) < 1.0 and t > s)
+        encore = ok
+        out[cle] = {"rang": k + 1, "seuil": s, "significatif": ok, "seuil_bonferroni": seuil_t(ne, n_candidats=n), "n_essais": n}
+    return out
+
+
 def verdict(ic: float | None, t: float | None, n_effectif: float | None = None) -> str:
     """signal : IC > 0,03, assez de périodes indépendantes et t au-delà du seuil corrigé ;
     bruit : IC > 0,01 ; sinon aucun."""
