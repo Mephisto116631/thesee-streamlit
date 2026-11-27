@@ -1935,3 +1935,13 @@ Un IC presque **trois fois** celui du S&P 500, avec la même recette, est invrai
   - la puissance est faible (13 à 27 périodes indépendantes) : un vrai signal de 3 à 5 % resterait presque indétectable avec les données gratuites ;
   - une droite de tendance sur le cours est un momentum déjà testé (§ 26), et sa pente est trop imprécise (environ ±17 points par an sur 3 ans).
 - **À la place** : les probabilités du Monte Carlo interactif (§ 28), dont la dispersion vient du risque.
+
+### 29.1 Premier passage avec Holm (lot du 27/11/2026 13:09 UTC, run n° 78, PR #51)
+- Le passage de la PR relance le re-test de l'IA de risque (`risque_volatilite`) et les examens. Les autres essais de la famille « risque » sont
+  repris de leur dernier résultat.
+  - **6 mois** : rang 1, seuil de Holm 2,97, identique à Bonferroni ; t = 7,34 : **probant**, inchangé (publication inchangée).
+  - **1 an** : rang 3, seuil de Holm **3,14** (Bonferroni : 3,29) ; t = 3,65 : **probant**, inchangé.
+- Les examens gardent leurs propres règles : hybride publié (t = 5,6) ; l'IA reste meilleure que HAR (t = 5,5) ; HAR-X confirmé ;
+  audit des biais inchangé (9 alertes de surestimation).
+- **Prochain rejugement complet** : le re-test mensuel du 2 décembre relance toutes les variantes de rendement et de risque. C'est là que
+  « IA de volatilité avec les comptes SEC, 1 an » devrait passer, comme calculé au § 27. Elle n'est pas publiée : rien ne change dans l'appli.
