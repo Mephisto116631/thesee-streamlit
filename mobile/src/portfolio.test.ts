@@ -70,3 +70,33 @@ describe("format", () => {
     expect(pct(0.054, 0)).toBe("+5 %");
   });
 });
+
+import { probaAuDessus } from "./portfolio";
+import { echeance, probaTexte } from "./screens/MonteCarlo";
+describe("Monte-Carlo interactif", () => {
+  const pr = Array.from({ length: 250 }, (_, i) => 0.01 * Math.sin(i * 1.7) + 0.0003);
+  const mc = monteCarlo(pr, 1000, 60, 500);
+  it("la grille des centiles va du minimum au maximum, sans décroître", () => {
+    const g = mc.grille[59];
+    expect(g.length).toBe(101);
+    for (let i = 1; i < g.length; i++) expect(g[i]).toBeGreaterThanOrEqual(g[i - 1]);
+    expect(g[50]).toBeCloseTo(mc.p50[59], -1);
+  });
+  it("la probabilité d'avoir plus vaut 50 % à la médiane, 0 et 1 aux extrêmes, et décroît", () => {
+    expect(probaAuDessus(mc.grille, 59, mc.grille[59][50])).toBeCloseTo(0.5, 1);
+    expect(probaAuDessus(mc.grille, 59, 0)).toBe(1);
+    expect(probaAuDessus(mc.grille, 59, 1e9)).toBe(0);
+    expect(probaAuDessus(mc.grille, 59, mc.p5[59])).toBeGreaterThan(probaAuDessus(mc.grille, 59, mc.p95[59]));
+    expect(probaAuDessus(mc.grille, 999, mc.grille[59][50])).toBeCloseTo(0.5, 1);   // jour hors bornes : dernier jour
+  });
+  it("cohérente avec la probabilité de perte", () => {
+    expect(1 - probaAuDessus(mc.grille, 59, 1000)).toBeCloseTo(mc.probPerte, 1);
+  });
+  it("libellés", () => {
+    expect(echeance(20)).toBe("dans 1 mois");
+    expect(echeance(21 * 30 - 1)).toBe("dans 2,5 ans");
+    expect(probaTexte(0.004)).toBe("< 1 %");
+    expect(probaTexte(0.995)).toBe("> 99 %");
+    expect(probaTexte(0.64)).toBe("64 %");
+  });
+});
