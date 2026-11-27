@@ -73,6 +73,9 @@ EXPERIENCES_CONFIRMATION = {
     "confirmation_ensemble_midcap": "Ensemble XGBoost + linéaire appliqué tel quel au S&P MidCap 400 (titres jamais membres du S&P 500), 6 mois",
 }
 HORIZON_CONFIRMATION = "6m"
+# § 4.32 : essais comptés dans leur famille mais jamais significatifs pour Holm (résultat contaminé, § 26)
+CONTAMINES = {("confirmation_ensemble_midcap", "6m")}
+FAMILLE_RENDEMENT = set(EXPERIENCES) | set(EXPERIENCES_CNN) | set(EXPERIENCES_CONFIRMATION)
 # Audit des quatre autres modèles (docs/METHODE.md § 4.27) : constats, aucun nouvel essai compté
 EXPERIENCES_AUDIT = {
     "audit_rendement": "Modèle de rendement publié (1 mois, 6 mois, 1 an) : anciens membres, placebo, biais par groupe (§ 4.27)",
@@ -163,6 +166,24 @@ def verdict_labo(ic, t, n_eff, seuil) -> str:
     if ic is not None and ic > 0.03 and (n_eff or 0) >= mh.MIN_PERIODES_SIGNAL and (t or 0) > seuil:
         return "probant"
     return "non probant"
+
+
+def verdict_risque(gain, n_eff, significatif: bool) -> str:
+    """Famille « risque » : gain d'IC > GAIN_MIN, assez de périodes, significatif selon Holm (§ 4.32)."""
+    ok = gain is not None and gain > mr.GAIN_MIN and (n_eff or 0) >= mh.MIN_PERIODES_SIGNAL and significatif
+    return "probant" if ok else "non probant"
+
+
+def _attente_rendement(lot, nom, h, description, d, importance=None) -> dict:
+    """Essai de la famille « rendement » en attente du jugement de Holm (§ 4.32)."""
+    return {
+        "cle": (nom, h), "t": d.get("t_stat"), "n_eff": d.get("n_effectif"),
+        "ligne": {"lot": lot, "nom": nom, "horizon": h, "description": description, "ic": d.get("ic_moyen"),
+                  "t_stat": d.get("t_stat"), "diagnostics": {**d, "importance": importance}},
+        # Significatif selon Holm => t > seuil de Holm ; verdict_labo vérifie aussi l'IC et le nombre de périodes
+        "juger": lambda hm: verdict_labo(d.get("ic_moyen"), d.get("t_stat"), d.get("n_effectif"), hm["seuil"])
+        if hm["significatif"] else "non probant",
+    }
 
 
 BIBLIOTHEQUES = ["numpy", "pandas", "scipy", "scikit-learn", "xgboost", "shap", "yfinance", "torch"]
@@ -780,6 +801,35 @@ def lancer_audit(cli, lot: str, noms: list[str], deja: list[dict]) -> list[str]:
     return echecs
 
 
+def derniers_resultats(cli, noms) -> dict:
+    """{(nom, horizon): (t, n_effectif)} : dernier résultat enregistré de chaque essai des familles `noms`."""
+    lignes = (cli.table("experiences").select("id,nom,horizon,t_stat,diagnostics->n_effectif")
+              .in_("nom", sorted(noms)).order("id", desc=True).limit(10000).execute().data or [])
+    out = {}
+    for r in lignes:
+        out.setdefault((r["nom"], r["horizon"]), (r.get("t_stat"), r.get("n_effectif")))
+    return out
+
+
+def juger_famille(cli, attente: list[dict], noms_famille, n_total: int, exclus=frozenset()) -> None:
+    """Holm (§ 4.32) : rejuge les essais du passage avec les derniers résultats des autres essais de la famille, puis les écrit.
+    Chaque élément de `attente` : {cle, t, n_eff, ligne (sans verdict ni seuil), juger(holm) -> verdict}."""
+    if not attente:
+        return
+    essais = derniers_resultats(cli, noms_famille)
+    for a in attente:
+        essais[a["cle"]] = (a["t"], a["n_eff"])
+    holm = mh.seuils_holm(essais, n_total, exclus)
+    for a in attente:
+        h = holm[a["cle"]]
+        v = a["juger"](h)
+        ligne = {**a["ligne"], "seuil_t_global": h["seuil"], "n_essais": h["n_essais"], "verdict": v,
+                 "diagnostics": {**(a["ligne"].get("diagnostics") or {}), "holm": h}}
+        _ecrire(cli, ligne)
+        print(f"[LABO] {a['cle'][0]} {a['cle'][1]} : t {a['t'] or 0:.2f}, seuil de Holm {h['seuil']:.2f} (rang {h['rang']}/{h['n_essais']}, "
+              f"Bonferroni {h['seuil_bonferroni']:.2f}) -> {v}")
+
+
 def lancer_confirmation(cli, lot: str, deja: list[dict]) -> list[str]:
     """Confirmation de l'ensemble sur le S&P MidCap 400 (METHODE § 4.31). Un seul passage : refusé si l'essai existe déjà.
     Si une donnée manque (liste du S&P 400, comptes SEC), rien n'est écrit : l'essai n'a pas eu lieu."""
@@ -897,6 +947,7 @@ def main(noms: list[str]):
     # Famille « rendement » : seuls ses propres essais (METHODE § 4.27 B ; avant, les examens de l'IA de risque étaient comptés aussi)
     n_essais = n_essais_rendement(tous)
     n_essais_risque = len({e for e in tous if e[0] in EXPERIENCES_RISQUE})
+    attente_rendement, attente_risque = [], []          # jugés ensemble par Holm en fin de passage (§ 4.32)
     for nom in [n for n in noms if n in EXPERIENCES_CNN]:
         for h in HORIZONS_TEST:
             try:
@@ -908,14 +959,8 @@ def main(noms: list[str]):
             if not ligne:
                 continue
             d = ligne["diagnostics"]
-            seuil = mh.seuil_t(d.get("n_effectif"), n_candidats=n_essais)
-            v = verdict_labo(d.get("ic_moyen"), d.get("t_stat"), d.get("n_effectif"), seuil)
-            _ecrire(cli, {
-                "lot": lot, "nom": nom, "horizon": h, "description": EXPERIENCES_CNN[nom],
-                "ic": d.get("ic_moyen"), "t_stat": d.get("t_stat"), "seuil_t_global": seuil,
-                "n_essais": n_essais, "verdict": v, "diagnostics": {**d, "importance": ligne.get("importance")},
-            })
-            print(f"[LABO] cnn {h} : IC {d.get('ic_moyen', 0):+.3f} t {d.get('t_stat', 0):.2f} (seuil {seuil:.2f}) -> {v}")
+            attente_rendement.append(_attente_rendement(lot, nom, h, EXPERIENCES_CNN[nom], d, ligne.get("importance")))
+            print(f"[LABO] cnn {h} : IC {d.get('ic_moyen', 0):+.3f} t {d.get('t_stat', 0):.2f}")
 
     if "backtest_base_large" in noms:
         noms = [n for n in noms if n != "backtest_base_large"]
@@ -981,16 +1026,14 @@ def main(noms: list[str]):
                 continue
             if not d:
                 continue
-            seuil = mh.seuil_t(d.get("n_effectif"), n_candidats=n_essais_risque)
-            v = ("probant" if d["gain"] > mr.GAIN_MIN and d["n_effectif"] >= mh.MIN_PERIODES_SIGNAL
-                 and d["t_stat"] > seuil else "non probant")
-            _ecrire(cli, {
-                "lot": lot, "nom": nom, "horizon": h, "description": description,
-                "ic": d["ic_moyen"], "t_stat": d["t_stat"], "seuil_t_global": seuil,
-                "n_essais": n_essais_risque, "verdict": v, "diagnostics": d,
+            attente_risque.append({
+                "cle": (nom, h), "t": d["t_stat"], "n_eff": d["n_effectif"],
+                "ligne": {"lot": lot, "nom": nom, "horizon": h, "description": description,
+                          "ic": d["ic_moyen"], "t_stat": d["t_stat"], "diagnostics": d},
+                "juger": lambda hm, d=d: verdict_risque(d.get("gain"), d.get("n_effectif"), hm["significatif"]),
             })
             print(f"[LABO] {nom:18s} {h:3s} IC {d['ic_moyen']:.3f} vs référence {d['ic_base']:.3f} "
-                  f"(gain {d['gain']:+.3f}, t {d['t_stat']:.2f}, seuil {seuil:.2f}) -> {v}")
+                  f"(gain {d['gain']:+.3f}, t {d['t_stat']:.2f})")
 
     for nom in [n for n in noms if n in EXPERIENCES]:
         mode, exclus, description, *opt = EXPERIENCES[nom]
@@ -1008,18 +1051,13 @@ def main(noms: list[str]):
                 print(f"[LABO][WARN] {nom} {h} : pas assez de données")
                 continue
             d = ligne["diagnostics"]
-            seuil = mh.seuil_t(d.get("n_effectif"), n_candidats=n_essais)
-            v = verdict_labo(d.get("ic_moyen"), d.get("t_stat"), d.get("n_effectif"), seuil)
-            _ecrire(cli, {
-                "lot": lot, "nom": nom, "horizon": h, "description": description,
-                "ic": d.get("ic_moyen"), "t_stat": d.get("t_stat"), "seuil_t_global": seuil,
-                "n_essais": n_essais, "verdict": v,
-                "diagnostics": {**d, "importance": ligne.get("importance")},
-            })
+            attente_rendement.append(_attente_rendement(lot, nom, h, description, d, ligne.get("importance")))
             reg = d.get("regimes", {})
             print(f"[LABO] {nom:14s} {h:3s} IC {d.get('ic_moyen', 0):+.3f} t {d.get('t_stat', 0):.2f} "
-                  f"(seuil {seuil:.2f}, {n_essais} essais) hausse {reg.get('hausse', {}).get('ic')} "
-                  f"baisse {reg.get('baisse', {}).get('ic')} -> {v}")
+                  f"hausse {reg.get('hausse', {}).get('ic')} baisse {reg.get('baisse', {}).get('ic')}")
+
+    juger_famille(cli, attente_risque, EXPERIENCES_RISQUE, n_essais_risque)
+    juger_famille(cli, attente_rendement, FAMILLE_RENDEMENT, n_essais, CONTAMINES)
     print(f"[LABO] Terminé en {time.time() - t0:.0f} s")
     if echecs:
         sys.exit(f"Variantes en échec : {', '.join(echecs)}")
