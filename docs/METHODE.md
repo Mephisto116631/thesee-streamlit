@@ -1113,6 +1113,31 @@ proposées, et une décomposition pour savoir d'où viendrait un gain.
     telle, et le CAPM reste le seul rendement utilisé par le portefeuille.
 - **Résultats** : § 26.
 
+
+### 4.32 Correction de Holm dans les familles « rendement » et « risque » (écrit le 27/11/2026, AVANT le code ; changement de règle, aucun essai)
+- **Décision de l'utilisateur (27/11/2026)** : remplacer Bonferroni par Holm. Si un re-test rend un essai significatif, on le verra.
+- **Champ** : familles « rendement » (variantes de `EXPERIENCES`, CNN, confirmation) et « risque » (`EXPERIENCES_RISQUE`), dont le nombre d'essais
+  augmente. Les examens et les backtests gardent leurs règles et leur nombre d'essais fixés à l'avance.
+- **Procédure, à chaque passage du laboratoire** :
+  - pour chaque famille, on réunit le **dernier** résultat de chaque essai (nom × horizon) : ceux du passage en cours, et ceux des passages
+    précédents pour les essais non relancés ;
+  - p-value unilatérale de Student à partir de t et du nombre de périodes indépendantes ;
+  - les essais sont classés du plus petit p au plus grand. Le k-ième (k = 1, 2, …) doit dépasser `seuil_t(n_effectif, n − k + 1)`, avec n le
+    nombre d'essais de la famille ;
+  - au **premier échec**, tous les suivants sont non significatifs, même si leur t dépasse leur propre seuil ;
+  - un essai sans t, ou déclaré contaminé (la confirmation sur les midcaps, § 26), **compte dans n** mais ne peut pas être significatif. Il ne
+    fait donc pas baisser le seuil des autres.
+- **Verdict** : inchangé par ailleurs (IC > 3 % et au moins 8 périodes pour le rendement ; gain > `GAIN_MIN` pour le risque), avec
+  « significatif selon Holm » à la place de « t > seuil de Bonferroni ».
+- **Ce qui est enregistré** : `seuil_t_global` reçoit le seuil de Holm. Les diagnostics gardent le rang, le seuil de Bonferroni et le drapeau
+  « significatif ».
+- **Propriétés** :
+  - le seuil de Holm n'est jamais plus haut que celui de Bonferroni. Un verdict ne peut donc que s'améliorer, à risque global identique (5 %) ;
+  - le premier rang a exactement le seuil de Bonferroni ;
+  - l'ordre de passage des essais ne compte plus.
+- **Effet attendu** (calculé au § 27) : une seule variante change, « IA de volatilité avec les comptes SEC, 1 an », qui n'est pas publiée.
+  Rien de visible dans l'appli. Le garde-fou de publication de l'IA de risque lit toujours le verdict de `risque_volatilite` à 6 mois.
+
 ---
 
 ## 8. Résultats de l'essai « XGBoost sur le niveau » (PR #28, lancé le 19/11/2026 23:05 UTC)
@@ -1891,3 +1916,22 @@ Un IC presque **trois fois** celui du S&P 500, avec la même recette, est invrai
 - **Affichage** : pointillés sur la date et le montant visés, puis « Dans 15 mois, plus de 10 592 € (+6 % par rapport à la mise) : 52 % des
   trajectoires ». Le doigt glisse sur le graphique sans faire défiler la page.
 - **Tests** : centiles croissants ; 50 % à la médiane ; 0 et 1 aux extrêmes ; cohérence avec la « probabilité de finir en perte ».
+
+## 29. Clôture de la recherche sur le rendement (décision de l'utilisateur, 27/11/2026)
+- **Décision** : pas de source payante de composition historique (son coût pèserait sur la rentabilité), et **recherche sur le rendement close**.
+- **Ce qui reste** :
+  - le portefeuille utilise le **CAPM** (taux sans risque + bêta × prime de 5 %), pondéré à 90 %, plus 10 % de rendement historique ;
+  - le bêta est le coefficient directeur d'une régression par moindres carrés des rendements du titre sur ceux du marché. C'est la seule
+    « régression » utile ici, car elle mesure du risque, qui se prévoit ;
+  - le modèle de rendement publié reste réentraîné chaque semaine et affiché comme **hypothèse** ;
+  - le re-test mensuel des variantes existantes continue, désormais avec Holm (§ 4.32). **Si un re-test rend une variante significative**, cela
+    se verra dans le laboratoire. Son usage dans le portefeuille demanderait une décision de l'utilisateur et une PR : rien d'automatique.
+- **Ce qui s'arrête** :
+  - aucune nouvelle variante de rendement (ni droite de tendance, ni nouveau modèle) ;
+  - la confirmation sur les midcaps ne sera pas relancée (garde-fou du code).
+- **Pourquoi** :
+  - 17 essais, aucun probant sur des données propres ;
+  - la seule « confirmation » est contaminée par le biais du survivant (§ 26) ;
+  - la puissance est faible (13 à 27 périodes indépendantes) : un vrai signal de 3 à 5 % resterait presque indétectable avec les données gratuites ;
+  - une droite de tendance sur le cours est un momentum déjà testé (§ 26), et sa pente est trop imprécise (environ ±17 points par an sur 3 ans).
+- **À la place** : les probabilités du Monte Carlo interactif (§ 28), dont la dispersion vient du risque.
