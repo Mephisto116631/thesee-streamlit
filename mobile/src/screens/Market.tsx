@@ -5,6 +5,7 @@ import { num, pct, prix, signClass } from "../format";
 import { useFiabiliteVol } from "../fiabilite";
 import { per } from "../valorisation";
 import { BadgeTeste } from "./Portfolio";
+import { EntrainerButton } from "./Relance";
 
 type Tri = "symbol" | "chg_1d" | "chg_20d" | "chg_1y" | "vol_ia" | "vol_ia_calme" | "per";
 // Tris par prévision de l'IA : seulement si son dernier test est probant
@@ -53,6 +54,7 @@ export function Market({ go }: { go: (h: string) => void }) {
     <div class="screen">
       <header class="screen-head">
         <div><h1>Quels titres bougent ?</h1><p class="sub">{rows.length} titres suivis · S&P 500, Nasdaq-100, ETF</p></div>
+        <EntrainerButton />
         <RefreshButton />
         <HelpButton keys={["chg_20d", "rsi_14", "volatility"]}
           intro={<><p>Chaque ligne montre le prix et la variation du jour (bord gauche <span class="up">vert</span> = hausse,

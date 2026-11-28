@@ -59,7 +59,7 @@ export function useData<T>(loader: () => Promise<Result<T>>, deps: unknown[] = [
 export function RefreshButton() {
   const [tourne, setTourne] = useState(false);
   return (
-    <button class={`help-btn refresh ${tourne ? "spin" : ""}`} aria-label="Rafraîchir les données"
+    <button class={`help-btn refresh ${tourne ? "spin" : ""}`} aria-label="Recharger les données (sans recalculer)" title="Recharger les données (sans recalculer)"
       onClick={() => { setTourne(true); rafraichir(); setTimeout(() => setTourne(false), 900); }}>↻</button>
   );
 }

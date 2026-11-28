@@ -1945,3 +1945,14 @@ Un IC presque **trois fois** celui du S&P 500, avec la même recette, est invrai
   audit des biais inchangé (9 alertes de surestimation).
 - **Prochain rejugement complet** : le re-test mensuel du 2 décembre relance toutes les variantes de rendement et de risque. C'est là que
   « IA de volatilité avec les comptes SEC, 1 an » devrait passer, comme calculé au § 27. Elle n'est pas publiée : rien ne change dans l'appli.
+
+## 30. Bouton « Ré-entraîner » dans l'en-tête (28/11/2026 ; affichage, aucun essai)
+- **Constat de l'utilisateur** : la relance du calcul était introuvable. Elle était dans une carte repliée des Paramètres et en bas
+  d'Analyse › Risque. Le ↻ de l'en-tête, seul visible, ne fait que recharger les données déjà calculées.
+- **Changement** : sur l'Accueil, le Portefeuille et le Marché, un bouton à icône de puce est placé **à côté du ↻**. Le ↻ s'appelle désormais
+  « Recharger les données (sans recalculer) ».
+- **Minuteur dans le bouton** (mêmes délais que la fonction `relancer-calcul`) :
+  - pendant la demande, puis pendant le calcul : temps écoulé (« 2:17 »), avec un contour qui pulse ;
+  - après un calcul : **compte à rebours** avant de pouvoir relancer (10 min, « 6:38 »), en gris ;
+  - au repos : l'icône. Un toucher demande confirmation, puis lance le calcul.
+- **Inchangé** : il faut être connecté (onglet Positions) ; la barre de progression en haut de l'écran donne toujours l'étape et le pourcentage.

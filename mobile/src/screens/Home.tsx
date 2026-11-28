@@ -7,6 +7,7 @@ import { zoneIndex } from "../ranges";
 import { useParametres } from "../settings";
 import { BadgeTeste, usePortefeuilleCible } from "./Portfolio";
 import { libelleSource } from "../fiabilite";
+import { EntrainerButton } from "./Relance";
 
 const EURUSD_SECOURS = 1.08;
 
@@ -27,6 +28,7 @@ export function Home({ go }: { go: (h: string) => void }) {
             {o?.date && <> · clôture du {dateFr(o.date)}</>}
           </p>
         </div>
+        <EntrainerButton />
         <RefreshButton />
         <ReglagesButton />
       </header>
