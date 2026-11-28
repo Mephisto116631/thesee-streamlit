@@ -10,6 +10,7 @@ import { choisirRevision, prochaineRevision } from "../revision";
 import { MonteCarlo } from "./MonteCarlo";
 import { PlanAchat } from "./PlanAchat";
 import { FaceAuxChocs, type UniversJour } from "./FaceAuxChocs";
+import { EntrainerButton } from "./Relance";
 
 const KEY = "thesee:objectif:v1";
 // Hold : horizons de 6 mois et plus (en dessous, c'est le mode court terme)
@@ -102,6 +103,7 @@ export function Portfolio() {
             risque + bêta × prime de risque). Réglable dans les Paramètres.</p>
           <p><b>Ajuster les titres</b> : exclus ou impose des titres ; le calcul reste exactement le même.</p>
         </>} />
+        <EntrainerButton />
         <RefreshButton />
         <ReglagesButton />
       </header>
